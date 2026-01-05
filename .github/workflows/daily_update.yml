@@ -32,4 +32,4 @@ jobs:
     - name: Run Script
       run: |
         # 👇 我幫你改成了大寫 F，今次一定搵到！
-        python Football.py
+        python bot.py
