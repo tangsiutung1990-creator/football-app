@@ -31,4 +31,4 @@ jobs:
 
     - name: Run Script (執行 football.py)
       run: |
-        python football.py
+        python Football.py
