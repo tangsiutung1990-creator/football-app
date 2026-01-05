@@ -3,124 +3,154 @@ import streamlit as st
 import pandas as pd
 
 # ================= 配置區 =================
-# 🔥 已更新為你的新數據連結
+# 請確認這條 CSV Link 是正確的
 DATA_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRhoWj63UGng_ikz6r9fs6nLSZgNxuEkheBirzlYU5L9x9eTVr1w2tQt436z8vKU1HoIm16NR38zySy/pub?output=csv"
 
-st.set_page_config(page_title="全球重心 V86", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="足球AI 攻防數據版", layout="wide", page_icon="⚽")
 
-# ================= CSS 樣式 (針對手機優化) =================
+# ================= CSS 優化 (手機版更易睇) =================
 st.markdown("""
 <style>
     .stApp {background-color:#0e1117; color:#e0e0e0; font-family:'Arial', sans-serif;}
     .block-container {padding-top: 1rem; padding-bottom: 5rem;} 
+    
+    /* 表格容器 */
     .table-container {
         width: 100%; overflow-x: auto; margin-bottom: 20px;
         border: 1px solid #333; border-radius: 8px; background-color: #1e1e1e;
-        -webkit-overflow-scrolling: touch; /* 讓手機滑動更順暢 */
     }
-    .data-table { width: 100%; border-collapse: collapse; min-width: 1000px; text-align: center; font-size: 13px; }
-    .data-table th { background-color: #262626; color: #aaa; padding: 10px; position: sticky; top: 0; z-index: 10; border-bottom: 2px solid #444; }
+    .data-table { width: 100%; border-collapse: collapse; min-width: 900px; text-align: center; font-size: 13px; }
+    
+    /* 表頭固定 */
+    .data-table th { background-color: #262626; color: #aaa; padding: 12px 8px; border-bottom: 2px solid #444; white-space: nowrap; }
+    
+    /* 數據格 */
     .data-table td { padding: 8px; border-bottom: 1px solid #333; border-right: 1px solid #2a2a2a; color: #fff; white-space: nowrap; }
     
-    .col-odds { color: #00ff7f; font-family: monospace; font-weight: bold; }
-    .col-dim { color: #666; }
-    .highlight-win { background-color: rgba(0, 255, 127, 0.2); color: #00ff7f !important; }
-    .highlight-big { background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b !important; }
+    /* 特別顏色 */
+    .col-goals { color: #00bfff; font-weight: bold; font-family: monospace; font-size: 1.1em; } /* 藍色顯示攻防 */
+    .highlight-win { background-color: rgba(0, 255, 127, 0.2); color: #00ff7f !important; font-weight:bold; } /* 綠色主勝 */
+    .highlight-big { background-color: rgba(255, 75, 75, 0.2); color: #ff4b4b !important; font-weight:bold; } /* 紅色大球 */
+    
     .rank-badge { background:#444; padding:2px 6px; border-radius:4px; font-size:11px; }
+    .league-tag { font-size:10px; color:#aaa; border:1px solid #444; padding:2px 4px; border-radius:4px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據讀取 (加入 Cache 機制) =================
+# ================= 數據讀取 =================
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        # 讀取你的 Google Sheet CSV
         return pd.read_csv(DATA_URL, on_bad_lines='skip', header=None)
-    except Exception as e:
-        return None
+    except: return None
 
-# ================= 分析邏輯 =================
-def safe_val(row, idx, is_str=False):
+# ================= 智能分析 (攻防版) =================
+def safe_val(row, idx):
     try:
         val = row[idx]
-        if pd.isna(val) or str(val).strip() == "": return "-" if is_str else 0.0
-        return str(val).strip() if is_str else float(val)
-    except: return "-" if is_str else 0.0
+        if pd.isna(val) or str(val).strip() == "": return 0.0
+        return float(val)
+    except: return 0.0
 
-def analyze(row):
-    # 根據 CSV 欄位位置抓取數據
-    h_r = safe_val(row, 4)  # 主排
-    a_r = safe_val(row, 5)  # 客排
-    ft_h = safe_val(row, 8) # 主勝賠率
-    o25, o35 = safe_val(row, 14), safe_val(row, 15) # 大小球賠率
+def analyze_match(row):
+    # 讀取 CSV 欄位 (根據 football.py 的輸出順序)
+    # Col 11=主攻, 12=主防, 13=客攻, 14=客防
+    h_gf = safe_val(row, 11) 
+    h_ga = safe_val(row, 12)
+    a_gf = safe_val(row, 13)
+    a_ga = safe_val(row, 14)
     
-    # 計算近況分 (W=3, D=1, L=0)
+    # 近況分數 (作為輔助)
     def f_sc(s): return sum([3 if c=='W' else 1 if c=='D' else 0 for c in str(s).upper()[-6:]])
-    h_s = f_sc(row[6]) if len(row)>6 else 0
-    a_s = f_sc(row[7]) if len(row)>7 else 0
+    h_form = f_sc(row[6]) if len(row)>6 else 0
+    a_form = f_sc(row[7]) if len(row)>7 else 0
+
+    rec_home = False
+    rec_big = False
     
-    # 簡單預測公式
-    power = (a_r - h_r) + ((h_s - a_s) * 1.5)
-    is_home = (ft_h > 0 and ft_h < 1.45) or (power > 6)
-    is_big = (o35 > 0 and o35 < 2.25) or (o25 > 0 and o25 < 1.75)
-    return is_home, is_big
+    # --- 預測公式 ---
+    # 1. 主勝：主隊淨勝球能力 明顯高於 客隊
+    h_net = h_gf - h_ga
+    a_net = a_gf - a_ga
+    if (h_net > a_net + 0.5) and (h_form >= a_form):
+        rec_home = True
+
+    # 2. 大球：兩隊防守都差，或者攻力超強
+    # 預期入球 = (主攻+客防)/2 + (客攻+主防)/2
+    exp_goals = (h_gf + a_ga)/2 + (a_gf + h_ga)/2
+    
+    if exp_goals >= 2.6: # 門檻：預期 2.6 球以上
+        rec_big = True
+        
+    return rec_home, rec_big, exp_goals
 
 # ================= 主程式 =================
-st.markdown("<h3 style='text-align:center; margin-bottom:10px;'>📊 賽事分析 V86</h3>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align:center;'>⚽ 足球數據中心 (V99)</h3>", unsafe_allow_html=True)
 
 df = load_data()
 
 if df is not None:
-    # --- 1. 簡單篩選器 (手機救星) ---
-    with st.expander("🔍 篩選與設定", expanded=False):
-        show_only_rec = st.checkbox("只顯示有推薦 (重心/大球)", value=False)
-        
-        # 自動抓取 CSV 第 2 欄 (Index 1) 作為聯賽名稱
+    # --- 篩選 ---
+    with st.expander("🔍 聯賽過濾", expanded=False):
+        show_rec_only = st.checkbox("只顯示推薦場次", value=False)
         try:
-            all_leagues = sorted(list(set([str(x) for x in df[1] if str(x) not in ['nan', '聯賽', '-']])))
-            selected_leagues = st.multiselect("選擇聯賽", all_leagues, default=[])
-        except:
-            selected_leagues = []
+            leagues = sorted(list(set([str(x) for x in df[1] if str(x) not in ['nan', '聯賽', '-']])))
+            sel_leagues = st.multiselect("選擇聯賽", leagues, default=[])
+        except: sel_leagues = []
 
-    # --- 2. 構建 HTML 表格 ---
+    # --- 構建表格 HTML (重點修改了這裡的 Headers) ---
     html = """<div class="table-container"><table class="data-table"><thead><tr>
-    <th>時間</th><th>聯賽</th><th>主隊</th><th>客隊</th><th>主排</th><th>客排</th><th>主近</th><th>客近</th>
-    <th>主勝</th><th>和</th><th>客勝</th><th>半主</th><th>半和</th><th>半客</th>
-    <th>大2.5</th><th>大3.5</th><th>細2.5</th><th>細3.5</th></tr></thead><tbody>"""
+    <th style="width:50px;">時間</th>
+    <th style="width:50px;">聯賽</th>
+    <th>主隊</th>
+    <th>客隊</th>
+    <th>排名</th>
+    <th style="color:#00bfff;">主 入/失</th> <th style="color:#00bfff;">客 入/失</th> <th>預測結果</th>
+    <th>期望入球</th>
+    </tr></thead><tbody>"""
 
     count = 0
     for i, row in df.iterrows():
-        # 跳過標題行
         if str(row[0]) in ["時間", "日期", "-"] or pd.isna(row[2]): continue
-        
-        # 聯賽篩選
-        league_name = str(row[1])
-        if selected_leagues and league_name not in selected_leagues: continue
+        if sel_leagues and str(row[1]) not in sel_leagues: continue
 
-        home_good, big_good = analyze(row)
+        # 分析
+        is_h, is_b, exp_g = analyze_match(row)
         
-        # 只顯示推薦
-        if show_only_rec and not (home_good or big_good): continue
+        if show_rec_only and not (is_h or is_b): continue
 
-        c_hw = "highlight-win" if home_good else "col-odds"
-        c_big = "highlight-big" if big_good else "col-odds"
-        v = lambda x: safe_val(row, x, True)
+        # 樣式與數據
+        c_res = ""
+        txt_res = "-"
+        if is_h: 
+            c_res = "highlight-win"
+            txt_res = "🏆 主勝"
+        if is_b:
+            c_res = "highlight-big"
+            txt_res = "🔥 大球" if not is_h else "🏆主+大"
+            
+        v = lambda x: str(row[x]).strip() if not pd.isna(row[x]) else "-"
         
+        # 組合「入/失」字串
+        h_stats = f"{safe_val(row,11):.1f} / {safe_val(row,12):.1f}"
+        a_stats = f"{safe_val(row,13):.1f} / {safe_val(row,14):.1f}"
+
         html += f"""<tr>
-        <td style="color:#888;">{v(0)}</td> <td style="color:#aaa;">{v(1)}</td>
-        <td style="text-align:left;font-weight:bold;">{v(2)}</td> <td style="text-align:left;font-weight:bold;">{v(3)}</td>
-        <td><span class="rank-badge">{v(4)}</span></td> <td><span class="rank-badge">{v(5)}</span></td>
-        <td style="font-size:11px;">{v(6)}</td> <td style="font-size:11px;">{v(7)}</td>
-        <td class="{c_hw}">{v(8)}</td> <td class="col-odds">{v(9)}</td> <td class="col-odds">{v(10)}</td>
-        <td class="col-dim">{v(11)}</td> <td class="col-dim">{v(12)}</td> <td class="col-dim">{v(13)}</td>
-        <td class="{c_big}">{v(14)}</td> <td class="{c_big}">{v(15)}</td> <td class="col-dim">{v(16)}</td> <td class="col-dim">{v(17)}</td>
+        <td style="color:#888; font-size:12px;">{v(0)}</td>
+        <td><span class="league-tag">{v(1)}</span></td>
+        <td style="text-align:left; font-weight:bold;">{v(2)}</td>
+        <td style="text-align:left; font-weight:bold;">{v(3)}</td>
+        <td><span class="rank-badge">{v(4)}</span> vs <span class="rank-badge">{v(5)}</span></td>
+        <td class="col-goals">{h_stats}</td>
+        <td class="col-goals">{a_stats}</td>
+        <td class="{c_res}">{txt_res}</td>
+        <td style="color:#888;">{exp_g:.2f}球</td>
         </tr>"""
         count += 1
         
     html += "</tbody></table></div>"
-    
-    st.caption(f"共顯示 {count} 場賽事")
     st.markdown(html, unsafe_allow_html=True)
+    st.caption(f"共顯示 {count} 場賽事 | 數據格式：平均入球 / 平均失球")
 
 else:
-    st.error("無法讀取數據，請檢查：1. Google Sheet 是否已發佈為 CSV。 2. 連結是否正確。")
+    st.error("無法讀取數據，請稍後再試。")
