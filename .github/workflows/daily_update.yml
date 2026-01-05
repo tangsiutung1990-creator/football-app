@@ -2,33 +2,34 @@ name: Daily Football Update
 
 on:
   schedule:
-    # 每日 HKT 10:00 AM (即係 UTC 02:00) 自動執行
+    # 每日 HKT 10:00 AM 自動跑
     - cron: '0 2 * * *'
-  workflow_dispatch: # 容許你手動按掣測試
+  workflow_dispatch: # 🔥 這一行就是「Run workflow」按鈕的開關！
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code (下載代碼)
+    - name: Checkout code
       uses: actions/checkout@v2
 
-    - name: Set up Python (設定 Python 環境)
+    - name: Set up Python
       uses: actions/setup-python@v2
       with:
         python-version: '3.9'
 
-    - name: Install dependencies (安裝需要的庫)
+    - name: Install dependencies
       run: |
-        pip install requests gspread oauth2client
+        pip install requests gspread oauth2client pandas streamlit
 
-    - name: Create key.json (由保險箱拎條鎖匙出黎)
+    - name: Create key.json
       env:
         GCP_KEY_JSON: ${{ secrets.GCP_KEY_JSON }}
       run: |
         echo "$GCP_KEY_JSON" > key.json
 
-    - name: Run Script (執行 football.py)
+    - name: Run Script
       run: |
+        # 👇 我幫你改成了大寫 F，今次一定搵到！
         python Football.py
