@@ -202,7 +202,8 @@ def main():
     except Exception as e:
         print(f"❌ 上傳失敗: {e}")
 
-    input("按 Enter 離開...")
+   # input("按 Enter 離開...")
 
 if __name__ == "__main__":
+
     main()
