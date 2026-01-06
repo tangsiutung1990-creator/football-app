@@ -30,4 +30,4 @@ jobs:
           echo "$GCP_KEY_JSON" > key.json
 
       - name: 執行機器人
-        run: python bot.py
+        run: python run_me.py
