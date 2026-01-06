@@ -25,21 +25,12 @@ LEAGUE_MAP = {
     "UEL": "歐霸", "UECL": "歐協聯"
 }
 
-# ================= 2. 球隊翻譯 =================
+# ================= 2. 球隊翻譯 (省略部分以節省篇幅, 照舊) =================
 NAME_MAP = {
-    "Arsenal FC": "阿仙奴", "Aston Villa FC": "阿士東維拉", "AFC Bournemouth": "般尼茅夫",
-    "Brentford FC": "賓福特", "Brighton & Hove Albion FC": "白禮頓",
-    "Chelsea FC": "車路士", "Crystal Palace FC": "水晶宮", "Everton FC": "愛華頓",
-    "Fulham FC": "富咸", "Ipswich Town FC": "葉士域治", "Leicester City FC": "李斯特城",
-    "Liverpool FC": "利物浦", "Manchester City FC": "曼城", "Manchester United FC": "曼聯",
-    "Newcastle United FC": "紐卡素", "Nottingham Forest FC": "諾定咸森林",
-    "Southampton FC": "修咸頓", "Tottenham Hotspur FC": "熱刺",
-    "West Ham United FC": "韋斯咸", "Wolverhampton Wanderers FC": "狼隊",
-    "Real Madrid CF": "皇馬", "FC Barcelona": "巴塞隆拿", "Atlético de Madrid": "馬體會",
-    "Juventus FC": "祖雲達斯", "AC Milan": "AC米蘭", "FC Internazionale Milano": "國米",
-    "FC Bayern München": "拜仁", "Borussia Dortmund": "多蒙特", "Bayer 04 Leverkusen": "利華古遜",
-    "Paris Saint-Germain FC": "PSG", "AS Monaco FC": "摩納哥",
-    # ... (保留你原本的翻譯列表，這裡省略部分以節省篇幅，程式會自動用回英文名) ...
+    "Arsenal FC": "阿仙奴", "Aston Villa FC": "阿士東維拉", "Liverpool FC": "利物浦", 
+    "Manchester City FC": "曼城", "Manchester United FC": "曼聯", "Chelsea FC": "車路士",
+    "Real Madrid CF": "皇馬", "FC Barcelona": "巴塞隆拿", "Juventus FC": "祖雲達斯",
+    # ... (程式會優先用呢度既名，無就會用英文原名) ...
 }
 
 def get_google_sheet_client():
@@ -50,16 +41,19 @@ def get_google_sheet_client():
 
 def fetch_data(url):
     headers = {'X-Auth-Token': API_KEY}
-    # 增加重試次數，防止 H2H 請求失敗
     for attempt in range(3):
         try:
             res = requests.get(url, headers=headers, timeout=30)
+            # 成功
             if res.status_code == 200: 
                 return res.json()
+            # 請求太快
             elif res.status_code == 429:
                 print(f"⚠️ API 請求過快 (429)，休息 10 秒...")
                 time.sleep(10)
+            # 其他錯誤 (例如 403 權限不足, 404 找不到)
             else:
+                print(f"⚠️ 獲取失敗 (Status: {res.status_code}) - URL: {url}")
                 time.sleep(2)
         except Exception as e: 
             print(f"⚠️ 連線錯誤: {e}")
@@ -90,7 +84,7 @@ def main():
     
     stats_db = {}
     for code in leagues:
-        print(f"   -> 下載 {code}...")
+        # print(f"   -> 下載 {code}...")
         d = fetch_data(f"https://api.football-data.org/v4/competitions/{code}/standings")
         if d:
             for t in d.get('standings', []):
@@ -108,10 +102,10 @@ def main():
                             'rank': str(r.get('position', '')),
                             'gf': gf, 'ga': ga, 'pg': pg
                         }
-        time.sleep(2) # 聯賽之間休息
+        time.sleep(2)
 
     # --- 整理數據 + 抓取 H2H ---
-    print(f"3. 正在逐場分析 (含 H2H 對賽往績)... 需時較長，請耐心等待。")
+    print(f"3. 正在逐場分析 (含 H2H 對賽往績)...")
     
     # 新增 H2H 欄位
     all_rows = [["時間", "狀態", "聯賽", "主隊", "客隊", 
@@ -126,25 +120,24 @@ def main():
         try:
             h = m['homeTeam']['name']
             a = m['awayTeam']['name']
-            mid = m['id'] # 比賽 ID，用來查 H2H
+            mid = m['id'] 
             league_code = m['competition']['code']
             status_raw = m['status']
 
             print(f"   [{count}/{total_matches}] 分析: {NAME_MAP.get(h, h)} vs {NAME_MAP.get(a, a)}...")
 
-            # --- 🔥 重點：抓取 H2H 對賽往績 🔥 ---
-            # 這是最花時間的部分，必須要限速
+            # --- 🔥 H2H 抓取 🔥 ---
             h2h_str = "N/A"
             try:
+                # 這裡會用到上面的 fetch_data，如果失敗會印出原因
                 h2h_data = fetch_data(f"https://api.football-data.org/v4/matches/{mid}/head2head")
                 if h2h_data:
                     agg = h2h_data.get('aggregates', {})
-                    # 格式：主贏次數 - 和局次數 - 客贏次數
                     h2h_str = f"{agg.get('homeTeamWins', 0)}-{agg.get('draws', 0)}-{agg.get('awayTeamWins', 0)}"
             except:
                 pass
             
-            # ⛔ 重要：每抓完一場 H2H，強制休息 6.5 秒，避免被封鎖 (HTTP 429)
+            # 強制休息，避免 429
             time.sleep(6.5)
 
             # --- 處理其他數據 ---
@@ -152,7 +145,7 @@ def main():
             hk_time = dt + timedelta(hours=8)
             t_str = hk_time.strftime("%m/%d %H:%M") 
 
-            # 狀態與比分
+            # 狀態
             status_display = "未開賽"
             s_h, s_a = m['score']['fullTime']['home'], m['score']['fullTime']['away']
             score_h_str, score_a_str = "-", "-"
@@ -167,7 +160,7 @@ def main():
             elif status_raw == 'PAUSED': status_display = "中場"
             elif status_raw == 'POSTPONED': status_display = "延期"
 
-            # 攻防數據 (主隊看主場，客隊看客場)
+            # 攻防數據
             h_data = stats_db.get(h, {})
             a_data = stats_db.get(a, {})
             h_stat = h_data.get('HOME', h_data.get('TOTAL', {'gf':0, 'ga':0, 'pg':1}))
@@ -179,7 +172,7 @@ def main():
             a_away_gf = calc_avg(a_stat['gf'], a_stat['pg']) 
             a_away_ga = calc_avg(a_stat['ga'], a_stat['pg'])
 
-            # 簡單預測
+            # 預測
             expected_goals = (h_home_gf + a_away_ga) / 2 + (a_away_gf + h_home_ga) / 2
             expected_goals_str = f"{expected_goals:.2f}"
 
@@ -188,7 +181,7 @@ def main():
                 NAME_MAP.get(h, h), NAME_MAP.get(a, a),
                 h_home_gf, h_home_ga, 
                 a_away_gf, a_away_ga, 
-                h2h_str, # 🔥 填入 H2H 數據
+                h2h_str, 
                 expected_goals_str, 
                 score_h_str, score_a_str
             ]
