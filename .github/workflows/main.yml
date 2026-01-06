@@ -1,0 +1,35 @@
+name: Football Data Update
+
+on:
+  schedule:
+    # 每 15 分鐘跑一次 (確保比分夠 Update)
+    - cron: '*/15 * * * *'
+  
+  # 手動觸發按鈕
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install requests gspread oauth2client
+
+      - name: Create json key file
+        # 記得確保你有設定好 GitHub Secret: GCP_KEY_JSON
+        run: echo '${{ secrets.GCP_KEY_JSON }}' > key.json
+
+      - name: Run Script
+        run: |
+          # 只跑新版 bot.py
+          python bot.py
