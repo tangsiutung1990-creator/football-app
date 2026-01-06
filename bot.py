@@ -68,4 +68,141 @@ NAME_MAP = {
     "Stade Rennais FC 1901": "雷恩", "Stade de Reims": "兰斯", "Toulouse FC": "圖卢兹",
     "AFC Ajax": "阿積士", "PSV Eindhoven": "PSV燕豪芬", "Feyenoord Rotterdam": "飛燕諾",
     "AZ Alkmaar": "阿爾克馬爾", "FC Twente '65": "泰温特", "FC Utrecht": "烏德勒支",
-    "SL
+    "SL Benfica": "賓菲加", "FC Porto": "波圖", "Sporting Clube de Portugal": "士砵亭",
+    "SC Braga": "布拉加", "Vitória SC": "甘馬雷斯", "Boavista FC": "博維斯塔",
+    "Celtic FC": "些路迪", "Rangers FC": "格拉斯哥流浪", "Galatasaray SK": "加拉塔沙雷",
+    "Fenerbahçe SK": "費倫巴治", "FC Shakhtar Donetsk": "薩克達", "FC Salzburg": "萨尔斯堡",
+    "Club Brugge KV": "布魯日", "BSC Young Boys": "年青人", "GNK Dinamo Zagreb": "薩格勒布戴拿模",
+    "Sporting CP": "士砵亭"
+}
+
+def get_google_sheet_client():
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_KEY_FILE, scope)
+    client = gspread.authorize(creds)
+    return client
+
+def fetch_data(url):
+    headers = {'X-Auth-Token': API_KEY}
+    for attempt in range(3):
+        try:
+            res = requests.get(url, headers=headers, timeout=30)
+            if res.status_code == 200: return res.json()
+            time.sleep(3) 
+        except: time.sleep(3)
+    return None
+
+def main():
+    # --- 計算日期 (昨+今+未來) ---
+    today = datetime.now()
+    start_date = today - timedelta(days=1)
+    end_date = today + timedelta(days=DAYS_TO_FETCH)
+    date_from, date_to = start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
+
+    print(f"1. 正在搜尋賽程 (由 {date_from} 到 {date_to})...")
+    
+    url = f"https://api.football-data.org/v4/matches?dateFrom={date_from}&dateTo={date_to}"
+    data = fetch_data(url)
+    matches = data.get('matches', []) if data else []
+    
+    if not matches:
+        print("⚠️ 這段時間暫無重點賽事。")
+        return
+
+    # --- 獲取積分榜 (含入球數據) ---
+    leagues = list(set([m['competition']['code'] for m in matches]))
+    print(f"2. 發現 {len(matches)} 場賽事，涉及聯賽: {leagues}")
+    print("   正在下載數據 (包含攻防能力值)...")
+    
+    stats_db = {}
+    for code in leagues:
+        print(f"   -> 正在下載 {code} 積分榜...")
+        d = fetch_data(f"https://api.football-data.org/v4/competitions/{code}/standings")
+        if d:
+            for t in d.get('standings', []):
+                if t['type'] == 'TOTAL':
+                    for r in t.get('table', []):
+                        name = r['team']['name']
+                        gf = r.get('goalsFor', 0)    
+                        ga = r.get('goalsAgainst', 0) 
+                        pg = r.get('playedGames', 1)  
+                        if pg == 0: pg = 1
+                        
+                        stats_db[name] = {
+                            'rank': str(r.get('position', '')),
+                            'form': str(r.get('form', '')).replace(",", "") if r.get('form') else "",
+                            'gf': gf, 'ga': ga, 'pg': pg
+                        }
+        time.sleep(2)
+
+    # --- 整理數據 ---
+    print("3. 正在整理數據 (含即時比分)...")
+    
+    # 標題列 (注意：尾部增加了比分欄位)
+    all_rows = [["時間", "聯賽", "主隊", "客隊", "主排", "客排", "主近", "客近", 
+                 "主勝", "和", "客勝", "主攻", "主防", "客攻", "客防", "主分", "客分", "備註"]]
+
+    for m in matches:
+        try:
+            h = m['homeTeam']['name']
+            a = m['awayTeam']['name']
+            league_code = m['competition']['code']
+
+            # 時間處理 (修正時差)
+            dt = datetime.strptime(m['utcDate'], "%Y-%m-%dT%H:%M:%SZ")
+            hk_time = dt + timedelta(hours=8)
+            t_str = hk_time.strftime("%m/%d %H:%M") 
+            
+            # 獲取統計
+            h_stat = stats_db.get(h, {'rank': '', 'form': '', 'gf':0, 'ga':0, 'pg':1})
+            a_stat = stats_db.get(a, {'rank': '', 'form': '', 'gf':0, 'ga':0, 'pg':1})
+            
+            # 平均入球
+            def calc_avg(val, games): return round(val/games, 2) if games > 0 else 0
+            h_avg_gf = calc_avg(h_stat['gf'], h_stat['pg']) 
+            h_avg_ga = calc_avg(h_stat['ga'], h_stat['pg']) 
+            a_avg_gf = calc_avg(a_stat['gf'], a_stat['pg']) 
+            a_avg_ga = calc_avg(a_stat['ga'], a_stat['pg'])
+
+            # 🔥🔥🔥 抓取比分 (新增功能) 🔥🔥🔥
+            # 如果比賽未開始，s_h 同 s_a 會係 None
+            s_h = m['score']['fullTime']['home']
+            s_a = m['score']['fullTime']['away']
+            
+            # 將 None 轉為空字串，否則轉為文字
+            score_h_str = str(s_h) if s_h is not None else ""
+            score_a_str = str(s_a) if s_a is not None else ""
+
+            row = [
+                t_str, LEAGUE_MAP.get(league_code, league_code), 
+                NAME_MAP.get(h, h), NAME_MAP.get(a, a),
+                h_stat['rank'], a_stat['rank'],
+                h_stat['form'], a_stat['form'],
+                "","","", # 賠率 (空)
+                h_avg_gf, h_avg_ga, 
+                a_avg_gf, a_avg_ga, 
+                score_h_str, score_a_str, # 🔥 這裡填入比分
+                "" 
+            ]
+            all_rows.append(row)
+        except: pass
+
+    # --- 上傳 ---
+    print(f"4. 正在連線到 Google Sheet ({GOOGLE_SHEET_FILENAME})...")
+    try:
+        client = get_google_sheet_client()
+        sh = client.open(GOOGLE_SHEET_FILENAME)
+        sheet = sh.sheet1
+        sheet.clear() 
+        sheet.update(all_rows) 
+        print(f"✅ 成功！已更新 {len(all_rows)-1} 場賽事 (含比分) 到雲端。")
+        
+    except FileNotFoundError:
+        print(f"❌ 錯誤：找不到 key.json")
+    except Exception as e:
+        print(f"❌ 上傳失敗: {e}")
+
+    input("按 Enter 離開...")
+
+if __name__ == "__main__":
+    main()
