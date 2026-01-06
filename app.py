@@ -3,40 +3,32 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import math
+import os
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳"
-JSON_KEY_FILE = "key.json" 
+# JSON_KEY_FILE = "key.json"  <-- 舊方法，我們不用了
 
 st.set_page_config(page_title="足球AI全能預測", page_icon="⚽", layout="wide")
 
-# ================= 數學大腦 (泊松分佈計算機率) =================
+# ================= 數學大腦 (泊松分佈) =================
 def calculate_probabilities(home_exp, away_exp):
-    """
-    輸入: 主隊預計入球, 客隊預計入球
-    輸出: 主勝率, 和局率, 客勝率, 大球率(>2.5), 細球率(<2.5)
-    """
-    # 簡單的泊松函數
     def poisson(k, lam):
         return (lam**k * math.exp(-lam)) / math.factorial(k)
 
-    # 模擬 0-0 到 5-5 的所有比分機率
     home_win_prob = 0
     draw_prob = 0
     away_win_prob = 0
     over_25_prob = 0
     under_25_prob = 0
 
-    for h in range(6): # 主隊入 0-5 球
-        for a in range(6): # 客隊入 0-5 球
+    for h in range(6): 
+        for a in range(6): 
             prob = poisson(h, home_exp) * poisson(a, away_exp)
-            
-            # 累加勝平負機率
             if h > a: home_win_prob += prob
             elif h == a: draw_prob += prob
             else: away_win_prob += prob
             
-            # 累加大細球機率
             if h + a > 2.5: over_25_prob += prob
             else: under_25_prob += prob
 
@@ -48,17 +40,32 @@ def calculate_probabilities(home_exp, away_exp):
         "under": under_25_prob * 100
     }
 
-# ================= 連接 Google Sheet =================
+# ================= 連接 Google Sheet (智能切換版) =================
 @st.cache_data(ttl=60) 
 def load_data():
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    
     try:
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_KEY_FILE, scope)
+        # 1. 優先嘗試讀取 Streamlit 雲端 Secrets
+        if "gcp_service_account" in st.secrets:
+            creds_dict = st.secrets["gcp_service_account"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        
+        # 2. 如果無 Secrets (例如在自己電腦)，就嘗試讀 key.json 檔案
+        elif os.path.exists("key.json"):
+            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+        
+        else:
+            st.error("❌ 找不到 Key！請在 Streamlit Secrets 設定 [gcp_service_account] 或在本地放入 key.json")
+            return None
+
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         data = sheet.get_all_records()
         return pd.DataFrame(data)
+
     except Exception as e:
+        st.error(f"連線錯誤: {e}")
         return None
 
 # ================= 主程式 =================
@@ -72,7 +79,7 @@ def main():
     df = load_data()
 
     if df is None or df.empty:
-        st.warning("⚠️ 暫時未能讀取數據，請稍後再試。")
+        st.warning("⚠️ 暫時未能讀取數據，請檢查連線設定。")
         return
 
     # 確保數據類型正確
@@ -93,30 +100,27 @@ def main():
         status = row['狀態']
         status_color = "🔴" if "進行中" in status else "🟢" if "完場" in status else "⚪"
         
-        # 獲取預測數值
         exp_h = row.get('主預測', 0)
         exp_a = row.get('客預測', 0)
         total_goals = row.get('總球數', 0)
         
-        # --- 🔥 呼叫數學大腦計算機率 🔥 ---
+        # 數學機率
         probs = calculate_probabilities(exp_h, exp_a)
         
-        # 格式化機率顯示 (例如: 45%)
         p_home = f"{probs['home_win']:.0f}%"
         p_draw = f"{probs['draw']:.0f}%"
         p_away = f"{probs['away_win']:.0f}%"
         p_over = f"{probs['over']:.0f}%"
         p_under = f"{probs['under']:.0f}%"
 
-        # 判斷勝負方向
-        if probs['home_win'] > probs['away_win'] + 10: # 主勝率高過客勝 10%
+        # 判斷文字
+        if probs['home_win'] > probs['away_win'] + 10:
             rec_text = f"🏆 主勝 ({p_home})"
         elif probs['away_win'] > probs['home_win'] + 10:
             rec_text = f"✈️ 客勝 ({p_away})"
         else:
             rec_text = f"⚖️ 勢均力敵 (和: {p_draw})"
 
-        # 判斷大細方向
         if probs['over'] > 55:
             ou_text = f"🔥 大球 ({p_over})"
         elif probs['under'] > 55:
@@ -128,7 +132,6 @@ def main():
             st.markdown("---")
             st.caption(f"{row['時間']} | {row['聯賽']} | {status_color} {status}")
             
-            # 第一行：球隊與比分
             c1, c2, c3 = st.columns([4, 2, 4])
             with c1: 
                 st.markdown(f"**{row['主隊']}**", unsafe_allow_html=True)
@@ -140,7 +143,6 @@ def main():
                 st.markdown(f"<div style='text-align: right'><b>{row['客隊']}</b></div>", unsafe_allow_html=True)
                 st.markdown(f"<div style='text-align: right; color: gray; font-size: small'>客攻:{row.get('客攻(A)',0)}</div>", unsafe_allow_html=True)
 
-            # 第二行：AI 全能預測 (加入機率顯示)
             st.info(f"""
             **🔮 AI 深度分析：**
             \n⚽ **預測比分**： {exp_h} : {exp_a}
@@ -149,7 +151,6 @@ def main():
             \n💡 **AI 建議**： **{rec_text}** |  **{ou_text}**
             """)
             
-            # H2H 小字
             st.caption(f"⚔️ 對賽往績: {row.get('H2H', 'N/A')}")
 
 if __name__ == "__main__":
