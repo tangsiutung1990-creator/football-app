@@ -2,12 +2,51 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import math
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳"
 JSON_KEY_FILE = "key.json" 
 
 st.set_page_config(page_title="足球AI全能預測", page_icon="⚽", layout="wide")
+
+# ================= 數學大腦 (泊松分佈計算機率) =================
+def calculate_probabilities(home_exp, away_exp):
+    """
+    輸入: 主隊預計入球, 客隊預計入球
+    輸出: 主勝率, 和局率, 客勝率, 大球率(>2.5), 細球率(<2.5)
+    """
+    # 簡單的泊松函數
+    def poisson(k, lam):
+        return (lam**k * math.exp(-lam)) / math.factorial(k)
+
+    # 模擬 0-0 到 5-5 的所有比分機率
+    home_win_prob = 0
+    draw_prob = 0
+    away_win_prob = 0
+    over_25_prob = 0
+    under_25_prob = 0
+
+    for h in range(6): # 主隊入 0-5 球
+        for a in range(6): # 客隊入 0-5 球
+            prob = poisson(h, home_exp) * poisson(a, away_exp)
+            
+            # 累加勝平負機率
+            if h > a: home_win_prob += prob
+            elif h == a: draw_prob += prob
+            else: away_win_prob += prob
+            
+            # 累加大細球機率
+            if h + a > 2.5: over_25_prob += prob
+            else: under_25_prob += prob
+
+    return {
+        "home_win": home_win_prob * 100,
+        "draw": draw_prob * 100,
+        "away_win": away_win_prob * 100,
+        "over": over_25_prob * 100,
+        "under": under_25_prob * 100
+    }
 
 # ================= 連接 Google Sheet =================
 @st.cache_data(ttl=60) 
@@ -24,7 +63,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球賽事預測 (Ultimate)")
+    st.title("⚽ 足球賽事預測 (Ultimate Pro)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
@@ -59,18 +98,31 @@ def main():
         exp_a = row.get('客預測', 0)
         total_goals = row.get('總球數', 0)
         
-        # --- 判斷邏輯 ---
-        # 1. 大細球判斷
-        ou_str = "(中)"
-        if total_goals >= 2.8: ou_str = "(🔥大)"
-        elif total_goals <= 2.2: ou_str = "(🧊細)"
+        # --- 🔥 呼叫數學大腦計算機率 🔥 ---
+        probs = calculate_probabilities(exp_h, exp_a)
         
-        # 2. 勝平負判斷 (當一方比另一方多 0.4 球以上視為有優勢)
-        result_rec = "⚖️ 勢均力敵"
-        if exp_h > exp_a + 0.4:
-            result_rec = f"🏆 主勝 ({row['主隊']})"
-        elif exp_a > exp_h + 0.4:
-            result_rec = f"✈️ 客勝 ({row['客隊']})"
+        # 格式化機率顯示 (例如: 45%)
+        p_home = f"{probs['home_win']:.0f}%"
+        p_draw = f"{probs['draw']:.0f}%"
+        p_away = f"{probs['away_win']:.0f}%"
+        p_over = f"{probs['over']:.0f}%"
+        p_under = f"{probs['under']:.0f}%"
+
+        # 判斷勝負方向
+        if probs['home_win'] > probs['away_win'] + 10: # 主勝率高過客勝 10%
+            rec_text = f"🏆 主勝 ({p_home})"
+        elif probs['away_win'] > probs['home_win'] + 10:
+            rec_text = f"✈️ 客勝 ({p_away})"
+        else:
+            rec_text = f"⚖️ 勢均力敵 (和: {p_draw})"
+
+        # 判斷大細方向
+        if probs['over'] > 55:
+            ou_text = f"🔥 大球 ({p_over})"
+        elif probs['under'] > 55:
+            ou_text = f"🧊 細球 ({p_under})"
+        else:
+            ou_text = f"中位數 ({p_over})"
 
         with st.container():
             st.markdown("---")
@@ -88,16 +140,17 @@ def main():
                 st.markdown(f"<div style='text-align: right'><b>{row['客隊']}</b></div>", unsafe_allow_html=True)
                 st.markdown(f"<div style='text-align: right; color: gray; font-size: small'>客攻:{row.get('客攻(A)',0)}</div>", unsafe_allow_html=True)
 
-            # 第二行：AI 全能預測 (重點顯示區)
+            # 第二行：AI 全能預測 (加入機率顯示)
             st.info(f"""
-            **🔮 AI 預測數據：**
+            **🔮 AI 深度分析：**
             \n⚽ **預測比分**： {exp_h} : {exp_a}
-            \n📊 **預測球數**： {total_goals} {ou_str}
-            \n💡 **勝負建議**： **{result_rec}**
+            \n📊 **勝平負率**： 主勝 **{p_home}** | 和 **{p_draw}** | 客勝 **{p_away}**
+            \n🎲 **大細機率**： 大球 (>2.5) **{p_over}** | 細球 (<2.5) **{p_under}**
+            \n💡 **AI 建議**： **{rec_text}** |  **{ou_text}**
             """)
             
-            # H2H 小字顯示
-            st.caption(f"⚔️ 對賽往績 (主-和-客): {row.get('H2H', 'N/A')}")
+            # H2H 小字
+            st.caption(f"⚔️ 對賽往績: {row.get('H2H', 'N/A')}")
 
 if __name__ == "__main__":
     main()
