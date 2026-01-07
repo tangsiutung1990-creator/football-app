@@ -53,8 +53,8 @@ def get_all_standings():
             print(f"⚠️ 無法獲取 {comp} 排名: {e}")
     return standings_map
 
-# ================= 新增：智能計算 H2H (只取近 6 場) =================
-def get_h2h_data(match_id, current_home_id, current_away_id):
+# ================= 新增：智能計算 H2H + 大小球統計 (近10場) =================
+def get_h2h_and_ou_stats(match_id, current_home_id, current_away_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
     
@@ -65,52 +65,68 @@ def get_h2h_data(match_id, current_home_id, current_away_id):
             matches = data.get('matches', []) 
             
             if not matches:
-                return "無對賽記錄"
+                return "無對賽記錄", "N/A"
             
-            # --- 關鍵優化：只取最近 6 場 ---
-            # 1. 先確保按日期由新到舊排序
+            # 1. 按日期由新到舊排序
             matches.sort(key=lambda x: x['utcDate'], reverse=True)
             
-            # 2. 只切片取前 6 場 (Limit to last 6 matches)
-            recent_matches = matches[:6]
+            # 2. 取最近 10 場 (符合你要求)
+            recent_matches = matches[:10]
+            total_games = 0
             
-            # 手動計數器
+            # 計數器
             h_wins = 0
             a_wins = 0
             draws = 0
             
-            # 3. 遍歷這 6 場比賽
+            # 大小球計數器
+            o15 = 0
+            o25 = 0
+            o35 = 0
+            
             for m in recent_matches:
-                # 只計算已完場的
                 if m['status'] != 'FINISHED':
                     continue
                 
-                winner = m['score']['winner']
+                total_games += 1
                 
+                # --- 勝負邏輯 ---
+                winner = m['score']['winner']
                 if winner == 'DRAW':
                     draws += 1
                 elif winner == 'HOME_TEAM':
-                    # 如果過往比賽的主隊 ID 等於 現在比賽的主隊 ID -> 主隊贏
-                    if m['homeTeam']['id'] == current_home_id:
-                        h_wins += 1
-                    else:
-                        # 否則就是現在的客隊贏 (因為現在的客隊當時是主隊)
-                        a_wins += 1
+                    if m['homeTeam']['id'] == current_home_id: h_wins += 1
+                    else: a_wins += 1
                 elif winner == 'AWAY_TEAM':
-                    # 如果過往比賽的客隊 ID 等於 現在比賽的主隊 ID -> 主隊贏
-                    if m['awayTeam']['id'] == current_home_id:
-                        h_wins += 1
-                    else:
-                        # 否則就是現在的客隊贏
-                        a_wins += 1
+                    if m['awayTeam']['id'] == current_home_id: h_wins += 1
+                    else: a_wins += 1
+                
+                # --- 大小球邏輯 ---
+                try:
+                    goals = m['score']['fullTime']['home'] + m['score']['fullTime']['away']
+                    if goals > 1.5: o15 += 1
+                    if goals > 2.5: o25 += 1
+                    if goals > 3.5: o35 += 1
+                except:
+                    pass # 防止數據缺失
             
-            # 格式化輸出 (加了「近6場」字眼)
-            return f"近6場: 主{h_wins}勝 | 和{draws} | 客{a_wins}勝"
+            if total_games == 0:
+                return "無有效對賽", "N/A"
+
+            # 3. 計算百分比
+            p15 = round((o15 / total_games) * 100)
+            p25 = round((o25 / total_games) * 100)
+            p35 = round((o35 / total_games) * 100)
+
+            h2h_str = f"近{total_games}場: 主{h_wins}勝 | 和{draws} | 客{a_wins}勝"
+            ou_str = f"近{total_games}場大球率: 1.5球({p15}%) | 2.5球({p25}%) | 3.5球({p35}%)"
+            
+            return h2h_str, ou_str
         else:
-            return "N/A"
+            return "N/A", "N/A"
     except Exception as e:
         print(f"H2H Error: {e}")
-        return "N/A"
+        return "N/A", "N/A"
 
 # ================= 核心邏輯 =================
 def get_real_data():
@@ -148,13 +164,11 @@ def get_real_data():
         print(f"🔍 找到 {len(matches)} 場比賽，準備逐一處理 (這可能需要幾分鐘)...")
 
         for index, match in enumerate(matches):
-            # 時間
             utc_str = match['utcDate']
             utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
             hk_dt = utc_dt.astimezone(hk_tz)
             time_str = hk_dt.strftime('%Y-%m-%d %H:%M') 
 
-            # 狀態
             status_raw = match['status']
             status = '未開賽'
             if status_raw in ['IN_PLAY', 'PAUSED']: status = '進行中'
@@ -163,20 +177,23 @@ def get_real_data():
             score_h = match['score']['fullTime']['home']
             score_a = match['score']['fullTime']['away']
 
-            # 匹配排名
             home_id = match['homeTeam']['id']
             away_id = match['awayTeam']['id']
             home_info = standings.get(home_id, {'rank': '-', 'form': 'N/A'})
             away_info = standings.get(away_id, {'rank': '-', 'form': 'N/A'})
 
-            # --- H2H 處理邏輯 (已優化為近6場) ---
+            # --- H2H 與 大小球 統計 ---
             h2h_str = "完場不顯示"
+            ou_stats_str = "N/A"
+            
             if status != '完場':
-                print(f"   ⏳ [{index+1}/{len(matches)}] 正在查 H2H (近6場): {match['homeTeam']['name']} vs {match['awayTeam']['name']} ...")
-                h2h_str = get_h2h_data(match['id'], home_id, away_id)
-                time.sleep(6.5) # 遵守 API 限制
+                print(f"   ⏳ [{index+1}/{len(matches)}] 正在查 H2H及大小球: {match['homeTeam']['name']} vs {match['awayTeam']['name']} ...")
+                # 這裡會返回兩個值：對賽往績 和 大小球統計
+                h2h_str, ou_stats_str = get_h2h_and_ou_stats(match['id'], home_id, away_id)
+                time.sleep(6.5) 
             else:
                 h2h_str = "N/A"
+                ou_stats_str = "N/A"
 
             # 模擬預測
             h_rank_val = home_info['rank'] if isinstance(home_info['rank'], int) else 10
@@ -203,7 +220,8 @@ def get_real_data():
                 '狀態': status,
                 '主分': score_h if score_h is not None else '',
                 '客分': score_a if score_a is not None else '',
-                'H2H': h2h_str
+                'H2H': h2h_str,
+                '大小球統計': ou_stats_str # 新增欄位
             }
             cleaned_data.append(match_info)
             
@@ -219,8 +237,9 @@ def main():
     
     if real_data:
         df = pd.DataFrame(real_data)
+        # 增加 '大小球統計' 到 DataFrame
         cols = ['時間', '聯賽', '主隊', '客隊', '主排名', '客排名', '主近況', '客近況', 
-                '主預測', '客預測', '總球數', '主攻(H)', '客攻(A)', '狀態', '主分', '客分', 'H2H']
+                '主預測', '客預測', '總球數', '主攻(H)', '客攻(A)', '狀態', '主分', '客分', 'H2H', '大小球統計']
         df = df.reindex(columns=cols, fill_value='')
         
         sheet = connect_google_sheet()
