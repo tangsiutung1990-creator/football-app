@@ -25,7 +25,7 @@ def connect_google_sheet():
         print(f"❌ Google Sheet 連線失敗: {e}")
         return None
 
-# ================= 獲取聯賽排名 (加強版) =================
+# ================= 獲取聯賽排名 (維持原樣) =================
 def get_all_standings():
     print("📊 正在獲取各聯賽實時排名...")
     standings_map = {}
@@ -41,22 +41,46 @@ def get_all_standings():
                     if table['type'] == 'TOTAL':
                         for entry in table['table']:
                             team_id = entry['team']['id']
-                            # === 關鍵修復：確保 form 不是 None ===
                             raw_form = entry.get('form')
-                            if raw_form is None:
-                                raw_form = "N/A"
-                            
+                            if raw_form is None: raw_form = "N/A"
                             standings_map[team_id] = {
                                 'rank': entry['position'],
-                                'form': raw_form, # 這裡確保寫入字串
+                                'form': raw_form,
                                 'points': entry['points']
                             }
-            time.sleep(2) # 避免 API 限制
+            time.sleep(2) 
         except Exception as e:
             print(f"⚠️ 無法獲取 {comp} 排名: {e}")
     return standings_map
 
-# ================= 核心邏輯 =================
+# ================= 新增：獲取 H2H 對賽往績 =================
+def get_h2h_data(match_id):
+    headers = {'X-Auth-Token': API_KEY}
+    url = f"{BASE_URL}/matches/{match_id}/head2head"
+    
+    try:
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            agg = data.get('aggregates', {})
+            
+            # 提取數據
+            matches_played = agg.get('numberOfMatches', 0)
+            h_wins = agg.get('homeTeam', {}).get('wins', 0)
+            draws = agg.get('homeTeam', {}).get('draws', 0)
+            a_wins = agg.get('awayTeam', {}).get('wins', 0)
+            
+            if matches_played == 0:
+                return "無對賽記錄"
+            
+            # 格式化輸出： "主勝 3 - 和 1 - 客勝 2"
+            return f"主贏{h_wins}場 | 和{draws}場 | 客贏{a_wins}場"
+        else:
+            return "N/A"
+    except:
+        return "N/A"
+
+# ================= 核心邏輯 (整合 H2H) =================
 def get_real_data():
     standings = get_all_standings()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 正在啟動抓取...")
@@ -89,7 +113,9 @@ def get_real_data():
         cleaned_data = []
         hk_tz = pytz.timezone('Asia/Hong_Kong')
 
-        for match in matches:
+        print(f"🔍 找到 {len(matches)} 場比賽，準備逐一處理 (這可能需要幾分鐘)...")
+
+        for index, match in enumerate(matches):
             # 時間
             utc_str = match['utcDate']
             utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
@@ -108,16 +134,26 @@ def get_real_data():
             # 匹配排名
             home_id = match['homeTeam']['id']
             away_id = match['awayTeam']['id']
-            
             home_info = standings.get(home_id, {'rank': '-', 'form': 'N/A'})
             away_info = standings.get(away_id, {'rank': '-', 'form': 'N/A'})
 
-            # 預測運算
+            # --- H2H 處理邏輯 (關鍵修改) ---
+            # 只有當比賽「未開賽」或「進行中」時才去查 API，節省次數
+            h2h_str = "完場不顯示"
+            if status != '完場':
+                print(f"   ⏳ [{index+1}/{len(matches)}] 正在查 H2H: {match['homeTeam']['name']} vs {match['awayTeam']['name']} ...")
+                h2h_str = get_h2h_data(match['id'])
+                # 【重要】每查一次停 6.5 秒，確保不超過每分鐘 10 次的限制
+                time.sleep(6.5)
+            else:
+                # 已完場的比賽直接略過 H2H 查詢，加快速度
+                h2h_str = "N/A"
+
+            # 模擬預測
             h_rank_val = home_info['rank'] if isinstance(home_info['rank'], int) else 10
             a_rank_val = away_info['rank'] if isinstance(away_info['rank'], int) else 10
             rank_bias_h = (20 - h_rank_val) * 0.02
             rank_bias_a = (20 - a_rank_val) * 0.02
-
             fake_home_exp = round(random.uniform(0.8, 2.5) + rank_bias_h, 2)
             fake_away_exp = round(random.uniform(0.6, 2.0) + rank_bias_a, 2)
 
@@ -128,7 +164,7 @@ def get_real_data():
                 '客隊': match['awayTeam']['shortName'] or match['awayTeam']['name'],
                 '主排名': home_info['rank'], 
                 '客排名': away_info['rank'],
-                '主近況': home_info['form'], # 確保這裡不是 None
+                '主近況': home_info['form'],
                 '客近況': away_info['form'],
                 '主預測': fake_home_exp,
                 '客預測': fake_away_exp,
@@ -138,11 +174,11 @@ def get_real_data():
                 '狀態': status,
                 '主分': score_h if score_h is not None else '',
                 '客分': score_a if score_a is not None else '',
-                'H2H': 'N/A'
+                'H2H': h2h_str # 寫入真實 H2H
             }
             cleaned_data.append(match_info)
             
-        print(f"✅ 成功抓取 {len(cleaned_data)} 場賽事！")
+        print(f"✅ 成功處理 {len(cleaned_data)} 場賽事！")
         return cleaned_data
     except Exception as e:
         print(f"⚠️ 執行錯誤: {e}")
