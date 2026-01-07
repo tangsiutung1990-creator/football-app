@@ -11,7 +11,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 (Flexbox 對齊 + 字體縮小版) =================
+# ================= CSS 強力修復區 (字體縮細 + 平排對齊) =================
 st.markdown("""
     <style>
     /* 1. 全局背景設為深色 */
@@ -32,7 +32,7 @@ st.markdown("""
         background-color: #1a1c24;
         border: 1px solid #333;
         border-radius: 12px;
-        padding: 15px; /* 稍微減少 padding */
+        padding: 15px; 
         margin-bottom: 12px;
         box-shadow: 0 4px 10px rgba(0,0,0,0.5);
     }
@@ -52,7 +52,7 @@ st.markdown("""
         color: #fff !important;
         padding: 1px 5px;
         border-radius: 4px;
-        font-size: 0.7rem; /* 字體縮小 */
+        font-size: 0.7rem; /* 字體縮細 */
         font-weight: bold;
         border: 1px solid #666;
         vertical-align: middle;
@@ -62,12 +62,12 @@ st.markdown("""
     /* 6. 近況圈圈 */
     .form-circle {
         display: inline-block;
-        width: 18px; /* 縮小 */
+        width: 18px; /* 縮細 */
         height: 18px;
         line-height: 18px;
         text-align: center;
         border-radius: 50%;
-        font-size: 0.65rem; /* 字體縮小 */
+        font-size: 0.65rem; /* 縮細 */
         margin: 0 1px;
         color: white !important; 
         font-weight: bold;
@@ -90,7 +90,7 @@ st.markdown("""
         background-color: #007bff;
     }
 
-    /* 9. Flexbox 佈局類別 (字體已在此處調整) */
+    /* 9. Flexbox 佈局類別 (確保左右絕對平排) */
     .match-row {
         display: flex;
         align-items: center; 
@@ -119,23 +119,24 @@ st.markdown("""
         justify-content: center;
     }
     .team-name {
-        font-size: 1.2rem; /* 字體縮小 (原 1.5rem) */
+        font-size: 1.2rem; /* 字體調整：1.2rem */
         font-weight: bold;
         margin: 3px 0;
         white-space: nowrap;
     }
     .score-text {
-        font-size: 1.8rem; /* 字體縮小 (原 2.2rem) */
+        font-size: 1.8rem; /* 字體調整：1.8rem */
         font-weight: bold; 
         line-height: 1;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# ================= 輔助函式 =================
+# ================= 輔助函式：修復 "None" 問題 =================
 def get_form_html(form_str):
-    if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A':
-        return "<span style='color:#666; font-size:0.7rem;'>N/A</span>"
+    # 檢查是否為空、None 或字串 "None" (針對你的 Google Sheet 情況)
+    if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A' or str(form_str) == 'None':
+        return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     
     html = ""
     form_str = str(form_str).strip()[-5:]
@@ -144,7 +145,7 @@ def get_form_html(form_str):
         elif char.upper() == 'D': html += f'<span class="form-circle form-d">D</span>'
         elif char.upper() == 'L': html += f'<span class="form-circle form-l">L</span>'
     
-    if html == "": return "<span style='color:#666; font-size:0.7rem;'>-</span>"
+    if html == "": return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     return html
 
 # ================= 數學大腦 =================
@@ -266,6 +267,7 @@ def main():
             
             h_rank = row['主排名'] if str(row['主排名']).isdigit() else "-"
             a_rank = row['客排名'] if str(row['客排名']).isdigit() else "-"
+            # 這裡呼叫修正後的函式
             h_form_html = get_form_html(row.get('主近況', ''))
             a_form_html = get_form_html(row.get('客近況', ''))
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
@@ -279,7 +281,7 @@ def main():
                     st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
                     st.write("") 
                     
-                    # === 關鍵修復：這裡的 HTML 完全靠左，沒有縮排，防止被當成代碼 ===
+                    # 使用 Flexbox 確保絕對平排，並應用縮細的 CSS 類別
                     match_html = f"""
 <div class="match-row">
 <div class="team-col-home">
