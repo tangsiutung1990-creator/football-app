@@ -11,7 +11,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 (字體縮細 + 平排對齊 + 黑魂版) =================
+# ================= CSS 強力修復區 (字體縮細 + 平排對齊 + 黑魂版 + H2H優化) =================
 st.markdown("""
     <style>
     /* 1. 全局背景設為深色 */
@@ -45,7 +45,16 @@ st.markdown("""
     
     /* 次要文字顏色 */
     .sub-text { color: #cccccc !important; font-size: 0.8rem; }
-    .h2h-text { color: #a0a0a0 !important; font-size: 0.75rem; margin-bottom: 5px; }
+    
+    /* H2H 文字樣式 (金色高亮) */
+    .h2h-text { 
+        color: #ffd700 !important; 
+        font-size: 0.8rem; 
+        margin-bottom: 8px; 
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        text-shadow: 0px 0px 5px rgba(255, 215, 0, 0.3);
+    }
 
     /* 5. 排名 Badge */
     .rank-badge {
@@ -135,6 +144,7 @@ st.markdown("""
 
 # ================= 輔助函式：防錯顯示 =================
 def get_form_html(form_str):
+    # 檢查 "N/A", "None", 或空值
     if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A' or str(form_str) == 'None':
         return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     
@@ -271,9 +281,13 @@ def main():
             a_form_html = get_form_html(row.get('客近況', ''))
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
-            # 讀取 H2H，如果沒有則顯示 N/A
-            h2h_info = row.get('H2H', '暫無記錄')
-            if pd.isna(h2h_info) or str(h2h_info) == 'None': h2h_info = '暫無記錄'
+            # --- 處理 H2H 顯示邏輯 (讀取新版 run_me.py 的數據) ---
+            h2h_info = row.get('H2H', 'N/A')
+            if pd.isna(h2h_info) or str(h2h_info) == 'None' or str(h2h_info) == 'N/A': 
+                h2h_info_display = '<span style="color:#666; font-weight:normal;">對賽往績: N/A</span>'
+            else:
+                # 這裡會顯示 "近6場: 主X勝 | 和Y | 客Z勝"
+                h2h_info_display = f"⚔️ {h2h_info}"
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
@@ -313,9 +327,9 @@ def main():
                 with col_ai:
                     st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
                     
-                    # === 新增 H2H 顯示區 ===
-                    st.markdown(f"<div class='h2h-text'>⚔️ {h2h_info}</div>", unsafe_allow_html=True)
-                    
+                    # 顯示 H2H (使用了 h2h-text CSS class 變金色)
+                    st.markdown(f"<div class='h2h-text'>{h2h_info_display}</div>", unsafe_allow_html=True)
+
                     st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時分析</div>", unsafe_allow_html=True)
                     
                     st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
