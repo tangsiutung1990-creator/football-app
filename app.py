@@ -56,7 +56,7 @@ st.markdown("""
         text-shadow: 0px 0px 5px rgba(255, 215, 0, 0.3);
     }
     
-    /* 大小球統計樣式 (淺藍色 - 新增) */
+    /* 大小球統計樣式 (淺藍色) */
     .ou-stats-text {
         color: #00ffff !important;
         font-size: 0.75rem;
@@ -64,6 +64,16 @@ st.markdown("""
         font-weight: normal;
         letter-spacing: 0.5px;
         opacity: 0.9;
+    }
+    
+    /* 身價樣式 (綠色 - 顯示在球隊名下) */
+    .market-value-text {
+        color: #28a745 !important;
+        font-size: 0.85rem;
+        font-weight: bold;
+        margin-top: 2px;
+        margin-bottom: 4px;
+        text-shadow: 0px 0px 5px rgba(40, 167, 69, 0.2);
     }
 
     /* 5. 排名 Badge */
@@ -141,7 +151,7 @@ st.markdown("""
     .team-name {
         font-size: 1.2rem; 
         font-weight: bold;
-        margin: 3px 0;
+        margin: 1px 0; 
         white-space: nowrap;
     }
     .score-text {
@@ -166,6 +176,18 @@ def get_form_html(form_str):
     
     if html == "": return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     return html
+
+# 格式化身價顯示 (例如 100 -> €100M)
+def format_market_value(val):
+    if pd.isna(val) or val == '' or str(val).upper() == 'N/A' or str(val).upper() == 'NONE':
+        return ""
+    # 嘗試將其轉為數字顯示，如果失敗則直接顯示原文字
+    try:
+        # 假設用戶輸入的是數字 (例如 100 代表 1億)
+        num_val = float(str(val).replace('€','').replace('M','').replace(',',''))
+        return f"€{int(num_val)}M"
+    except:
+        return str(val)
 
 # ================= 數學大腦 =================
 def calculate_probabilities(home_exp, away_exp):
@@ -290,17 +312,37 @@ def main():
             a_form_html = get_form_html(row.get('客近況', ''))
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
-            # --- H2H 與 大小球 顯示邏輯 ---
+            # --- 讀取 & 處理欄位 ---
             h2h_info = row.get('H2H', 'N/A')
-            ou_stats_info = row.get('大小球統計', 'N/A') # 讀取新欄位
+            ou_stats_info = row.get('大小球統計', 'N/A')
+            
+            # 讀取身價 (嘗試轉數字做分析)
+            raw_h_val = row.get('主隊身價', 'N/A')
+            raw_a_val = row.get('客隊身價', 'N/A')
+            h_value_display = format_market_value(raw_h_val)
+            a_value_display = format_market_value(raw_a_val)
+
+            # 身價分析邏輯
+            market_analysis = ""
+            try:
+                # 只有當填寫的是純數字時，才能進行倍數分析
+                h_v_num = float(str(raw_h_val).replace('€','').replace('M',''))
+                a_v_num = float(str(raw_a_val).replace('€','').replace('M',''))
+                
+                if h_v_num > a_v_num * 2.5:
+                    market_analysis = f"💰 **身價懸殊**: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！"
+                elif a_v_num > h_v_num * 2.5:
+                    market_analysis = f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！"
+            except:
+                pass # 如果格式不是數字，就不顯示分析
 
             # 格式化顯示文字
-            if pd.isna(h2h_info) or str(h2h_info) == 'None' or str(h2h_info) == 'N/A': 
+            if pd.isna(h2h_info) or str(h2h_info) in ['None', 'N/A', '']: 
                 h2h_display = '<span style="color:#666; font-weight:normal;">對賽往績: N/A</span>'
             else:
                 h2h_display = f"⚔️ {h2h_info}"
             
-            if pd.isna(ou_stats_info) or str(ou_stats_info) == 'None' or str(ou_stats_info) == 'N/A':
+            if pd.isna(ou_stats_info) or str(ou_stats_info) in ['None', 'N/A', '']:
                 ou_display = ""
             else:
                 ou_display = f"📊 {ou_stats_info}"
@@ -319,6 +361,7 @@ def main():
 <div class="team-col-home">
 <div><span class="rank-badge">#{h_rank}</span></div>
 <div class="team-name">{row['主隊']}</div>
+<div class="market-value-text">{h_value_display}</div>
 <div style="margin-top:2px;">{h_form_html}</div>
 </div>
 <div class="score-col">
@@ -334,6 +377,7 @@ def main():
 <div class="team-col-away">
 <div><span class="rank-badge">#{a_rank}</span></div>
 <div class="team-name">{row['客隊']}</div>
+<div class="market-value-text">{a_value_display}</div>
 <div style="margin-top:2px;">{a_form_html}</div>
 </div>
 </div>
@@ -345,7 +389,7 @@ def main():
                     
                     # 顯示 H2H (金色)
                     st.markdown(f"<div class='h2h-text'>{h2h_display}</div>", unsafe_allow_html=True)
-                    # 顯示 大小球統計 (淺藍色) - 位於 H2H 下方
+                    # 顯示 大小球統計 (淺藍色)
                     if ou_display:
                         st.markdown(f"<div class='ou-stats-text'>{ou_display}</div>", unsafe_allow_html=True)
 
@@ -357,10 +401,16 @@ def main():
                     rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
                     rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
                     
+                    # 身價分析如果存在，加入顯示
+                    analysis_html = ""
+                    if market_analysis:
+                        analysis_html = f"<br><span style='color:#ffa500'>{market_analysis}</span>"
+
                     st.markdown(f"""
                     <div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>
                         🎯 預期: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
                         💡 建議: <b style='color:{rec_color}!important'>{rec_text}</b>
+                        {analysis_html}
                     </div>
                     """, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True) 
