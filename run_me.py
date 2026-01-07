@@ -25,7 +25,7 @@ def connect_google_sheet():
         print(f"❌ Google Sheet 連線失敗: {e}")
         return None
 
-# ================= 獲取聯賽排名 (新加入) =================
+# ================= 獲取聯賽排名 (加強版) =================
 def get_all_standings():
     print("📊 正在獲取各聯賽實時排名...")
     standings_map = {}
@@ -33,41 +33,39 @@ def get_all_standings():
     
     for comp in COMPETITIONS:
         try:
-            # 歐聯 (CL) 的排名結構較複雜，這裡主要處理聯賽
             url = f"{BASE_URL}/competitions/{comp}/standings"
             res = requests.get(url, headers=headers)
             if res.status_code == 200:
                 data = res.json()
-                # 提取聯賽表
                 for table in data.get('standings', []):
                     if table['type'] == 'TOTAL':
                         for entry in table['table']:
                             team_id = entry['team']['id']
+                            # === 關鍵修復：確保 form 不是 None ===
+                            raw_form = entry.get('form')
+                            if raw_form is None:
+                                raw_form = "N/A"
+                            
                             standings_map[team_id] = {
                                 'rank': entry['position'],
-                                'form': entry.get('form', 'N/A'), # 部分聯賽提供 WDL 字串
-                                'played': entry['playedGames'],
+                                'form': raw_form, # 這裡確保寫入字串
                                 'points': entry['points']
                             }
-            # 避免觸發 API 頻率限制 (免費版 1 分鐘 10 次)
-            time.sleep(2) 
+            time.sleep(2) # 避免 API 限制
         except Exception as e:
             print(f"⚠️ 無法獲取 {comp} 排名: {e}")
     return standings_map
 
-# ================= 核心邏輯 (加入真實排名與近況) =================
+# ================= 核心邏輯 =================
 def get_real_data():
-    # 1. 先抓排名數據
     standings = get_all_standings()
-    
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 正在啟動專業版抓取 (含排名與近況)...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 正在啟動抓取...")
     
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
     start_date = (today - timedelta(days=6)).strftime('%Y-%m-%d')
     end_date = (today + timedelta(days=3)).strftime('%Y-%m-%d')
     
-    # 組合聯賽代碼字串供 API 使用
     comp_str = ",".join(COMPETITIONS)
     params = {
         'dateFrom': start_date,
@@ -85,14 +83,14 @@ def get_real_data():
         matches = data.get('matches', [])
         
         if not matches:
-            print(f"⚠️ 這段時間找不到比賽數據。")
+            print(f"⚠️ 無比賽數據。")
             return []
 
         cleaned_data = []
         hk_tz = pytz.timezone('Asia/Hong_Kong')
 
         for match in matches:
-            # 時間處理
+            # 時間
             utc_str = match['utcDate']
             utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
             hk_dt = utc_dt.astimezone(hk_tz)
@@ -104,22 +102,19 @@ def get_real_data():
             if status_raw in ['IN_PLAY', 'PAUSED']: status = '進行中'
             elif status_raw == 'FINISHED': status = '完場'
             
-            # 比分
             score_h = match['score']['fullTime']['home']
             score_a = match['score']['fullTime']['away']
 
-            # --- 匹配真實排名與近況 ---
+            # 匹配排名
             home_id = match['homeTeam']['id']
             away_id = match['awayTeam']['id']
             
-            home_rank_info = standings.get(home_id, {'rank': '-', 'form': 'N/A'})
-            away_rank_info = standings.get(away_id, {'rank': '-', 'form': 'N/A'})
+            home_info = standings.get(home_id, {'rank': '-', 'form': 'N/A'})
+            away_info = standings.get(away_id, {'rank': '-', 'form': 'N/A'})
 
-            # 模擬預測 (維持你的邏輯，但可根據排名微調)
-            # 如果排名高(數字小)，隨機數稍微調高一點點
-            h_rank_val = home_rank_info['rank'] if isinstance(home_rank_info['rank'], int) else 10
-            a_rank_val = away_rank_info['rank'] if isinstance(away_rank_info['rank'], int) else 10
-            
+            # 預測運算
+            h_rank_val = home_info['rank'] if isinstance(home_info['rank'], int) else 10
+            a_rank_val = away_info['rank'] if isinstance(away_info['rank'], int) else 10
             rank_bias_h = (20 - h_rank_val) * 0.02
             rank_bias_a = (20 - a_rank_val) * 0.02
 
@@ -131,10 +126,10 @@ def get_real_data():
                 '聯賽': match['competition']['name'],
                 '主隊': match['homeTeam']['shortName'] or match['homeTeam']['name'],
                 '客隊': match['awayTeam']['shortName'] or match['awayTeam']['name'],
-                '主排名': home_rank_info['rank'], 
-                '客排名': away_rank_info['rank'],
-                '主近況': home_rank_info['form'],
-                '客近況': away_rank_info['form'],
+                '主排名': home_info['rank'], 
+                '客排名': away_info['rank'],
+                '主近況': home_info['form'], # 確保這裡不是 None
+                '客近況': away_info['form'],
                 '主預測': fake_home_exp,
                 '客預測': fake_away_exp,
                 '總球數': round(fake_home_exp + fake_away_exp, 1),
@@ -147,13 +142,13 @@ def get_real_data():
             }
             cleaned_data.append(match_info)
             
-        print(f"✅ 成功抓取 {len(cleaned_data)} 場賽事並匹配排名！")
+        print(f"✅ 成功抓取 {len(cleaned_data)} 場賽事！")
         return cleaned_data
     except Exception as e:
         print(f"⚠️ 執行錯誤: {e}")
         return []
 
-# ================= 主程式 (GitHub Actions 模式) =================
+# ================= 主程式 =================
 def main():
     real_data = get_real_data()
     
