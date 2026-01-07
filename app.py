@@ -50,13 +50,13 @@ st.markdown("""
     .h2h-text { 
         color: #ffd700 !important; 
         font-size: 0.8rem; 
-        margin-bottom: 3px; 
+        margin-bottom: 2px; 
         font-weight: bold;
         letter-spacing: 0.5px;
         text-shadow: 0px 0px 5px rgba(255, 215, 0, 0.3);
     }
     
-    /* 大小球統計樣式 (淺藍色) */
+    /* 大小球統計樣式 (淺藍色) - 這裡是你要加回的部分 */
     .ou-stats-text {
         color: #00ffff !important;
         font-size: 0.75rem;
@@ -181,12 +181,9 @@ def get_form_html(form_str):
 def format_market_value(val):
     if pd.isna(val) or val == '' or str(val).upper() == 'N/A' or str(val).upper() == 'NONE':
         return ""
-    # 嘗試將其轉為數字顯示，如果失敗則直接顯示原文字
     try:
-        # 清除可能存在的符號，確保是純數字
         clean_val = str(val).replace('€','').replace('M','').replace(',','').strip()
         num_val = float(clean_val)
-        # 顯示為整數，例如 1260
         return f"€{int(num_val)}M"
     except:
         return str(val)
@@ -316,19 +313,17 @@ def main():
             
             # --- 讀取 & 處理欄位 ---
             h2h_info = row.get('H2H', 'N/A')
-            ou_stats_info = row.get('大小球統計', 'N/A')
+            ou_stats_info = row.get('大小球統計', 'N/A') # 讀取大小球統計
             
-            # 讀取身價 (嘗試轉數字做分析)
+            # 讀取身價
             raw_h_val = row.get('主隊身價', 'N/A')
             raw_a_val = row.get('客隊身價', 'N/A')
-            # 格式化顯示 (加 € M)
             h_value_display = format_market_value(raw_h_val)
             a_value_display = format_market_value(raw_a_val)
 
-            # 身價分析邏輯 (計算倍數)
+            # 身價分析邏輯
             market_analysis = ""
             try:
-                # 清理數據轉為 float 進行比較
                 clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
                 clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
                 
@@ -341,15 +336,15 @@ def main():
                     elif a_v_num > h_v_num * 2.5:
                         market_analysis = f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！"
             except:
-                pass # 如果格式不對或轉換失敗，就不顯示分析
+                pass 
 
-            # 格式化 H2H 顯示文字
+            # H2H 格式化
             if pd.isna(h2h_info) or str(h2h_info) in ['None', 'N/A', '']: 
                 h2h_display = '<span style="color:#666; font-weight:normal;">對賽往績: N/A</span>'
             else:
                 h2h_display = f"⚔️ {h2h_info}"
             
-            # 格式化 大小球 顯示文字
+            # 大小球 格式化
             if pd.isna(ou_stats_info) or str(ou_stats_info) in ['None', 'N/A', '']:
                 ou_display = ""
             else:
@@ -397,7 +392,7 @@ def main():
                     
                     # 顯示 H2H (金色)
                     st.markdown(f"<div class='h2h-text'>{h2h_display}</div>", unsafe_allow_html=True)
-                    # 顯示 大小球統計 (淺藍色)
+                    # 顯示 大小球統計 (淺藍色) - 確保它在 H2H 下方
                     if ou_display:
                         st.markdown(f"<div class='ou-stats-text'>{ou_display}</div>", unsafe_allow_html=True)
 
@@ -409,7 +404,7 @@ def main():
                     rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
                     rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
                     
-                    # 如果有身價懸殊分析，顯示出來
+                    # 身價分析
                     analysis_html = ""
                     if market_analysis:
                         analysis_html = f"<br><span style='color:#ffa500; font-size: 0.75rem;'>{market_analysis}</span>"
