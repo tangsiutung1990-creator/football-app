@@ -11,7 +11,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 (字體縮細 + 平排對齊) =================
+# ================= CSS 強力修復區 (字體縮細 + 平排對齊 + 黑魂版) =================
 st.markdown("""
     <style>
     /* 1. 全局背景設為深色 */
@@ -45,6 +45,7 @@ st.markdown("""
     
     /* 次要文字顏色 */
     .sub-text { color: #cccccc !important; font-size: 0.8rem; }
+    .h2h-text { color: #a0a0a0 !important; font-size: 0.75rem; margin-bottom: 5px; }
 
     /* 5. 排名 Badge */
     .rank-badge {
@@ -52,7 +53,7 @@ st.markdown("""
         color: #fff !important;
         padding: 1px 5px;
         border-radius: 4px;
-        font-size: 0.7rem; /* 字體縮細 */
+        font-size: 0.7rem; 
         font-weight: bold;
         border: 1px solid #666;
         vertical-align: middle;
@@ -62,12 +63,12 @@ st.markdown("""
     /* 6. 近況圈圈 */
     .form-circle {
         display: inline-block;
-        width: 18px; /* 縮細 */
+        width: 18px; 
         height: 18px;
         line-height: 18px;
         text-align: center;
         border-radius: 50%;
-        font-size: 0.65rem; /* 縮細 */
+        font-size: 0.65rem; 
         margin: 0 1px;
         color: white !important; 
         font-weight: bold;
@@ -119,22 +120,21 @@ st.markdown("""
         justify-content: center;
     }
     .team-name {
-        font-size: 1.2rem; /* 字體調整：1.2rem */
+        font-size: 1.2rem; 
         font-weight: bold;
         margin: 3px 0;
         white-space: nowrap;
     }
     .score-text {
-        font-size: 1.8rem; /* 字體調整：1.8rem */
+        font-size: 1.8rem; 
         font-weight: bold; 
         line-height: 1;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# ================= 輔助函式：修復 "None" 問題 =================
+# ================= 輔助函式：防錯顯示 =================
 def get_form_html(form_str):
-    # 檢查是否為空、None 或字串 "None" (針對你的 Google Sheet 情況)
     if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A' or str(form_str) == 'None':
         return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     
@@ -267,11 +267,14 @@ def main():
             
             h_rank = row['主排名'] if str(row['主排名']).isdigit() else "-"
             a_rank = row['客排名'] if str(row['客排名']).isdigit() else "-"
-            # 這裡呼叫修正後的函式
             h_form_html = get_form_html(row.get('主近況', ''))
             a_form_html = get_form_html(row.get('客近況', ''))
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
+            # 讀取 H2H，如果沒有則顯示 N/A
+            h2h_info = row.get('H2H', '暫無記錄')
+            if pd.isna(h2h_info) or str(h2h_info) == 'None': h2h_info = '暫無記錄'
+
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
                 
@@ -281,7 +284,6 @@ def main():
                     st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
                     st.write("") 
                     
-                    # 使用 Flexbox 確保絕對平排，並應用縮細的 CSS 類別
                     match_html = f"""
 <div class="match-row">
 <div class="team-col-home">
@@ -310,6 +312,10 @@ def main():
 
                 with col_ai:
                     st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
+                    
+                    # === 新增 H2H 顯示區 ===
+                    st.markdown(f"<div class='h2h-text'>⚔️ {h2h_info}</div>", unsafe_allow_html=True)
+                    
                     st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時分析</div>", unsafe_allow_html=True)
                     
                     st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
