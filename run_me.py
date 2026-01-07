@@ -25,7 +25,7 @@ def connect_google_sheet():
         print(f"❌ Google Sheet 連線失敗: {e}")
         return None
 
-# ================= 獲取聯賽排名 (維持原樣) =================
+# ================= 獲取聯賽排名 =================
 def get_all_standings():
     print("📊 正在獲取各聯賽實時排名...")
     standings_map = {}
@@ -53,8 +53,8 @@ def get_all_standings():
             print(f"⚠️ 無法獲取 {comp} 排名: {e}")
     return standings_map
 
-# ================= 新增：獲取 H2H 對賽往績 =================
-def get_h2h_data(match_id):
+# ================= 新增：智能計算 H2H (只取近 6 場) =================
+def get_h2h_data(match_id, current_home_id, current_away_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
     
@@ -62,25 +62,57 @@ def get_h2h_data(match_id):
         res = requests.get(url, headers=headers)
         if res.status_code == 200:
             data = res.json()
-            agg = data.get('aggregates', {})
+            matches = data.get('matches', []) 
             
-            # 提取數據
-            matches_played = agg.get('numberOfMatches', 0)
-            h_wins = agg.get('homeTeam', {}).get('wins', 0)
-            draws = agg.get('homeTeam', {}).get('draws', 0)
-            a_wins = agg.get('awayTeam', {}).get('wins', 0)
-            
-            if matches_played == 0:
+            if not matches:
                 return "無對賽記錄"
             
-            # 格式化輸出： "主勝 3 - 和 1 - 客勝 2"
-            return f"主贏{h_wins}場 | 和{draws}場 | 客贏{a_wins}場"
+            # --- 關鍵優化：只取最近 6 場 ---
+            # 1. 先確保按日期由新到舊排序
+            matches.sort(key=lambda x: x['utcDate'], reverse=True)
+            
+            # 2. 只切片取前 6 場 (Limit to last 6 matches)
+            recent_matches = matches[:6]
+            
+            # 手動計數器
+            h_wins = 0
+            a_wins = 0
+            draws = 0
+            
+            # 3. 遍歷這 6 場比賽
+            for m in recent_matches:
+                # 只計算已完場的
+                if m['status'] != 'FINISHED':
+                    continue
+                
+                winner = m['score']['winner']
+                
+                if winner == 'DRAW':
+                    draws += 1
+                elif winner == 'HOME_TEAM':
+                    # 如果過往比賽的主隊 ID 等於 現在比賽的主隊 ID -> 主隊贏
+                    if m['homeTeam']['id'] == current_home_id:
+                        h_wins += 1
+                    else:
+                        # 否則就是現在的客隊贏 (因為現在的客隊當時是主隊)
+                        a_wins += 1
+                elif winner == 'AWAY_TEAM':
+                    # 如果過往比賽的客隊 ID 等於 現在比賽的主隊 ID -> 主隊贏
+                    if m['awayTeam']['id'] == current_home_id:
+                        h_wins += 1
+                    else:
+                        # 否則就是現在的客隊贏
+                        a_wins += 1
+            
+            # 格式化輸出 (加了「近6場」字眼)
+            return f"近6場: 主{h_wins}勝 | 和{draws} | 客{a_wins}勝"
         else:
             return "N/A"
-    except:
+    except Exception as e:
+        print(f"H2H Error: {e}")
         return "N/A"
 
-# ================= 核心邏輯 (整合 H2H) =================
+# ================= 核心邏輯 =================
 def get_real_data():
     standings = get_all_standings()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 正在啟動抓取...")
@@ -137,16 +169,13 @@ def get_real_data():
             home_info = standings.get(home_id, {'rank': '-', 'form': 'N/A'})
             away_info = standings.get(away_id, {'rank': '-', 'form': 'N/A'})
 
-            # --- H2H 處理邏輯 (關鍵修改) ---
-            # 只有當比賽「未開賽」或「進行中」時才去查 API，節省次數
+            # --- H2H 處理邏輯 (已優化為近6場) ---
             h2h_str = "完場不顯示"
             if status != '完場':
-                print(f"   ⏳ [{index+1}/{len(matches)}] 正在查 H2H: {match['homeTeam']['name']} vs {match['awayTeam']['name']} ...")
-                h2h_str = get_h2h_data(match['id'])
-                # 【重要】每查一次停 6.5 秒，確保不超過每分鐘 10 次的限制
-                time.sleep(6.5)
+                print(f"   ⏳ [{index+1}/{len(matches)}] 正在查 H2H (近6場): {match['homeTeam']['name']} vs {match['awayTeam']['name']} ...")
+                h2h_str = get_h2h_data(match['id'], home_id, away_id)
+                time.sleep(6.5) # 遵守 API 限制
             else:
-                # 已完場的比賽直接略過 H2H 查詢，加快速度
                 h2h_str = "N/A"
 
             # 模擬預測
@@ -174,7 +203,7 @@ def get_real_data():
                 '狀態': status,
                 '主分': score_h if score_h is not None else '',
                 '客分': score_a if score_a is not None else '',
-                'H2H': h2h_str # 寫入真實 H2H
+                'H2H': h2h_str
             }
             cleaned_data.append(match_info)
             
