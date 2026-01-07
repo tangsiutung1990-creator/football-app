@@ -177,14 +177,16 @@ def get_form_html(form_str):
     if html == "": return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     return html
 
-# 格式化身價顯示 (例如 100 -> €100M)
+# 格式化身價顯示 (例如 Sheet 填 1260 -> 顯示 €1260M)
 def format_market_value(val):
     if pd.isna(val) or val == '' or str(val).upper() == 'N/A' or str(val).upper() == 'NONE':
         return ""
     # 嘗試將其轉為數字顯示，如果失敗則直接顯示原文字
     try:
-        # 假設用戶輸入的是數字 (例如 100 代表 1億)
-        num_val = float(str(val).replace('€','').replace('M','').replace(',',''))
+        # 清除可能存在的符號，確保是純數字
+        clean_val = str(val).replace('€','').replace('M','').replace(',','').strip()
+        num_val = float(clean_val)
+        # 顯示為整數，例如 1260
         return f"€{int(num_val)}M"
     except:
         return str(val)
@@ -319,29 +321,35 @@ def main():
             # 讀取身價 (嘗試轉數字做分析)
             raw_h_val = row.get('主隊身價', 'N/A')
             raw_a_val = row.get('客隊身價', 'N/A')
+            # 格式化顯示 (加 € M)
             h_value_display = format_market_value(raw_h_val)
             a_value_display = format_market_value(raw_a_val)
 
-            # 身價分析邏輯
+            # 身價分析邏輯 (計算倍數)
             market_analysis = ""
             try:
-                # 只有當填寫的是純數字時，才能進行倍數分析
-                h_v_num = float(str(raw_h_val).replace('€','').replace('M',''))
-                a_v_num = float(str(raw_a_val).replace('€','').replace('M',''))
+                # 清理數據轉為 float 進行比較
+                clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
+                clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
                 
-                if h_v_num > a_v_num * 2.5:
-                    market_analysis = f"💰 **身價懸殊**: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！"
-                elif a_v_num > h_v_num * 2.5:
-                    market_analysis = f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！"
+                if clean_h and clean_a and clean_h != 'N/A' and clean_a != 'N/A':
+                    h_v_num = float(clean_h)
+                    a_v_num = float(clean_a)
+                    
+                    if h_v_num > a_v_num * 2.5:
+                        market_analysis = f"💰 **身價懸殊**: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！"
+                    elif a_v_num > h_v_num * 2.5:
+                        market_analysis = f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！"
             except:
-                pass # 如果格式不是數字，就不顯示分析
+                pass # 如果格式不對或轉換失敗，就不顯示分析
 
-            # 格式化顯示文字
+            # 格式化 H2H 顯示文字
             if pd.isna(h2h_info) or str(h2h_info) in ['None', 'N/A', '']: 
                 h2h_display = '<span style="color:#666; font-weight:normal;">對賽往績: N/A</span>'
             else:
                 h2h_display = f"⚔️ {h2h_info}"
             
+            # 格式化 大小球 顯示文字
             if pd.isna(ou_stats_info) or str(ou_stats_info) in ['None', 'N/A', '']:
                 ou_display = ""
             else:
@@ -401,10 +409,10 @@ def main():
                     rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
                     rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
                     
-                    # 身價分析如果存在，加入顯示
+                    # 如果有身價懸殊分析，顯示出來
                     analysis_html = ""
                     if market_analysis:
-                        analysis_html = f"<br><span style='color:#ffa500'>{market_analysis}</span>"
+                        analysis_html = f"<br><span style='color:#ffa500; font-size: 0.75rem;'>{market_analysis}</span>"
 
                     st.markdown(f"""
                     <div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>
