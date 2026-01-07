@@ -9,78 +9,98 @@ from datetime import datetime
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Pro Plus)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Plus)", page_icon="⚽", layout="wide")
 
-# ================= CSS 修復區 (重點修改) =================
-# 修復重點：強制將 .stMetric 和 .match-card 內的文字設為深色，解決 Dark Mode 下白底白字的問題
+# ================= CSS 強力修復區 =================
 st.markdown("""
     <style>
-    /* 主背景微調 */
+    /* 1. 全局設定：背景微調，讓卡片更突出 */
     .main { background-color: #0e1117; }
     
-    /* 1. 頂部數據格 (Metric) 修復 */
+    /* 2. 數據格 (Metric) 修復 - 強制白底黑字 */
     div[data-testid="stMetric"] {
         background-color: #ffffff !important;
+        border-radius: 10px;
         padding: 15px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
-    /* 強制數據格內的標題和數字變為深色 */
-    div[data-testid="stMetricLabel"] { color: #666666 !important; }
-    div[data-testid="stMetricValue"] { color: #000000 !important; }
+    /* 標籤文字 (例如：總賽事) 改為深灰色 */
+    div[data-testid="stMetricLabel"] p {
+        color: #555555 !important;
+        font-weight: bold;
+    }
+    /* 數值文字 (例如：65) 改為純黑色 */
+    div[data-testid="stMetricValue"] div {
+        color: #000000 !important;
+    }
 
-    /* 2. 比賽卡片 (Match Card) 修復 */
+    /* 3. 比賽卡片 (Match Card) 修復 - 強制白底黑字 */
     .match-card { 
-        border-radius: 15px; 
-        background-color: #ffffff; /* 白底 */
-        color: #000000; /* 強制黑字 (修復睇唔到字嘅問題) */
-        padding: 25px; 
-        margin-bottom: 20px; 
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        border-radius: 12px; 
+        background-color: #ffffff !important; 
+        padding: 20px; 
+        margin-bottom: 15px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border-left: 6px solid #007BFF;
     }
     
-    /* 確保卡片內所有標題和文字都是深色 */
-    .match-card h1, .match-card h2, .match-card h3, .match-card b, .match-card span {
-        color: #000000; 
+    /* 核心修復：強制卡片內所有文字變成黑色，解決 Dark Mode 看不到字的問題 */
+    .match-card, .match-card div, .match-card h1, .match-card h2, .match-card span, .match-card b {
+        color: #000000;
+        font-family: "Source Sans Pro", sans-serif;
     }
+
+    /* 4. 特殊元件顏色重設 (因為上面強制變黑了，這裡要加回顏色) */
+    .sub-text { color: #666666 !important; font-size: 0.85rem; }
     
-    /* 特殊標籤顏色保持原樣 */
+    /* 排名 Badge */
     .rank-badge {
-        background-color: #343a40;
-        color: white !important; /* 排名維持白字 */
-        padding: 3px 8px;
-        border-radius: 5px;
+        background-color: #333333 !important;
+        color: #ffffff !important; /* 白字 */
+        padding: 2px 8px;
+        border-radius: 4px;
         font-size: 0.8rem;
-        margin-right: 5px;
         font-weight: bold;
+        margin-right: 5px;
     }
     
     /* 近況圈圈 */
-    .form-w { background-color: #28a745; color: white !important; padding: 2px 7px; border-radius: 50%; font-size: 0.75rem; margin: 0 2px; display:inline-block; width:20px; text-align:center;}
-    .form-d { background-color: #ffc107; color: black !important; padding: 2px 7px; border-radius: 50%; font-size: 0.75rem; margin: 0 2px; display:inline-block; width:20px; text-align:center;}
-    .form-l { background-color: #dc3545; color: white !important; padding: 2px 7px; border-radius: 50%; font-size: 0.75rem; margin: 0 2px; display:inline-block; width:20px; text-align:center;}
-    
+    .form-circle {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        line-height: 20px;
+        text-align: center;
+        border-radius: 50%;
+        font-size: 0.7rem;
+        margin: 0 2px;
+        color: white !important; /* 白字 */
+    }
+    .form-w { background-color: #28a745 !important; }
+    .form-d { background-color: #ffc107 !important; color: black !important; } /* 和局用黑字 */
+    .form-l { background-color: #dc3545 !important; }
+
     /* 狀態閃爍 */
-    .live-status { color: #ff4b4b !important; font-weight: bold; animation: blinker 1.5s linear infinite; }
+    .live-status { 
+        color: #ff4b4b !important; 
+        font-weight: bold; 
+        animation: blinker 1.5s linear infinite; 
+    }
     @keyframes blinker { 50% { opacity: 0; } }
-    
-    /* 輔助文字 */
-    .sub-text { color: #666666 !important; font-size: 0.85rem; }
     </style>
     """, unsafe_allow_html=True)
 
 # ================= 輔助函式：近況視覺化 =================
 def get_form_html(form_str):
-    if not form_str or form_str == 'N/A': return "<span style='color:#999'>無近況</span>"
+    if not form_str or str(form_str) == 'N/A': return "<span class='sub-text'>無近況</span>"
     html = ""
     # 只取最後 5 場
     form_str = str(form_str)[-5:]
     for char in form_str:
-        if char == 'W': html += f'<span class="form-w">W</span>'
-        elif char == 'D': html += f'<span class="form-d">D</span>'
-        elif char == 'L': html += f'<span class="form-l">L</span>'
+        if char == 'W': html += f'<span class="form-circle form-w">W</span>'
+        elif char == 'D': html += f'<span class="form-circle form-d">D</span>'
+        elif char == 'L': html += f'<span class="form-circle form-l">L</span>'
     return html
 
 # ================= 數學大腦 (泊松分佈) =================
@@ -204,80 +224,79 @@ def main():
             exp_a = float(row.get('客預測', 0))
             probs = calculate_probabilities(exp_h, exp_a)
             
-            # --- 排名與近況 HTML ---
-            h_rank = f'<span class="rank-badge">#{row["主排名"]}</span>' if row["主排名"] not in ['-', ''] else ""
-            a_rank = f'<span class="rank-badge">#{row["客排名"]}</span>' if row["客排名"] not in ['-', ''] else ""
+            # --- 準備變數 ---
+            h_rank_txt = f"#{row['主排名']}" if str(row['主排名']).isdigit() else ""
+            a_rank_txt = f"#{row['客排名']}" if str(row['客排名']).isdigit() else ""
+            
+            h_rank_html = f'<span class="rank-badge">{h_rank_txt}</span>' if h_rank_txt else ""
+            a_rank_html = f'<span class="rank-badge">{a_rank_txt}</span>' if a_rank_txt else ""
+            
             h_form = get_form_html(row.get('主近況', 'N/A'))
             a_form = get_form_html(row.get('客近況', 'N/A'))
+            
+            status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
+            status_class = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
 
-            # --- 比賽卡片佈局 ---
-            # 這裡我們使用 HTML class="match-card" 來應用 CSS
-            with st.container():
-                st.markdown(f"""
-                <div class="match-card">
-                    <div class="sub-text" style="margin-bottom:10px;">
-                        🕒 {time_part} | 🏆 {row['聯賽']}
-                    </div>
-                    
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1; text-align: left;">
-                            {h_rank}
-                            <div style="font-size:1.5rem; font-weight:bold; margin: 5px 0;">{row['主隊']}</div>
-                            <div>{h_form}</div>
-                        </div>
-                        
-                        <div style="flex: 0.6; text-align: center;">
-                            <h1 style="margin:0; font-size: 2.2rem; color:#333;">
-                                {row['主分'] if row['主分'] != '' else 'VS'}
-                                <span style="font-size:1rem; vertical-align:middle;">{'-' if row['主分'] != '' else ''}</span>
-                                {row['客分'] if row['客分'] != '' else ''}
-                            </h1>
-                            <div class="{'live-status' if '進行中' in row['狀態'] else 'sub-text'}" style="margin-top:5px;">
-                                {'🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'} {row['狀態']}
-                            </div>
-                        </div>
-                        
-                        <div style="flex: 1; text-align: right;">
-                            {a_rank}
-                            <div style="font-size:1.5rem; font-weight:bold; margin: 5px 0;">{row['客隊']}</div>
-                            <div>{a_form}</div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            # --- 修正 HTML 結構 (移除縮排以防變代碼) ---
+            card_html = f"""
+<div class="match-card">
+    <div class="sub-text" style="margin-bottom:10px;">🕒 {time_part} | 🏆 {row['聯賽']}</div>
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="flex: 1; text-align: left;">
+            {h_rank_html}
+            <div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['主隊']}</div>
+            <div>{h_form}</div>
+        </div>
+        <div style="flex: 0.6; text-align: center;">
+            <h1 style="margin:0; font-size: 2rem;">
+                {row['主分'] if row['主分'] != '' else 'VS'}
+                <span style="font-size:1rem; vertical-align:middle;">{'-' if row['主分'] != '' else ''}</span>
+                {row['客分'] if row['客分'] != '' else ''}
+            </h1>
+            <div class="{status_class}" style="margin-top:5px;">{status_icon} {row['狀態']}</div>
+        </div>
+        <div style="flex: 1; text-align: right;">
+            {a_rank_html}
+            <div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['客隊']}</div>
+            <div>{a_form}</div>
+        </div>
+    </div>
+</div>
+"""
+            st.markdown(card_html, unsafe_allow_html=True)
 
-                # --- AI 預測詳情 ---
-                with st.expander("📊 展開 AI 深度分析"):
-                    c_a, c_b = st.columns(2)
-                    with c_a:
-                        st.write("**核心勝率預測**")
-                        st.progress(probs['home_win']/100, text=f"主勝 {probs['home_win']:.1f}%")
-                        st.progress(probs['draw']/100, text=f"和局 {probs['draw']:.1f}%")
-                        st.progress(probs['away_win']/100, text=f"客勝 {probs['away_win']:.1f}%")
-                    with c_b:
-                        st.write("**進球分布預測**")
-                        st.progress(probs['over']/100, text=f"大球 (>2.5) {probs['over']:.1f}%")
-                        st.progress(probs['under']/100, text=f"細球 (<2.5) {probs['under']:.1f}%")
-                        st.caption(f"🎯 預期進球: 主 {exp_h} : 客 {exp_a}")
-                    
-                    # 結合排名的智慧分析
-                    rank_diff = 0
-                    try:
-                        # 處理有些排名可能是 "-"
-                        r_h = int(row['主排名'])
-                        r_a = int(row['客排名'])
-                        rank_diff = r_a - r_h # 正數代表客隊排名低(數字大)，主隊強
-                    except: 
-                        pass
-                    
-                    analysis_note = "⚖️ 實力接近，勝負難料。"
-                    if rank_diff > 8: analysis_note = "🔥 主隊排名大幅領先，看好主場優勢。"
-                    elif rank_diff < -8: analysis_note = "✈️ 客隊排名大幅領先，看好客隊取分。"
-                    elif probs['over'] > 60: analysis_note = "💥 雙方攻力強勁，有望上演入球騷。"
+            # --- AI 預測詳情 ---
+            with st.expander("📊 展開 AI 深度分析"):
+                c_a, c_b = st.columns(2)
+                with c_a:
+                    st.write("**核心勝率預測**")
+                    st.progress(probs['home_win']/100, text=f"主勝 {probs['home_win']:.1f}%")
+                    st.progress(probs['draw']/100, text=f"和局 {probs['draw']:.1f}%")
+                    st.progress(probs['away_win']/100, text=f"客勝 {probs['away_win']:.1f}%")
+                with c_b:
+                    st.write("**進球分布預測**")
+                    st.progress(probs['over']/100, text=f"大球 (>2.5) {probs['over']:.1f}%")
+                    st.progress(probs['under']/100, text=f"細球 (<2.5) {probs['under']:.1f}%")
+                    st.caption(f"🎯 預期進球: 主 {exp_h} : 客 {exp_a}")
+                
+                # 簡單分析邏輯
+                rank_diff = 0
+                try:
+                    r_h = int(row['主排名'])
+                    r_a = int(row['客排名'])
+                    rank_diff = r_a - r_h 
+                except: 
+                    pass
+                
+                analysis_note = "⚖️ 實力接近，勝負難料。"
+                if rank_diff > 8: analysis_note = "🔥 主隊排名大幅領先，看好主場優勢。"
+                elif rank_diff < -8: analysis_note = "✈️ 客隊排名大幅領先，看好客隊取分。"
+                elif probs['over'] > 60: analysis_note = "💥 雙方攻力強勁，有望上演入球騷。"
 
-                    st.info(f"💡 **AI 綜合分析**：{analysis_note} | 建議方向：**{'推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '搏和局/大球'}**")
+                rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '搏和局/大球'
+                st.info(f"💡 **AI 綜合分析**：{analysis_note} | 建議方向：**{rec_text}**")
 
-                st.markdown("<div style='margin-bottom:25px;'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
 
     with tab1:
         render_matches(filtered_df[filtered_df['狀態'] != '完場'])
