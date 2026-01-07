@@ -11,52 +11,50 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Plus)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 =================
+# ================= CSS 強力修復區 (黑魂版) =================
 st.markdown("""
     <style>
-    /* 1. 全局設定 */
-    .main { background-color: #0e1117; }
+    /* 1. 全局背景設為深色 */
+    .stApp { background-color: #0e1117; }
     
-    /* 2. 數據格 (Metric) 修復 - 強制白底黑字 */
+    /* 2. 數據格 (Metric) - 改為深灰底白字 */
     div[data-testid="stMetric"] {
-        background-color: #ffffff !important;
-        border-radius: 10px;
-        padding: 15px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        background-color: #262730 !important;
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 10px;
     }
-    div[data-testid="stMetricLabel"] p { color: #555555 !important; font-weight: bold; }
-    div[data-testid="stMetricValue"] div { color: #000000 !important; }
+    div[data-testid="stMetricLabel"] p { color: #aaaaaa !important; }
+    div[data-testid="stMetricValue"] div { color: #ffffff !important; }
 
-    /* 3. 比賽卡片 (Match Card) 修復 - 強制白底黑字 */
-    .match-card { 
-        border-radius: 12px; 
-        background-color: #ffffff !important; 
-        padding: 20px; 
-        margin-bottom: 15px; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border-left: 6px solid #007BFF;
-        color: #000000 !important; /* 核心：強制全卡片黑字 */
-    }
-    
-    /* 強制卡片內所有可能的標籤都變黑字 */
-    .match-card div, .match-card h1, .match-card h2, .match-card span, .match-card b, .match-card p {
-        color: #000000 !important;
-        font-family: sans-serif;
+    /* 3. 卡片容器樣式 */
+    .css-card-container {
+        background-color: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
 
-    /* 4. 特殊元件顏色重設 */
-    .sub-text { color: #666666 !important; font-size: 0.85rem; }
+    /* 4. 文字顏色強制為白 */
+    h1, h2, h3, h4, span, div, b, p {
+        color: #ffffff !important;
+        font-family: "Source Sans Pro", sans-serif;
+    }
     
-    /* 排名 Badge (維持白字) */
+    /* 次要文字顏色 */
+    .sub-text { color: #888888 !important; font-size: 0.85rem; }
+
+    /* 5. 排名 Badge (深色背景) */
     .rank-badge {
-        background-color: #333333 !important;
-        color: #ffffff !important; 
+        background-color: #444;
+        color: #fff !important;
         padding: 2px 8px;
         border-radius: 4px;
         font-size: 0.8rem;
         font-weight: bold;
-        margin-right: 5px;
+        border: 1px solid #666;
     }
     
     /* 近況圈圈 */
@@ -70,6 +68,7 @@ st.markdown("""
         font-size: 0.7rem;
         margin: 0 2px;
         color: white !important; 
+        font-weight: bold;
     }
     .form-w { background-color: #28a745 !important; }
     .form-d { background-color: #ffc107 !important; color: black !important; } 
@@ -82,6 +81,11 @@ st.markdown("""
         animation: blinker 1.5s linear infinite; 
     }
     @keyframes blinker { 50% { opacity: 0; } }
+
+    /* 進度條樣式微調 */
+    .stProgress > div > div > div > div {
+        background-color: #007bff;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -151,10 +155,11 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球賽事預測 (Ultimate Pro Plus)")
+    st.title("⚽ 足球賽事預測 (Ultimate Pro Black)")
     
     df = load_data()
     if df is not None and not df.empty:
+        # 顯示頂部數據概覽
         c1, c2, c3, c4 = st.columns(4)
         total_m = len(df)
         live_m = len(df[df['狀態'].str.contains("進行中", na=False)])
@@ -168,7 +173,7 @@ def main():
             st.rerun()
 
     if df is None or df.empty:
-        st.warning("⚠️ 數據加載中或 Google Sheet 無內容...")
+        st.warning("⚠️ 數據加載中...")
         return
 
     # 數據轉型
@@ -216,79 +221,69 @@ def main():
             exp_a = float(row.get('客預測', 0))
             probs = calculate_probabilities(exp_h, exp_a)
             
-            # --- 變數準備 ---
-            h_rank_txt = f"#{row['主排名']}" if str(row['主排名']).isdigit() else ""
-            a_rank_txt = f"#{row['客排名']}" if str(row['客排名']).isdigit() else ""
-            
-            h_rank_html = f'<span class="rank-badge">{h_rank_txt}</span>' if h_rank_txt else ""
-            a_rank_html = f'<span class="rank-badge">{a_rank_txt}</span>' if a_rank_txt else ""
-            
-            h_form = get_form_html(row.get('主近況', 'N/A'))
-            a_form = get_form_html(row.get('客近況', 'N/A'))
-            
+            # 準備變數
+            h_rank = row['主排名'] if str(row['主排名']).isdigit() else "-"
+            a_rank = row['客排名'] if str(row['客排名']).isdigit() else "-"
+            h_form_html = get_form_html(row.get('主近況', 'N/A'))
+            a_form_html = get_form_html(row.get('客近況', 'N/A'))
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
-            status_class = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
             
-            # --- 關鍵修復：這裡的 HTML 字串全部靠左，不能有縮排！ ---
-            card_html = f"""
-<div class="match-card">
-<div class="sub-text" style="margin-bottom:10px;">🕒 {time_part} | 🏆 {row['聯賽']}</div>
-<div style="display: flex; justify-content: space-between; align-items: center;">
-<div style="flex: 1; text-align: left;">
-{h_rank_html}
-<div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['主隊']}</div>
-<div>{h_form}</div>
-</div>
-<div style="flex: 0.6; text-align: center;">
-<h1 style="margin:0; font-size: 2rem; color:black;">
-{row['主分'] if row['主分'] != '' else 'VS'}
-<span style="font-size:1rem; vertical-align:middle;">{'-' if row['主分'] != '' else ''}</span>
-{row['客分'] if row['客分'] != '' else ''}
-</h1>
-<div class="{status_class}" style="margin-top:5px;">{status_icon} {row['狀態']}</div>
-</div>
-<div style="flex: 1; text-align: right;">
-{a_rank_html}
-<div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['客隊']}</div>
-<div>{a_form}</div>
-</div>
-</div>
-</div>
-"""
-            st.markdown(card_html, unsafe_allow_html=True)
-
-            # --- AI 預測詳情 ---
-            with st.expander("📊 展開 AI 深度分析"):
-                c_a, c_b = st.columns(2)
-                with c_a:
-                    st.write("**核心勝率預測**")
-                    st.progress(probs['home_win']/100, text=f"主勝 {probs['home_win']:.1f}%")
-                    st.progress(probs['draw']/100, text=f"和局 {probs['draw']:.1f}%")
-                    st.progress(probs['away_win']/100, text=f"客勝 {probs['away_win']:.1f}%")
-                with c_b:
-                    st.write("**進球分布預測**")
-                    st.progress(probs['over']/100, text=f"大球 (>2.5) {probs['over']:.1f}%")
-                    st.progress(probs['under']/100, text=f"細球 (<2.5) {probs['under']:.1f}%")
-                    st.caption(f"🎯 預期進球: 主 {exp_h} : 客 {exp_a}")
+            # ================= 卡片佈局 (左球隊 | 右AI) =================
+            # 使用 Streamlit 原生 Container + CSS Class 實現黑底
+            with st.container():
+                st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
                 
-                # 分析文案
-                rank_diff = 0
-                try:
-                    r_h = int(row['主排名'])
-                    r_a = int(row['客排名'])
-                    rank_diff = r_a - r_h 
-                except: 
-                    pass
+                # 這裡切分成兩欄：左邊 (球隊資訊 60%) | 右邊 (AI 數據 40%)
+                col_match, col_ai = st.columns([1.3, 1])
                 
-                analysis_note = "⚖️ 實力接近，勝負難料。"
-                if rank_diff > 8: analysis_note = "🔥 主隊排名大幅領先，看好主場優勢。"
-                elif rank_diff < -8: analysis_note = "✈️ 客隊排名大幅領先，看好客隊取分。"
-                elif probs['over'] > 60: analysis_note = "💥 雙方攻力強勁，有望上演入球騷。"
+                # --- 左欄：球隊與比分 ---
+                with col_match:
+                    st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
+                    st.write("") # Spacer
+                    
+                    # 內部再切三欄：主隊 - 比分 - 客隊
+                    c_h, c_s, c_a = st.columns([3, 2, 3])
+                    
+                    with c_h:
+                        st.markdown(f"<span class='rank-badge'>#{h_rank}</span>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:1.3rem; font-weight:bold; margin:5px 0;'>{row['主隊']}</div>", unsafe_allow_html=True)
+                        st.markdown(h_form_html, unsafe_allow_html=True)
+                        
+                    with c_s:
+                        st.markdown(f"<div style='text-align:center; font-size:2rem; font-weight:bold; line-height:1.2;'>{row['主分'] if row['主分']!='' else 'VS'}<br><span style='font-size:1rem; color:#aaa!important;'>-</span><br>{row['客分']}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:center; margin-top:5px;' class='{'live-status' if '進行中' in row['狀態'] else 'sub-text'}'>{status_icon} {row['狀態']}</div>", unsafe_allow_html=True)
+                        
+                    with c_a:
+                        st.markdown(f"<div style='text-align:right;'><span class='rank-badge'>#{a_rank}</span></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:right; font-size:1.3rem; font-weight:bold; margin:5px 0;'>{row['客隊']}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:right;'>{a_form_html}</div>", unsafe_allow_html=True)
 
-                rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '搏和局/大球'
-                st.info(f"💡 **AI 綜合分析**：{analysis_note} | 建議方向：**{rec_text}**")
+                # --- 右欄：AI 深度分析 (原本的 Expander 內容移到這裡) ---
+                with col_ai:
+                    # 為了美觀，加一個左邊框線的分隔感 (用 CSS 難做，這裡用 Padding)
+                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444;'>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:0.9rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時分析</div>", unsafe_allow_html=True)
+                    
+                    # 勝率條
+                    st.progress(probs['home_win']/100, text=f"主勝 {probs['home_win']:.0f}%  |  和 {probs['draw']:.0f}%  |  客 {probs['away_win']:.0f}%")
+                    
+                    # 大細球
+                    st.progress(probs['over']/100, text=f"大球 (>2.5) {probs['over']:.0f}%  |  細球 {probs['under']:.0f}%")
+                    
+                    # 簡易建議
+                    rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
+                    rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
+                    
+                    st.markdown(f"""
+                    <div style='margin-top:10px; background-color:#333; padding:8px; border-radius:5px; font-size:0.85rem;'>
+                        🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
+                        💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("</div>", unsafe_allow_html=True) # End right column wrapper
 
-            st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True) # End card container
 
     with tab1:
         render_matches(filtered_df[filtered_df['狀態'] != '完場'])
