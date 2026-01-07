@@ -11,13 +11,13 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Plus)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 (黑魂版) =================
+# ================= CSS 強力修復區 (Flexbox 對齊版) =================
 st.markdown("""
     <style>
     /* 1. 全局背景設為深色 */
     .stApp { background-color: #0e1117; }
     
-    /* 2. 數據格 (Metric) - 改為深灰底白字 */
+    /* 2. 數據格 (Metric) - 深灰底白字 */
     div[data-testid="stMetric"] {
         background-color: #262730 !important;
         border: 1px solid #444;
@@ -27,14 +27,14 @@ st.markdown("""
     div[data-testid="stMetricLabel"] p { color: #aaaaaa !important; }
     div[data-testid="stMetricValue"] div { color: #ffffff !important; }
 
-    /* 3. 卡片容器樣式 */
+    /* 3. 卡片容器樣式 - 加強對比度 */
     .css-card-container {
-        background-color: #1e1e1e;
+        background-color: #1a1c24; /* 比背景稍亮 */
         border: 1px solid #333;
         border-radius: 12px;
         padding: 20px;
         margin-bottom: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
     }
 
     /* 4. 文字顏色強制為白 */
@@ -43,38 +43,41 @@ st.markdown("""
         font-family: "Source Sans Pro", sans-serif;
     }
     
-    /* 次要文字顏色 */
-    .sub-text { color: #888888 !important; font-size: 0.85rem; }
+    /* 次要文字顏色 (時間、聯賽) - 調亮一點以免睇唔到 */
+    .sub-text { color: #cccccc !important; font-size: 0.9rem; }
 
-    /* 5. 排名 Badge (深色背景) */
+    /* 5. 排名 Badge */
     .rank-badge {
         background-color: #444;
         color: #fff !important;
-        padding: 2px 8px;
+        padding: 2px 6px;
         border-radius: 4px;
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         font-weight: bold;
         border: 1px solid #666;
+        vertical-align: middle;
+        margin: 0 5px;
     }
     
-    /* 近況圈圈 */
+    /* 6. 近況圈圈 (確保顯示) */
     .form-circle {
         display: inline-block;
-        width: 20px;
-        height: 20px;
-        line-height: 20px;
+        width: 22px;
+        height: 22px;
+        line-height: 22px;
         text-align: center;
         border-radius: 50%;
-        font-size: 0.7rem;
+        font-size: 0.75rem;
         margin: 0 2px;
         color: white !important; 
         font-weight: bold;
+        border: 1px solid rgba(255,255,255,0.2);
     }
     .form-w { background-color: #28a745 !important; }
     .form-d { background-color: #ffc107 !important; color: black !important; } 
     .form-l { background-color: #dc3545 !important; }
 
-    /* 狀態閃爍 */
+    /* 7. 狀態閃爍 */
     .live-status { 
         color: #ff4b4b !important; 
         font-weight: bold; 
@@ -82,22 +85,62 @@ st.markdown("""
     }
     @keyframes blinker { 50% { opacity: 0; } }
 
-    /* 進度條樣式微調 */
+    /* 8. 進度條樣式微調 */
     .stProgress > div > div > div > div {
         background-color: #007bff;
+    }
+
+    /* 9. 關鍵：Flexbox 佈局類別 (解決不平排問題) */
+    .match-row {
+        display: flex;
+        align-items: center; /* 垂直居中 */
+        justify-content: space-between;
+        width: 100%;
+    }
+    .team-col-home {
+        flex: 1;
+        text-align: left; /* 主隊靠左 */
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .team-col-away {
+        flex: 1;
+        text-align: right; /* 客隊靠右 */
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .score-col {
+        flex: 0.8;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .team-name {
+        font-size: 1.5rem;
+        font-weight: bold;
+        margin: 5px 0;
+        white-space: nowrap; /* 防止換行 */
     }
     </style>
     """, unsafe_allow_html=True)
 
 # ================= 輔助函式：近況視覺化 =================
 def get_form_html(form_str):
-    if not form_str or str(form_str) == 'N/A': return "<span class='sub-text'>無近況</span>"
+    # 強制檢查：如果是空的、None 或 nan，顯示無數據
+    if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A':
+        return "<span style='color:#666; font-size:0.8rem;'>N/A</span>"
+    
     html = ""
-    form_str = str(form_str)[-5:]
+    form_str = str(form_str).strip()[-5:] # 只取最後 5 場
     for char in form_str:
-        if char == 'W': html += f'<span class="form-circle form-w">W</span>'
-        elif char == 'D': html += f'<span class="form-circle form-d">D</span>'
-        elif char == 'L': html += f'<span class="form-circle form-l">L</span>'
+        if char.upper() == 'W': html += f'<span class="form-circle form-w">W</span>'
+        elif char.upper() == 'D': html += f'<span class="form-circle form-d">D</span>'
+        elif char.upper() == 'L': html += f'<span class="form-circle form-l">L</span>'
+    
+    if html == "": return "<span style='color:#666; font-size:0.8rem;'>-</span>"
     return html
 
 # ================= 數學大腦 (泊松分佈) =================
@@ -224,45 +267,61 @@ def main():
             # 準備變數
             h_rank = row['主排名'] if str(row['主排名']).isdigit() else "-"
             a_rank = row['客排名'] if str(row['客排名']).isdigit() else "-"
-            h_form_html = get_form_html(row.get('主近況', 'N/A'))
-            a_form_html = get_form_html(row.get('客近況', 'N/A'))
+            
+            # 近況 HTML (這裡會去呼叫新的 get_form_html 函數，確保顯示)
+            h_form_html = get_form_html(row.get('主近況', ''))
+            a_form_html = get_form_html(row.get('客近況', ''))
+            
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
             # ================= 卡片佈局 (左球隊 | 右AI) =================
-            # 使用 Streamlit 原生 Container + CSS Class 實現黑底
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
                 
                 # 這裡切分成兩欄：左邊 (球隊資訊 60%) | 右邊 (AI 數據 40%)
-                col_match, col_ai = st.columns([1.3, 1])
+                col_match, col_ai = st.columns([1.5, 1])
                 
-                # --- 左欄：球隊與比分 ---
+                # --- 左欄：球隊與比分 (使用 HTML Flexbox 確保平排) ---
                 with col_match:
                     st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
-                    st.write("") # Spacer
+                    st.write("") 
                     
-                    # 內部再切三欄：主隊 - 比分 - 客隊
-                    c_h, c_s, c_a = st.columns([3, 2, 3])
-                    
-                    with c_h:
-                        st.markdown(f"<span class='rank-badge'>#{h_rank}</span>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:1.3rem; font-weight:bold; margin:5px 0;'>{row['主隊']}</div>", unsafe_allow_html=True)
-                        st.markdown(h_form_html, unsafe_allow_html=True)
+                    # 核心改動：使用 .match-row 和 Flexbox 進行排版
+                    match_html = f"""
+                    <div class="match-row">
+                        <div class="team-col-home">
+                            <div><span class="rank-badge">#{h_rank}</span></div>
+                            <div class="team-name">{row['主隊']}</div>
+                            <div style="margin-top:4px;">{h_form_html}</div>
+                        </div>
                         
-                    with c_s:
-                        st.markdown(f"<div style='text-align:center; font-size:2rem; font-weight:bold; line-height:1.2;'>{row['主分'] if row['主分']!='' else 'VS'}<br><span style='font-size:1rem; color:#aaa!important;'>-</span><br>{row['客分']}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='text-align:center; margin-top:5px;' class='{'live-status' if '進行中' in row['狀態'] else 'sub-text'}'>{status_icon} {row['狀態']}</div>", unsafe_allow_html=True)
+                        <div class="score-col">
+                            <div style="font-size:2.2rem; font-weight:bold; line-height:1;">
+                                {row['主分'] if row['主分']!='' else 'VS'}
+                                <span style="font-size:1rem; color:#aaa!important; vertical-align:middle;">
+                                    {'-' if row['主分'] != '' else ''}
+                                </span>
+                                {row['客分']}
+                            </div>
+                            <div class="{'live-status' if '進行中' in row['狀態'] else 'sub-text'}" style="margin-top:5px; font-size:0.85rem;">
+                                {status_icon} {row['狀態']}
+                            </div>
+                        </div>
                         
-                    with c_a:
-                        st.markdown(f"<div style='text-align:right;'><span class='rank-badge'>#{a_rank}</span></div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='text-align:right; font-size:1.3rem; font-weight:bold; margin:5px 0;'>{row['客隊']}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='text-align:right;'>{a_form_html}</div>", unsafe_allow_html=True)
+                        <div class="team-col-away">
+                            <div><span class="rank-badge">#{a_rank}</span></div>
+                            <div class="team-name">{row['客隊']}</div>
+                            <div style="margin-top:4px;">{a_form_html}</div>
+                        </div>
+                    </div>
+                    """
+                    st.markdown(match_html, unsafe_allow_html=True)
 
-                # --- 右欄：AI 深度分析 (原本的 Expander 內容移到這裡) ---
+                # --- 右欄：AI 深度分析 (實時顯示) ---
                 with col_ai:
-                    # 為了美觀，加一個左邊框線的分隔感 (用 CSS 難做，這裡用 Padding)
-                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444;'>", unsafe_allow_html=True)
-                    st.markdown("<div style='font-size:0.9rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時分析</div>", unsafe_allow_html=True)
+                    # 邊框線 + padding
+                    st.markdown("<div style='padding-left: 20px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:0.9rem; color:#007bff!important; font-weight:bold; margin-bottom:10px;'>🤖 AI 實時分析</div>", unsafe_allow_html=True)
                     
                     # 勝率條
                     st.progress(probs['home_win']/100, text=f"主勝 {probs['home_win']:.0f}%  |  和 {probs['draw']:.0f}%  |  客 {probs['away_win']:.0f}%")
@@ -275,13 +334,13 @@ def main():
                     rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
                     
                     st.markdown(f"""
-                    <div style='margin-top:10px; background-color:#333; padding:8px; border-radius:5px; font-size:0.85rem;'>
+                    <div style='margin-top:12px; background-color:#25262b; padding:10px; border-radius:6px; font-size:0.85rem; border:1px solid #333;'>
                         🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
                         💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    st.markdown("</div>", unsafe_allow_html=True) # End right column wrapper
+                    st.markdown("</div>", unsafe_allow_html=True) 
 
                 st.markdown('</div>', unsafe_allow_html=True) # End card container
 
