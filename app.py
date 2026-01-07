@@ -14,7 +14,7 @@ st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Plus)", page_i
 # ================= CSS 強力修復區 =================
 st.markdown("""
     <style>
-    /* 1. 全局設定：背景微調，讓卡片更突出 */
+    /* 1. 全局設定 */
     .main { background-color: #0e1117; }
     
     /* 2. 數據格 (Metric) 修復 - 強制白底黑字 */
@@ -25,15 +25,8 @@ st.markdown("""
         border: 1px solid #e0e0e0;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
-    /* 標籤文字 (例如：總賽事) 改為深灰色 */
-    div[data-testid="stMetricLabel"] p {
-        color: #555555 !important;
-        font-weight: bold;
-    }
-    /* 數值文字 (例如：65) 改為純黑色 */
-    div[data-testid="stMetricValue"] div {
-        color: #000000 !important;
-    }
+    div[data-testid="stMetricLabel"] p { color: #555555 !important; font-weight: bold; }
+    div[data-testid="stMetricValue"] div { color: #000000 !important; }
 
     /* 3. 比賽卡片 (Match Card) 修復 - 強制白底黑字 */
     .match-card { 
@@ -43,21 +36,22 @@ st.markdown("""
         margin-bottom: 15px; 
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border-left: 6px solid #007BFF;
+        color: #000000 !important; /* 核心：強制全卡片黑字 */
     }
     
-    /* 核心修復：強制卡片內所有文字變成黑色，解決 Dark Mode 看不到字的問題 */
-    .match-card, .match-card div, .match-card h1, .match-card h2, .match-card span, .match-card b {
-        color: #000000;
-        font-family: "Source Sans Pro", sans-serif;
+    /* 強制卡片內所有可能的標籤都變黑字 */
+    .match-card div, .match-card h1, .match-card h2, .match-card span, .match-card b, .match-card p {
+        color: #000000 !important;
+        font-family: sans-serif;
     }
 
-    /* 4. 特殊元件顏色重設 (因為上面強制變黑了，這裡要加回顏色) */
+    /* 4. 特殊元件顏色重設 */
     .sub-text { color: #666666 !important; font-size: 0.85rem; }
     
-    /* 排名 Badge */
+    /* 排名 Badge (維持白字) */
     .rank-badge {
         background-color: #333333 !important;
-        color: #ffffff !important; /* 白字 */
+        color: #ffffff !important; 
         padding: 2px 8px;
         border-radius: 4px;
         font-size: 0.8rem;
@@ -75,10 +69,10 @@ st.markdown("""
         border-radius: 50%;
         font-size: 0.7rem;
         margin: 0 2px;
-        color: white !important; /* 白字 */
+        color: white !important; 
     }
     .form-w { background-color: #28a745 !important; }
-    .form-d { background-color: #ffc107 !important; color: black !important; } /* 和局用黑字 */
+    .form-d { background-color: #ffc107 !important; color: black !important; } 
     .form-l { background-color: #dc3545 !important; }
 
     /* 狀態閃爍 */
@@ -95,7 +89,6 @@ st.markdown("""
 def get_form_html(form_str):
     if not form_str or str(form_str) == 'N/A': return "<span class='sub-text'>無近況</span>"
     html = ""
-    # 只取最後 5 場
     form_str = str(form_str)[-5:]
     for char in form_str:
         if char == 'W': html += f'<span class="form-circle form-w">W</span>'
@@ -162,7 +155,6 @@ def main():
     
     df = load_data()
     if df is not None and not df.empty:
-        # 顯示頂部數據概覽
         c1, c2, c3, c4 = st.columns(4)
         total_m = len(df)
         live_m = len(df[df['狀態'].str.contains("進行中", na=False)])
@@ -224,7 +216,7 @@ def main():
             exp_a = float(row.get('客預測', 0))
             probs = calculate_probabilities(exp_h, exp_a)
             
-            # --- 準備變數 ---
+            # --- 變數準備 ---
             h_rank_txt = f"#{row['主排名']}" if str(row['主排名']).isdigit() else ""
             a_rank_txt = f"#{row['客排名']}" if str(row['客排名']).isdigit() else ""
             
@@ -236,31 +228,31 @@ def main():
             
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             status_class = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
-
-            # --- 修正 HTML 結構 (移除縮排以防變代碼) ---
+            
+            # --- 關鍵修復：這裡的 HTML 字串全部靠左，不能有縮排！ ---
             card_html = f"""
 <div class="match-card">
-    <div class="sub-text" style="margin-bottom:10px;">🕒 {time_part} | 🏆 {row['聯賽']}</div>
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div style="flex: 1; text-align: left;">
-            {h_rank_html}
-            <div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['主隊']}</div>
-            <div>{h_form}</div>
-        </div>
-        <div style="flex: 0.6; text-align: center;">
-            <h1 style="margin:0; font-size: 2rem;">
-                {row['主分'] if row['主分'] != '' else 'VS'}
-                <span style="font-size:1rem; vertical-align:middle;">{'-' if row['主分'] != '' else ''}</span>
-                {row['客分'] if row['客分'] != '' else ''}
-            </h1>
-            <div class="{status_class}" style="margin-top:5px;">{status_icon} {row['狀態']}</div>
-        </div>
-        <div style="flex: 1; text-align: right;">
-            {a_rank_html}
-            <div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['客隊']}</div>
-            <div>{a_form}</div>
-        </div>
-    </div>
+<div class="sub-text" style="margin-bottom:10px;">🕒 {time_part} | 🏆 {row['聯賽']}</div>
+<div style="display: flex; justify-content: space-between; align-items: center;">
+<div style="flex: 1; text-align: left;">
+{h_rank_html}
+<div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['主隊']}</div>
+<div>{h_form}</div>
+</div>
+<div style="flex: 0.6; text-align: center;">
+<h1 style="margin:0; font-size: 2rem; color:black;">
+{row['主分'] if row['主分'] != '' else 'VS'}
+<span style="font-size:1rem; vertical-align:middle;">{'-' if row['主分'] != '' else ''}</span>
+{row['客分'] if row['客分'] != '' else ''}
+</h1>
+<div class="{status_class}" style="margin-top:5px;">{status_icon} {row['狀態']}</div>
+</div>
+<div style="flex: 1; text-align: right;">
+{a_rank_html}
+<div style="font-size:1.4rem; font-weight:bold; margin:5px 0;">{row['客隊']}</div>
+<div>{a_form}</div>
+</div>
+</div>
 </div>
 """
             st.markdown(card_html, unsafe_allow_html=True)
@@ -279,7 +271,7 @@ def main():
                     st.progress(probs['under']/100, text=f"細球 (<2.5) {probs['under']:.1f}%")
                     st.caption(f"🎯 預期進球: 主 {exp_h} : 客 {exp_a}")
                 
-                # 簡單分析邏輯
+                # 分析文案
                 rank_diff = 0
                 try:
                     r_h = int(row['主排名'])
