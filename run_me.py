@@ -1,443 +1,217 @@
-import requests
+import streamlit as st
 import pandas as pd
-import time
-import math
 import gspread
-from datetime import datetime, timedelta
-import pytz
 from oauth2client.service_account import ServiceAccountCredentials
+import math
+import os
+from datetime import datetime
 
 # ================= 設定區 =================
-API_KEY = '531bb40a089446bdae76a019f2af3beb'
-BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
-MANUAL_TAB_NAME = "球隊身價表" 
 
-# 完整支援的 11 個聯賽 (免費版極限)
-COMPETITIONS = [
-    'PL',   # 英超 (Premier League)
-    'PD',   # 西甲 (La Liga)
-    'CL',   # 歐聯 (Champions League)
-    'SA',   # 意甲 (Serie A)
-    'BL1',  # 德甲 (Bundesliga)
-    'FL1',  # 法甲 (Ligue 1)
-    'DED',  # 荷甲 (Eredivisie) - 新增
-    'PPL',  # 葡超 (Primeira Liga) - 新增
-    'ELC',  # 英冠 (Championship) - 新增
-    'BSA',  # 巴甲 (Brasileiro Série A) - 新增
-    'CLI'   # 南美自由盃 (Copa Libertadores) - 新增
-]
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
+
+# ================= CSS 強力修復區 =================
+st.markdown("""
+    <style>
+    .stApp { background-color: #0e1117; }
+    div[data-testid="stMetric"] { background-color: #262730 !important; border: 1px solid #444; border-radius: 8px; padding: 10px; }
+    div[data-testid="stMetricLabel"] p { color: #aaaaaa !important; font-size: 0.9rem; }
+    div[data-testid="stMetricValue"] div { color: #ffffff !important; font-size: 1.5rem !important; }
+    .css-card-container { background-color: #1a1c24; border: 1px solid #333; border-radius: 12px; padding: 15px; margin-bottom: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+    h1, h2, h3, h4, span, div, b, p { color: #ffffff !important; font-family: "Source Sans Pro", sans-serif; }
+    .sub-text { color: #cccccc !important; font-size: 0.8rem; }
+    .h2h-text { color: #ffd700 !important; font-size: 0.8rem; margin-bottom: 3px; font-weight: bold; }
+    .ou-stats-text { color: #00ffff !important; font-size: 0.75rem; margin-bottom: 10px; opacity: 0.9; }
+    .market-value-text { color: #28a745 !important; font-size: 0.85rem; font-weight: bold; margin-top: 2px; }
+    .rank-badge { background-color: #444; color: #fff !important; padding: 1px 5px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; border: 1px solid #666; margin: 0 4px; }
+    .form-circle { display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 50%; font-size: 0.65rem; margin: 0 1px; color: white !important; font-weight: bold; border: 1px solid rgba(255,255,255,0.2); }
+    .form-w { background-color: #28a745 !important; }
+    .form-d { background-color: #ffc107 !important; color: black !important; } 
+    .form-l { background-color: #dc3545 !important; }
+    .live-status { color: #ff4b4b !important; font-weight: bold; animation: blinker 1.5s linear infinite; }
+    @keyframes blinker { 50% { opacity: 0; } }
+    .stProgress > div > div > div > div { background-color: #007bff; }
+    .match-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+    .team-col-home { flex: 1; text-align: left; display: flex; flex-direction: column; justify-content: center; }
+    .team-col-away { flex: 1; text-align: right; display: flex; flex-direction: column; justify-content: center; }
+    .score-col { flex: 0.8; text-align: center; display: flex; flex-direction: column; justify-content: center; }
+    .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
+    .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ================= 輔助函式 =================
+def get_form_html(form_str):
+    if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A': return "<span style='color:#555; font-size:0.7rem;'>---</span>"
+    html = ""
+    for char in str(form_str).strip()[-5:]:
+        if char.upper() == 'W': html += f'<span class="form-circle form-w">W</span>'
+        elif char.upper() == 'D': html += f'<span class="form-circle form-d">D</span>'
+        elif char.upper() == 'L': html += f'<span class="form-circle form-l">L</span>'
+    return html if html else "<span style='color:#555; font-size:0.7rem;'>---</span>"
+
+def calculate_form_points(form_str):
+    if pd.isna(form_str): return 0
+    points = 0; count = 0
+    for char in str(form_str).strip()[-5:]:
+        if char.upper() == 'W': points += 3
+        elif char.upper() == 'D': points += 1
+        count += 1
+    return points / count if count > 0 else 0
+
+def format_market_value(val):
+    try:
+        clean_val = str(val).replace('€','').replace('M','').replace(',','').strip()
+        return f"€{int(float(clean_val))}M"
+    except: return str(val) if not pd.isna(val) else ""
+
+def calculate_probabilities(home_exp, away_exp):
+    def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
+    home_win=0; draw=0; away_win=0; over=0; under=0
+    for h in range(8): 
+        for a in range(8): 
+            prob = poisson(h, home_exp) * poisson(a, away_exp)
+            if h > a: home_win += prob
+            elif h == a: draw += prob
+            else: away_win += prob
+            if h + a > 2.5: over += prob
+            else: under += prob
+    return {"home_win": home_win*100, "draw": draw*100, "away_win": away_win*100, "over": over*100, "under": under*100}
 
 # ================= 連接 Google Sheet =================
-def get_google_spreadsheet():
+@st.cache_data(ttl=60) 
+def load_data():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        client = gspread.authorize(creds)
-        spreadsheet = client.open(GOOGLE_SHEET_NAME)
-        return spreadsheet
-    except Exception as e:
-        print(f"❌ Google Sheet 連線失敗: {e}")
-        return None
+        if os.path.exists("key.json"): creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+        else: creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        return pd.DataFrame(gspread.authorize(creds).open(GOOGLE_SHEET_NAME).sheet1.get_all_records())
+    except Exception as e: st.error(f"連線錯誤: {e}"); return None
 
-# ================= 讀取「球隊身價表」 =================
-def load_manual_market_values(spreadsheet):
-    print(f"📖 正在讀取 '{MANUAL_TAB_NAME}' 分頁...")
-    market_value_map = {}
-    try:
-        worksheet = spreadsheet.worksheet(MANUAL_TAB_NAME)
-        records = worksheet.get_all_records()
-        for row in records:
-            team_name = str(row.get('球隊名稱', '')).strip()
-            value = str(row.get('身價', '')).strip()
-            if team_name and value:
-                market_value_map[team_name] = value
-        print(f"✅ 成功讀取 {len(market_value_map)} 支球隊的身價資料！")
-        return market_value_map
-    except Exception as e:
-        print(f"⚠️ 無法讀取身價表 (使用預設值): {e}")
-        return {}
-
-# ================= 輔助：解析身價為數字 =================
-def parse_market_value(val_str):
-    if not val_str or val_str == 'N/A': return 0
-    try:
-        clean = str(val_str).replace('€', '').replace('M', '').replace(',', '').strip()
-        return float(clean)
-    except:
-        return 0
-
-# ================= (新) 計算權重近況分數 =================
-def calculate_weighted_form_score(form_str):
-    """
-    給予最近的場次更高權重 (Weighted Form)。
-    Form string e.g., "WWDLW" (右邊是最近)
-    """
-    if not form_str or form_str == 'N/A': return 1.5 # 預設中立分
-    
-    score = 0
-    total_weight = 0
-    
-    # 取最後 5 場
-    relevant_form = form_str.replace(',', '').strip()[-5:]
-    
-    # 權重分配: [1.0, 1.1, 1.2, 1.3, 1.5] (最舊 -> 最新)
-    weights = [1.0, 1.1, 1.2, 1.3, 1.5]
-    
-    # 確保長度匹配 (有些球隊可能少於5場)
-    start_idx = 5 - len(relevant_form)
-    current_weights = weights[start_idx:]
-    
-    for i, char in enumerate(relevant_form):
-        w = current_weights[i]
-        s = 0
-        if char.upper() == 'W': s = 3
-        elif char.upper() == 'D': s = 1
-        else: s = 0 # 輸球 0 分
-        
-        score += s * w
-        total_weight += w
-        
-    if total_weight == 0: return 1.5
-    return score / total_weight 
-
-# ================= 獲取聯賽詳細數據 & 動態計算聯賽平均值 =================
-def get_all_standings_with_stats():
-    print("📊 正在計算各聯賽 [真實平均入球數據]...")
-    standings_map = {}
-    league_stats = {} # 儲存每個聯賽的平均值
-    headers = {'X-Auth-Token': API_KEY}
-    
-    for comp in COMPETITIONS:
-        try:
-            url = f"{BASE_URL}/competitions/{comp}/standings"
-            res = requests.get(url, headers=headers)
-            if res.status_code == 200:
-                data = res.json()
-                
-                # 初始化該聯賽統計
-                total_home_goals = 0
-                total_away_goals = 0
-                total_matches_played = 0
-                
-                # 第一次遍歷：收集球隊數據並計算聯賽總入球
-                for table in data.get('standings', []):
-                    table_type = table['type']
-                    
-                    for entry in table['table']:
-                        team_id = entry['team']['id']
-                        if team_id not in standings_map:
-                            standings_map[team_id] = {
-                                'rank': 0, 'form': 'N/A', 
-                                'home_att': 1.2, 'home_def': 1.2,
-                                'away_att': 1.0, 'away_def': 1.0,
-                                'volatility': 2.5
-                            }
-                        
-                        played = entry['playedGames']
-                        gf = entry['goalsFor']
-                        ga = entry['goalsAgainst']
-                        
-                        avg_gf = gf / played if played > 0 else 0
-                        avg_ga = ga / played if played > 0 else 0
-
-                        if table_type == 'TOTAL':
-                            standings_map[team_id]['rank'] = entry['position']
-                            standings_map[team_id]['form'] = entry.get('form', 'N/A')
-                            if played > 0:
-                                standings_map[team_id]['volatility'] = (gf + ga) / played
-                                
-                        elif table_type == 'HOME':
-                            standings_map[team_id]['home_att'] = avg_gf if avg_gf > 0 else 1.0
-                            standings_map[team_id]['home_def'] = avg_ga if avg_ga > 0 else 1.0
-                            total_home_goals += gf
-                            if played > 0: total_matches_played += played # 這裡累加的是主場場次
-                            
-                        elif table_type == 'AWAY':
-                            standings_map[team_id]['away_att'] = avg_gf if avg_gf > 0 else 1.0
-                            standings_map[team_id]['away_def'] = avg_ga if avg_ga > 0 else 1.0
-                            total_away_goals += gf
-
-                # 計算該聯賽的平均值
-                if total_matches_played > 10:
-                    avg_home = total_home_goals / total_matches_played
-                    avg_away = total_away_goals / total_matches_played
-                else:
-                    # 賽季剛開始的默認值
-                    avg_home = 1.5
-                    avg_away = 1.2
-                
-                league_stats[data['competition']['code']] = {
-                    'avg_home': avg_home,
-                    'avg_away': avg_away
-                }
-                print(f"   👉 {comp}: 主場均{avg_home:.2f}球 | 客場均{avg_away:.2f}球")
-
-            time.sleep(1.2) 
-        except Exception as e:
-            print(f"⚠️ 無法獲取 {comp} 排名: {e}")
-            
-    return standings_map, league_stats
-
-# ================= 核心算法：真實統計模型 (Statistical Model) =================
-def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2h_summary, league_avg):
-    """
-    使用標準泊松分佈模型 (Poisson Distribution Model)
-    Exp = (Team Attack / League Avg Attack) * (Opponent Def / League Avg Def) * League Avg
-    """
-    
-    # 獲取聯賽基準值 (不再靠估，而是用 API 算出來的真實平均)
-    lg_avg_home = league_avg.get('avg_home', 1.5)
-    lg_avg_away = league_avg.get('avg_away', 1.2)
-    
-    # 防止除以零
-    if lg_avg_home < 0.1: lg_avg_home = 1.5
-    if lg_avg_away < 0.1: lg_avg_away = 1.2
-
-    # 1. 計算攻防強度 (Attack/Defense Strength)
-    # 主隊攻擊強度 = 主隊主場入球 / 聯賽主場平均入球
-    home_att_str = home_stats['home_att'] / lg_avg_home
-    # 客隊防守強度 = 客隊客場失球 / 聯賽主場平均入球 (注意：客隊失球是相對於主場入球)
-    away_def_str = away_stats['away_def'] / lg_avg_home
-    
-    # 客隊攻擊強度 = 客隊客場入球 / 聯賽客場平均入球
-    away_att_str = away_stats['away_att'] / lg_avg_away
-    # 主隊防守強度 = 主隊主場失球 / 聯賽客場平均入球
-    home_def_str = home_stats['home_def'] / lg_avg_away
-    
-    # 2. 計算基礎預期入球
-    raw_h_exp = home_att_str * away_def_str * lg_avg_home
-    raw_a_exp = away_att_str * home_def_str * lg_avg_away
-    
-    # 3. 身價修正 (Market Value Adjustment) - 這是「質素」修正
-    h_val = parse_market_value(home_val_str)
-    a_val = parse_market_value(away_val_str)
-    
-    if h_val > 0 and a_val > 0:
-        ratio = h_val / a_val
-        if ratio > 5.0:
-            raw_h_exp *= 1.25; raw_a_exp *= 0.8
-        elif ratio > 2.5:
-            raw_h_exp *= 1.15; raw_a_exp *= 0.9
-        elif ratio < 0.2:
-            raw_h_exp *= 0.8; raw_a_exp *= 1.25
-        elif ratio < 0.4:
-            raw_h_exp *= 0.9; raw_a_exp *= 1.15
-
-    # 4. 權重近況修正 (Weighted Form Adjustment) - 這是「狀態」修正
-    h_form = calculate_weighted_form_score(home_stats['form'])
-    a_form = calculate_weighted_form_score(away_stats['form'])
-    
-    form_diff = h_form - a_form
-    if form_diff > 1.0: raw_h_exp *= 1.15
-    elif form_diff > 0.5: raw_h_exp *= 1.05
-    elif form_diff < -1.0: raw_a_exp *= 1.15
-    elif form_diff < -0.5: raw_a_exp *= 1.05
-
-    # 5. H2H 歷史權重 (心理剋星)
-    try:
-        if "主" in h2h_summary and "勝" in h2h_summary:
-            parts = h2h_summary.split('|')
-            h_wins = int(parts[0].split('主')[1].split('勝')[0])
-            a_wins = int(parts[2].split('客')[1].split('勝')[0])
-            total = h_wins + a_wins + int(parts[1].split('和')[1])
-            if total > 0:
-                h_win_rate = h_wins / total
-                a_win_rate = a_wins / total
-                if h_win_rate > 0.6: raw_h_exp *= 1.1
-                elif a_win_rate > 0.6: raw_a_exp *= 1.1
-    except: pass
-
-    # 6. 波動值修正 (風格修正)
-    vol_h = home_stats.get('volatility', 2.5)
-    vol_a = away_stats.get('volatility', 2.5)
-    avg_volatility = (vol_h + vol_a) / 2
-    
-    if avg_volatility > 3.0: # 開放大戰
-        raw_h_exp *= 1.05
-        raw_a_exp *= 1.05
-    elif avg_volatility < 2.3: # 死守悶戰
-        raw_h_exp *= 0.95
-        raw_a_exp *= 0.95
-
-    return round(raw_h_exp, 2), round(raw_a_exp, 2), round(avg_volatility, 1)
-
-# ================= H2H + 大小球統計 =================
-def get_h2h_and_ou_stats(match_id, current_home_id, current_away_id):
-    headers = {'X-Auth-Token': API_KEY}
-    url = f"{BASE_URL}/matches/{match_id}/head2head"
-    try:
-        res = requests.get(url, headers=headers)
-        if res.status_code == 200:
-            data = res.json()
-            matches = data.get('matches', []) 
-            if not matches: return "無對賽記錄", "N/A"
-            
-            matches.sort(key=lambda x: x['utcDate'], reverse=True)
-            recent_matches = matches[:10]
-            total_games = 0
-            h_wins = 0; a_wins = 0; draws = 0
-            o15 = 0; o25 = 0; o35 = 0
-            
-            for m in recent_matches:
-                if m['status'] != 'FINISHED': continue
-                total_games += 1
-                winner = m['score']['winner']
-                if winner == 'DRAW': draws += 1
-                elif winner == 'HOME_TEAM':
-                    if m['homeTeam']['id'] == current_home_id: h_wins += 1
-                    else: a_wins += 1
-                elif winner == 'AWAY_TEAM':
-                    if m['awayTeam']['id'] == current_home_id: h_wins += 1
-                    else: a_wins += 1
-                
-                try:
-                    goals = m['score']['fullTime']['home'] + m['score']['fullTime']['away']
-                    if goals > 1.5: o15 += 1
-                    if goals > 2.5: o25 += 1
-                    if goals > 3.5: o35 += 1
-                except: pass 
-            
-            if total_games == 0: return "無有效對賽", "N/A"
-            p15 = round((o15 / total_games) * 100)
-            p25 = round((o25 / total_games) * 100)
-            p35 = round((o35 / total_games) * 100)
-
-            h2h_str = f"近{total_games}場: 主{h_wins}勝 | 和{draws} | 客{a_wins}勝"
-            ou_str = f"近{total_games}場大球率: 1.5球({p15}%) | 2.5球({p25}%) | 3.5球({p35}%)"
-            return h2h_str, ou_str
-        else: return "N/A", "N/A"
-    except Exception as e:
-        print(f"H2H Error: {e}")
-        return "N/A", "N/A"
-
-# ================= 主流程 =================
-def get_real_data(market_value_map):
-    # 改為同時獲取 球隊數據 和 聯賽平均數據
-    standings, league_stats = get_all_standings_with_stats()
-    
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (使用動態聯賽平均值)...")
-    
-    headers = {'X-Auth-Token': API_KEY}
-    today = datetime.now()
-    start_date = (today - timedelta(days=6)).strftime('%Y-%m-%d')
-    end_date = (today + timedelta(days=3)).strftime('%Y-%m-%d')
-    
-    params = { 'dateFrom': start_date, 'dateTo': end_date, 'competitions': ",".join(COMPETITIONS) }
-
-    try:
-        response = requests.get(f"{BASE_URL}/matches", headers=headers, params=params)
-        if response.status_code != 200:
-            print(f"❌ API 請求失敗: {response.text}")
-            return []
-
-        matches = response.json().get('matches', [])
-        if not matches:
-            print(f"⚠️ 期間無賽事。")
-            return []
-
-        cleaned_data = []
-        hk_tz = pytz.timezone('Asia/Hong_Kong')
-        print(f"🔍 發現 {len(matches)} 場賽事，正在進行運算...")
-
-        for index, match in enumerate(matches):
-            utc_str = match['utcDate']
-            utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
-            hk_dt = utc_dt.astimezone(hk_tz)
-            time_str = hk_dt.strftime('%Y-%m-%d %H:%M') 
-
-            status_raw = match['status']
-            status = '未開賽'
-            if status_raw in ['IN_PLAY', 'PAUSED']: status = '進行中'
-            elif status_raw == 'FINISHED': status = '完場'
-            
-            score_h = match['score']['fullTime']['home']
-            score_a = match['score']['fullTime']['away']
-
-            home_id = match['homeTeam']['id']
-            away_id = match['awayTeam']['id']
-            home_name = match['homeTeam']['shortName'] or match['homeTeam']['name']
-            away_name = match['awayTeam']['shortName'] or match['awayTeam']['name']
-            league_code = match['competition']['code']
-            
-            home_info = standings.get(home_id, {'rank': '-', 'form': 'N/A', 'home_att': 1.2, 'home_def': 1.2, 'volatility': 2.5})
-            away_info = standings.get(away_id, {'rank': '-', 'form': 'N/A', 'away_att': 1.0, 'away_def': 1.0, 'volatility': 2.5})
-
-            home_value = market_value_map.get(home_name, "N/A")
-            away_value = market_value_map.get(away_name, "N/A")
-            
-            print(f"   🤖 深度運算 [{index+1}/{len(matches)}]: {home_name} vs {away_name} ({status})...")
-            h2h_str, ou_stats_str = get_h2h_and_ou_stats(match['id'], home_id, away_id)
-            time.sleep(6.1) 
-
-            # === AI 核心預測 (傳入真實聯賽平均值) ===
-            league_avg = league_stats.get(league_code, {'avg_home': 1.5, 'avg_away': 1.2})
-            pred_h_goals, pred_a_goals, game_volatility = predict_match_outcome(
-                home_info, away_info, home_value, away_value, h2h_str, league_avg
-            )
-
-            att_h = round(pred_h_goals * 1.2, 1)
-            att_a = round(pred_a_goals * 1.2, 1)
-
-            match_info = {
-                '時間': time_str,
-                '聯賽': match['competition']['name'],
-                '主隊': home_name,
-                '客隊': away_name,
-                '主排名': home_info['rank'], 
-                '客排名': away_info['rank'],
-                '主近況': home_info['form'],
-                '客近況': away_info['form'],
-                '主預測': pred_h_goals,
-                '客預測': pred_a_goals,
-                '總球數': round(pred_h_goals + pred_a_goals, 1),
-                '主攻(H)': att_h,
-                '客攻(A)': att_a,
-                '狀態': status,
-                '主分': score_h if score_h is not None else '',
-                '客分': score_a if score_a is not None else '',
-                'H2H': h2h_str,
-                '大小球統計': ou_stats_str,
-                '主隊身價': home_value, 
-                '客隊身價': away_value,
-                '賽事風格': game_volatility
-            }
-            cleaned_data.append(match_info)
-            
-        print(f"✅ 運算完成！共處理 {len(cleaned_data)} 場賽事。")
-        return cleaned_data
-    except Exception as e:
-        print(f"⚠️ 執行錯誤: {e}")
-        return []
-
+# ================= 主程式 =================
 def main():
-    spreadsheet = get_google_spreadsheet()
-    market_value_map = {}
-    if spreadsheet:
-        market_value_map = load_manual_market_values(spreadsheet)
-    
-    real_data = get_real_data(market_value_map)
-    
-    if real_data:
-        df = pd.DataFrame(real_data)
-        cols = ['時間', '聯賽', '主隊', '客隊', '主排名', '客排名', '主近況', '客近況', 
-                '主預測', '客預測', '總球數', '主攻(H)', '客攻(A)', '狀態', '主分', '客分', 'H2H', '大小球統計', '主隊身價', '客隊身價', '賽事風格']
-        df = df.reindex(columns=cols, fill_value='')
-        
-        if spreadsheet:
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro Black)")
+    df = load_data()
+    if df is not None and not df.empty:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("總賽事", f"{len(df)} 場")
+        c2.metric("LIVE 進行中", f"{len(df[df['狀態'].str.contains('進行中', na=False)])} 場")
+        c3.metric("已完場", f"{len(df[df['狀態'] == '完場'])} 場")
+        if c4.button("🔄 刷新數據", use_container_width=True): st.cache_data.clear(); st.rerun()
+
+    if df is None or df.empty: st.warning("⚠️ 數據加載中..."); return
+
+    cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量']
+    for col in cols: 
+        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    st.sidebar.header("🔍 篩選條件")
+    leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
+    selected_league = st.sidebar.selectbox("選擇聯賽:", leagues)
+    df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
+    available_dates = ["全部"] + sorted(list(set(df['日期'])))
+    selected_date = st.sidebar.selectbox("📅 選擇日期:", available_dates)
+
+    filtered_df = df.copy()
+    if selected_league != "全部": filtered_df = filtered_df[filtered_df['聯賽'] == selected_league]
+    if selected_date != "全部": filtered_df = filtered_df[filtered_df['日期'] == selected_date]
+
+    tab1, tab2 = st.tabs(["📅 未開賽 / 進行中", "✅ 已完場 (核對賽果)"])
+
+    def render_matches(target_df):
+        if target_df.empty: st.info("暫無相關賽事。"); return
+        target_df = target_df.sort_values(by='時間')
+        current_date_header = None
+        for index, row in target_df.iterrows():
+            date_part = row['日期']
+            time_part = str(row['時間']).split(' ')[1] if ' ' in str(row['時間']) else row['時間']
+            if date_part != current_date_header:
+                current_date_header = date_part
+                st.markdown(f"#### 🗓️ {current_date_header}")
+                st.divider()
+
+            exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
+            probs = calculate_probabilities(exp_h, exp_a)
+            h_rank = row['主排名']; a_rank = row['客排名']
+            h_val_disp = format_market_value(row.get('主隊身價', ''))
+            a_val_disp = format_market_value(row.get('客隊身價', ''))
+            
+            # 動量指標 (新功能)
+            h_mom = float(row.get('主動量', 0)); a_mom = float(row.get('客動量', 0))
+            h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
+            a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
+
+            analysis_notes = []
+            # 身價分析
             try:
-                print(f"🚀 更新 Google Sheet...")
-                upload_sheet = spreadsheet.sheet1 
-                header = df.columns.values.tolist()
-                values = df.astype(str).values.tolist()
-                data_to_upload = [header] + values
-                upload_sheet.clear()
-                upload_sheet.update(range_name='A1', values=data_to_upload)
-                print(f"☁️ 更新成功！")
-            except Exception as e:
-                print(f"❌ 上傳失敗: {e}")
-    else:
-        print("⚠️ 無數據可更新。")
+                cv_h = float(str(row.get('主隊身價','')).replace('€','').replace('M','').replace(',',''))
+                cv_a = float(str(row.get('客隊身價','')).replace('€','').replace('M','').replace(',',''))
+                if cv_h > cv_a * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 主隊身價是客隊的 {cv_h/cv_a:.1f} 倍！")
+                elif cv_a > cv_h * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 客隊身價是主隊的 {cv_a/cv_h:.1f} 倍！")
+            except: pass
+            
+            # 動量分析
+            if h_mom > 0.5: analysis_notes.append(f"🔥 <b>主隊強勢</b>: 近況表現優於賽季平均 (動量 +{h_mom:.1f})")
+            if a_mom > 0.5: analysis_notes.append(f"🔥 <b>客隊強勢</b>: 近況表現優於賽季平均 (動量 +{a_mom:.1f})")
+
+            # 風格分析
+            vol = float(row.get('賽事風格', 0))
+            style_tag = "<br><span style='color:#ffc107; font-weight:bold;'>⚡ 賽事風格: 大開大合 (高入球期望)</span>" if vol > 3.0 else "<br><span style='color:#00ffff; font-weight:bold;'>🛡️ 賽事風格: 防守嚴密 (入球偏少)</span>" if 0 < vol < 2.3 else ""
+            
+            combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "雙方實力接近，勝負取決於臨場發揮。"
+            rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
+            rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
+
+            # 單行拼接 HTML (防崩壞)
+            html_parts = []
+            html_parts.append(f"<div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>")
+            html_parts.append(f"🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>")
+            html_parts.append(f"💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>")
+            html_parts.append(style_tag)
+            html_parts.append(f"<hr style='margin:5px 0; border-top: 1px solid #444;'><span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span></div>")
+            final_html = "".join(html_parts)
+
+            with st.container():
+                st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
+                col_match, col_ai = st.columns([1.5, 1])
+                with col_match:
+                    st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
+                    st.write("") 
+                    
+                    # 比賽資訊區塊
+                    m_parts = ["<div class='match-row'>", "<div class='team-col-home'>"]
+                    m_parts.append(f"<div><span class='rank-badge'>#{h_rank}</span> {h_trend}</div>")
+                    m_parts.append(f"<div class='team-name'>{row['主隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{h_val_disp}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('主近況', ''))}</div></div>")
+                    
+                    m_parts.append("<div class='score-col'><div class='score-text'>")
+                    m_parts.append(f"{row['主分'] if row['主分']!='' else 'VS'} <span style='font-size:0.9rem; color:#aaa; vertical-align:middle;'>{'-' if row['主分']!='' else ''}</span> {row['客分']}</div>")
+                    live_cls = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
+                    m_parts.append(f"<div class='{live_cls}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {row['狀態']}</div></div>")
+                    
+                    m_parts.append("<div class='team-col-away'>")
+                    m_parts.append(f"<div><span class='rank-badge'>#{a_rank}</span> {a_trend}</div>")
+                    m_parts.append(f"<div class='team-name'>{row['客隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{a_val_disp}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('客近況', ''))}</div></div></div>")
+                    
+                    st.markdown("".join(m_parts), unsafe_allow_html=True)
+
+                with col_ai:
+                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='h2h-text'>⚔️ {row.get('H2H','N/A')}</div>", unsafe_allow_html=True)
+                    if row.get('大小球統計') != 'N/A': st.markdown(f"<div class='ou-stats-text'>📊 {row['大小球統計']}</div>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時大數據分析</div>", unsafe_allow_html=True)
+                    st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
+                    st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
+                    st.markdown(final_html, unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True) 
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    with tab1: render_matches(filtered_df[filtered_df['狀態'] != '完場'])
+    with tab2: render_matches(filtered_df[filtered_df['狀態'] == '完場'])
 
 if __name__ == "__main__":
     main()
