@@ -146,7 +146,6 @@ def main():
             a_mom = float(row.get('客動量', 0)) if '客動量' in row else 0
             h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
             a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
-            
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
             # 波膽讀取
