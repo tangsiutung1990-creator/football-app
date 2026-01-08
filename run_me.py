@@ -60,7 +60,7 @@ def parse_market_value(val_str):
 # ================= 輔助：計算波膽 (Correct Score) =================
 def calculate_correct_score_probs(home_exp, away_exp):
     """
-    計算最可能的 3 個波膽 (Top 3 Likely Scores)
+    計算最可能的 3 個波膽
     """
     def poisson(k, lam):
         return (lam**k * math.exp(-lam)) / math.factorial(k)
@@ -74,6 +74,8 @@ def calculate_correct_score_probs(home_exp, away_exp):
     
     # 按機率排序，取前 3 名
     scores.sort(key=lambda x: x['prob'], reverse=True)
+    
+    # 格式化輸出
     top_3 = [f"{s['score']} ({int(s['prob']*100)}%)" for s in scores[:3]]
     return " | ".join(top_3)
 
@@ -305,6 +307,7 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
+        # 確保 '波膽預測' 欄位存在
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測','總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
