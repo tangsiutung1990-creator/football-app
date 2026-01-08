@@ -1,24 +1,21 @@
 import requests
 import pandas as pd
 import time
-import random
+import math
+import gspread
 from datetime import datetime, timedelta
 import pytz
-import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ================= 設定區 =================
 API_KEY = '531bb40a089446bdae76a019f2af3beb'
 BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
-MANUAL_TAB_NAME = "球隊身價表" # 新分頁名稱
+MANUAL_TAB_NAME = "球隊身價表" 
 COMPETITIONS = ['PL', 'PD', 'CL', 'SA', 'BL1', 'FL1'] 
 
-# ================= 連接 Google Sheet (升級版) =================
+# ================= 連接 Google Sheet =================
 def get_google_spreadsheet():
-    """
-    回傳整個試算表物件 (Spreadsheet)，讓我們可以選擇不同分頁。
-    """
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
         creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
@@ -29,42 +26,61 @@ def get_google_spreadsheet():
         print(f"❌ Google Sheet 連線失敗: {e}")
         return None
 
-# ================= 讀取「球隊身價表」分頁 =================
+# ================= 讀取「球隊身價表」 =================
 def load_manual_market_values(spreadsheet):
-    """
-    從 '球隊身價表' 分頁讀取數據，轉為字典對照表。
-    格式: {'Man City': '1260', 'Liverpool': '800', ...}
-    """
     print(f"📖 正在讀取 '{MANUAL_TAB_NAME}' 分頁...")
     market_value_map = {}
-    
     try:
-        # 嘗試打開該分頁
         worksheet = spreadsheet.worksheet(MANUAL_TAB_NAME)
-        records = worksheet.get_all_records() # 讀取所有資料
-        
+        records = worksheet.get_all_records()
         for row in records:
-            # 假設欄位名稱是 "球隊名稱" 和 "身價"
             team_name = str(row.get('球隊名稱', '')).strip()
             value = str(row.get('身價', '')).strip()
-            
             if team_name and value:
                 market_value_map[team_name] = value
-                
         print(f"✅ 成功讀取 {len(market_value_map)} 支球隊的身價資料！")
         return market_value_map
-
-    except gspread.WorksheetNotFound:
-        print(f"⚠️ 找不到分頁 '{MANUAL_TAB_NAME}'！請確認你已建立此分頁。")
-        print("💡 程式將暫時使用 'N/A'，請盡快建立分頁。")
-        return {}
     except Exception as e:
-        print(f"⚠️ 讀取身價表時發生錯誤: {e}")
+        print(f"⚠️ 無法讀取身價表 (使用預設值): {e}")
         return {}
 
-# ================= 獲取聯賽排名 =================
-def get_all_standings():
-    print("📊 正在獲取各聯賽實時排名...")
+# ================= 輔助：解析身價為數字 =================
+def parse_market_value(val_str):
+    """
+    將 '€1200M' 或 '1,200' 轉為 float 數字以便計算
+    """
+    if not val_str or val_str == 'N/A': return 0
+    try:
+        clean = str(val_str).replace('€', '').replace('M', '').replace(',', '').strip()
+        return float(clean)
+    except:
+        return 0
+
+# ================= 輔助：計算近況分數 =================
+def calculate_form_score(form_str):
+    """
+    將 WWDLW 轉換為分數: W=3, D=1, L=0
+    回傳平均分 (0~3)
+    """
+    if not form_str or form_str == 'N/A': return 1.5 # 預設中立
+    
+    score = 0
+    count = 0
+    # 取最後 5 場
+    relevant_form = form_str.replace(',', '').strip()[-5:]
+    
+    for char in relevant_form:
+        if char.upper() == 'W': score += 3
+        elif char.upper() == 'D': score += 1
+        else: score += 0
+        count += 1
+        
+    if count == 0: return 1.5
+    return score / count # 平均分
+
+# ================= 獲取聯賽詳細數據 (攻防能力) =================
+def get_all_standings_with_stats():
+    print("📊 正在獲取各聯賽實時排名與攻防數據...")
     standings_map = {}
     headers = {'X-Auth-Token': API_KEY}
     
@@ -80,46 +96,94 @@ def get_all_standings():
                             team_id = entry['team']['id']
                             raw_form = entry.get('form')
                             if raw_form is None: raw_form = "N/A"
+                            
+                            # === 關鍵：獲取進球與失球數據 ===
+                            played = entry['playedGames']
+                            goals_for = entry['goalsFor']
+                            goals_against = entry['goalsAgainst']
+                            
+                            # 計算場均數據 (避免除以0)
+                            avg_gf = goals_for / played if played > 0 else 1.2
+                            avg_ga = goals_against / played if played > 0 else 1.2
+
                             standings_map[team_id] = {
                                 'rank': entry['position'],
                                 'form': raw_form,
-                                'points': entry['points']
+                                'points': entry['points'],
+                                'avg_gf': avg_gf, # 場均進球 (攻擊力)
+                                'avg_ga': avg_ga  # 場均失球 (防守弱點)
                             }
-            time.sleep(2) 
+            time.sleep(1.5) 
         except Exception as e:
             print(f"⚠️ 無法獲取 {comp} 排名: {e}")
     return standings_map
 
-# ================= H2H + 大小球統計 (近10場) =================
+# ================= 核心算法：真實預測模型 =================
+def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str):
+    """
+    基於真實數據計算預期進球 (Expected Goals)
+    """
+    # 1. 基礎攻防模型
+    # 主隊預期入球 = (主隊攻擊 + 客隊防守) / 2
+    raw_h_exp = (home_stats['avg_gf'] + away_stats['avg_ga']) / 2
+    # 客隊預期入球 = (客隊攻擊 + 主隊防守) / 2
+    raw_a_exp = (away_stats['avg_gf'] + home_stats['avg_ga']) / 2
+    
+    # 2. 加入主場優勢 (通常主隊有 +0.2 ~ +0.3 的優勢)
+    raw_h_exp *= 1.15
+    
+    # 3. 身價修正 (Market Value Adjustment)
+    h_val = parse_market_value(home_val_str)
+    a_val = parse_market_value(away_val_str)
+    
+    if h_val > 0 and a_val > 0:
+        ratio = h_val / a_val
+        if ratio > 5.0: # 身價懸殊 (主隊強)
+            raw_h_exp *= 1.25
+            raw_a_exp *= 0.8
+        elif ratio > 2.0:
+            raw_h_exp *= 1.1
+            raw_a_exp *= 0.9
+        elif ratio < 0.2: # 身價懸殊 (客隊強)
+            raw_h_exp *= 0.8
+            raw_a_exp *= 1.25
+        elif ratio < 0.5:
+            raw_h_exp *= 0.9
+            raw_a_exp *= 1.1
+
+    # 4. 近況修正 (Form Adjustment)
+    h_form_score = calculate_form_score(home_stats['form']) # 0~3
+    a_form_score = calculate_form_score(away_stats['form']) # 0~3
+    
+    form_diff = h_form_score - a_form_score
+    # 如果主隊近況好很多 (例如差 2 分以上)
+    if form_diff > 1.5:
+        raw_h_exp *= 1.1
+    elif form_diff < -1.5:
+        raw_a_exp *= 1.1
+
+    return round(raw_h_exp, 2), round(raw_a_exp, 2)
+
+# ================= H2H + 大小球統計 =================
 def get_h2h_and_ou_stats(match_id, current_home_id, current_away_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
-    
     try:
         res = requests.get(url, headers=headers)
         if res.status_code == 200:
             data = res.json()
             matches = data.get('matches', []) 
-            
-            if not matches:
-                return "無對賽記錄", "N/A"
+            if not matches: return "無對賽記錄", "N/A"
             
             matches.sort(key=lambda x: x['utcDate'], reverse=True)
             recent_matches = matches[:10]
             total_games = 0
-            
-            h_wins = 0
-            a_wins = 0
-            draws = 0
-            o15 = 0
-            o25 = 0
-            o35 = 0
+            h_wins = 0; a_wins = 0; draws = 0
+            o15 = 0; o25 = 0; o35 = 0
             
             for m in recent_matches:
-                if m['status'] != 'FINISHED':
-                    continue
+                if m['status'] != 'FINISHED': continue
                 total_games += 1
-                
                 winner = m['score']['winner']
                 if winner == 'DRAW': draws += 1
                 elif winner == 'HOME_TEAM':
@@ -137,7 +201,6 @@ def get_h2h_and_ou_stats(match_id, current_home_id, current_away_id):
                 except: pass 
             
             if total_games == 0: return "無有效對賽", "N/A"
-
             p15 = round((o15 / total_games) * 100)
             p25 = round((o25 / total_games) * 100)
             p35 = round((o35 / total_games) * 100)
@@ -145,28 +208,23 @@ def get_h2h_and_ou_stats(match_id, current_home_id, current_away_id):
             h2h_str = f"近{total_games}場: 主{h_wins}勝 | 和{draws} | 客{a_wins}勝"
             ou_str = f"近{total_games}場大球率: 1.5球({p15}%) | 2.5球({p25}%) | 3.5球({p35}%)"
             return h2h_str, ou_str
-        else:
-            return "N/A", "N/A"
+        else: return "N/A", "N/A"
     except Exception as e:
         print(f"H2H Error: {e}")
         return "N/A", "N/A"
 
-# ================= 核心邏輯 (接收 market_value_map) =================
+# ================= 主流程 =================
 def get_real_data(market_value_map):
-    standings = get_all_standings()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 正在啟動抓取...")
+    # 1. 獲取帶有攻防數據的排名表
+    standings = get_all_standings_with_stats()
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動...")
     
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
     start_date = (today - timedelta(days=6)).strftime('%Y-%m-%d')
     end_date = (today + timedelta(days=3)).strftime('%Y-%m-%d')
     
-    comp_str = ",".join(COMPETITIONS)
-    params = {
-        'dateFrom': start_date,
-        'dateTo': end_date,
-        'competitions': comp_str
-    }
+    params = { 'dateFrom': start_date, 'dateTo': end_date, 'competitions': ",".join(COMPETITIONS) }
 
     try:
         response = requests.get(f"{BASE_URL}/matches", headers=headers, params=params)
@@ -174,20 +232,14 @@ def get_real_data(market_value_map):
             print(f"❌ API 請求失敗: {response.text}")
             return []
 
-        data = response.json()
-        matches = data.get('matches', [])
-        
+        matches = response.json().get('matches', [])
         if not matches:
-            print(f"⚠️ 無比賽數據。")
+            print(f"⚠️ 期間無賽事。")
             return []
 
         cleaned_data = []
         hk_tz = pytz.timezone('Asia/Hong_Kong')
-
-        print(f"🔍 找到 {len(matches)} 場比賽，準備逐一處理...")
-        
-        # 用來提示用戶哪些球隊名稱還沒填
-        missing_teams = set()
+        print(f"🔍 發現 {len(matches)} 場賽事，正在進行 AI 運算...")
 
         for index, match in enumerate(matches):
             utc_str = match['utcDate']
@@ -205,41 +257,32 @@ def get_real_data(market_value_map):
 
             home_id = match['homeTeam']['id']
             away_id = match['awayTeam']['id']
-            
-            # --- 獲取球隊名稱 (關鍵) ---
             home_name = match['homeTeam']['shortName'] or match['homeTeam']['name']
             away_name = match['awayTeam']['shortName'] or match['awayTeam']['name']
             
-            home_info = standings.get(home_id, {'rank': '-', 'form': 'N/A'})
-            away_info = standings.get(away_id, {'rank': '-', 'form': 'N/A'})
+            # 獲取球隊數據 (如果沒有數據，給予預設值)
+            default_stats = {'rank': '-', 'form': 'N/A', 'avg_gf': 1.3, 'avg_ga': 1.3}
+            home_info = standings.get(home_id, default_stats)
+            away_info = standings.get(away_id, default_stats)
 
-            # --- 身價配對 (從字典讀取) ---
-            # 如果找不到，回傳 "N/A" (或者你可以填 "請填寫")
             home_value = market_value_map.get(home_name, "N/A")
             away_value = market_value_map.get(away_name, "N/A")
             
-            if home_value == "N/A": missing_teams.add(home_name)
-            if away_value == "N/A": missing_teams.add(away_name)
-
-            # --- H2H 與 大小球 ---
-            h2h_str = "完場不顯示"
-            ou_stats_str = "N/A"
-            
+            # --- API 限制保護 ---
             if status != '完場':
-                print(f"   ⏳ [{index+1}/{len(matches)}] 正在查數據: {home_name} vs {away_name} ...")
+                print(f"   🤖 計算中: {home_name} vs {away_name} ...")
                 h2h_str, ou_stats_str = get_h2h_and_ou_stats(match['id'], home_id, away_id)
-                time.sleep(6.5) 
+                time.sleep(6.1) # 避免 API 封鎖
             else:
                 h2h_str = "N/A"
                 ou_stats_str = "N/A"
 
-            # 模擬預測
-            h_rank_val = home_info['rank'] if isinstance(home_info['rank'], int) else 10
-            a_rank_val = away_info['rank'] if isinstance(away_info['rank'], int) else 10
-            rank_bias_h = (20 - h_rank_val) * 0.02
-            rank_bias_a = (20 - a_rank_val) * 0.02
-            fake_home_exp = round(random.uniform(0.8, 2.5) + rank_bias_h, 2)
-            fake_away_exp = round(random.uniform(0.6, 2.0) + rank_bias_a, 2)
+            # === AI 核心預測 (不再是 Random) ===
+            pred_h_goals, pred_a_goals = predict_match_outcome(home_info, away_info, home_value, away_value)
+
+            # 計算主攻/客攻指數 (UI用)
+            att_h = round(pred_h_goals * 1.3, 1) # 攻擊指數通常比預期進球高一點
+            att_a = round(pred_a_goals * 1.3, 1)
 
             match_info = {
                 '時間': time_str,
@@ -250,11 +293,11 @@ def get_real_data(market_value_map):
                 '客排名': away_info['rank'],
                 '主近況': home_info['form'],
                 '客近況': away_info['form'],
-                '主預測': fake_home_exp,
-                '客預測': fake_away_exp,
-                '總球數': round(fake_home_exp + fake_away_exp, 1),
-                '主攻(H)': round(fake_home_exp * 1.2, 1),
-                '客攻(A)': round(fake_away_exp * 1.1, 1),
+                '主預測': pred_h_goals,   # 真實計算結果
+                '客預測': pred_a_goals,   # 真實計算結果
+                '總球數': round(pred_h_goals + pred_a_goals, 1),
+                '主攻(H)': att_h,
+                '客攻(A)': att_a,
                 '狀態': status,
                 '主分': score_h if score_h is not None else '',
                 '客分': score_a if score_a is not None else '',
@@ -265,29 +308,18 @@ def get_real_data(market_value_map):
             }
             cleaned_data.append(match_info)
             
-        print(f"✅ 成功處理 {len(cleaned_data)} 場賽事！")
-        
-        # 溫馨提示：印出還沒填身價的球隊
-        if missing_teams:
-            print("\n⚠️ 以下球隊在 '球隊身價表' 找不到資料 (建議去填寫):")
-            print(", ".join(list(missing_teams)[:10]) + "...")
-            
+        print(f"✅ 運算完成！共處理 {len(cleaned_data)} 場賽事。")
         return cleaned_data
     except Exception as e:
         print(f"⚠️ 執行錯誤: {e}")
         return []
 
-# ================= 主程式 =================
 def main():
-    # 1. 獲取 Spreadsheet 物件
     spreadsheet = get_google_spreadsheet()
-    
     market_value_map = {}
     if spreadsheet:
-        # 2. 從分頁 2 (球隊身價表) 讀取對照表
         market_value_map = load_manual_market_values(spreadsheet)
     
-    # 3. 抓取新數據 (傳入對照表)
     real_data = get_real_data(market_value_map)
     
     if real_data:
@@ -298,17 +330,14 @@ def main():
         
         if spreadsheet:
             try:
-                print(f"🚀 正在更新 '{GOOGLE_SHEET_NAME}' 分頁...")
-                # 寫入分頁 1 (數據上傳)
+                print(f"🚀 更新 Google Sheet...")
                 upload_sheet = spreadsheet.sheet1 
-                
                 header = df.columns.values.tolist()
                 values = df.astype(str).values.tolist()
                 data_to_upload = [header] + values
-                
                 upload_sheet.clear()
                 upload_sheet.update(range_name='A1', values=data_to_upload)
-                print(f"☁️ Google Sheet 更新成功！")
+                print(f"☁️ 更新成功！")
             except Exception as e:
                 print(f"❌ 上傳失敗: {e}")
     else:
