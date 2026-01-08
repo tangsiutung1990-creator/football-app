@@ -12,7 +12,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 =================
+# ================= CSS =================
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; }
@@ -146,11 +146,9 @@ def main():
             a_mom = float(row.get('客動量', 0)) if '客動量' in row else 0
             h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
             a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
-            
-            # --- ✅ 關鍵修復：這裡定義了 status_icon，解決了 NameError ---
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
-            # 波膽讀取
+            # 波膽讀取 (安全讀取)
             correct_score = row.get('波膽預測', 'N/A')
 
             analysis_notes = []
