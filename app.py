@@ -184,4 +184,131 @@ def main():
         total_m = len(df)
         live_m = len(df[df['狀態'].str.contains("進行中", na=False)])
         finish_m = len(df[df['狀態'] == '完場'])
-        c1.metric("總賽事", f"{total_m}
+        c1.metric("總賽事", f"{total_m} 場")
+        c2.metric("LIVE 進行中", f"{live_m} 場")
+        c3.metric("已完場", f"{finish_m} 場")
+        if c4.button("🔄 刷新數據", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+    if df is None or df.empty:
+        st.warning("⚠️ 數據加載中...")
+        return
+
+    numeric_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格']
+    for col in numeric_cols:
+        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    st.sidebar.header("🔍 篩選條件")
+    leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
+    selected_league = st.sidebar.selectbox("選擇聯賽:", leagues)
+    df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
+    available_dates = ["全部"] + sorted(list(set(df['日期'])))
+    selected_date = st.sidebar.selectbox("📅 選擇日期:", available_dates)
+
+    filtered_df = df.copy()
+    if selected_league != "全部": filtered_df = filtered_df[filtered_df['聯賽'] == selected_league]
+    if selected_date != "全部": filtered_df = filtered_df[filtered_df['日期'] == selected_date]
+
+    tab1, tab2 = st.tabs(["📅 未開賽 / 進行中", "✅ 已完場 (核對賽果)"])
+
+    def render_matches(target_df):
+        if target_df.empty:
+            st.info("暫無相關賽事。")
+            return
+        target_df = target_df.sort_values(by='時間')
+        current_date_header = None
+        for index, row in target_df.iterrows():
+            date_part = row['日期']
+            time_part = str(row['時間']).split(' ')[1] if ' ' in str(row['時間']) else row['時間']
+            if date_part != current_date_header:
+                current_date_header = date_part
+                st.markdown(f"#### 🗓️ {current_date_header}")
+                st.divider()
+
+            exp_h = float(row.get('主預測', 0))
+            exp_a = float(row.get('客預測', 0))
+            probs = calculate_probabilities(exp_h, exp_a)
+            h_rank = row['主排名'] if str(row['主排名']).isdigit() else "-"
+            a_rank = row['客排名'] if str(row['客排名']).isdigit() else "-"
+            h_form_html = get_form_html(row.get('主近況', ''))
+            a_form_html = get_form_html(row.get('客近況', ''))
+            status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
+            
+            h2h_info = row.get('H2H', 'N/A')
+            h2h_display = f"⚔️ {h2h_info}" if not pd.isna(h2h_info) and str(h2h_info) not in ['None','N/A',''] else '<span style="color:#666;">對賽往績: N/A</span>'
+            ou_stats_info = row.get('大小球統計', 'N/A')
+            ou_display = f"📊 {ou_stats_info}" if not pd.isna(ou_stats_info) and str(ou_stats_info) not in ['None','N/A',''] else ""
+            
+            raw_h_val = row.get('主隊身價', 'N/A')
+            raw_a_val = row.get('客隊身價', 'N/A')
+            h_value_display = format_market_value(raw_h_val)
+            a_value_display = format_market_value(raw_a_val)
+
+            analysis_notes = []
+            try:
+                clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
+                clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
+                if clean_h and clean_a and clean_h != 'N/A' and clean_a != 'N/A':
+                    h_v_num = float(clean_h); a_v_num = float(clean_a)
+                    if h_v_num > a_v_num * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！")
+                    elif a_v_num > h_v_num * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！")
+            except: pass 
+            h_f_pts = calculate_form_points(row.get('主近況', ''))
+            a_f_pts = calculate_form_points(row.get('客近況', ''))
+            if h_f_pts > a_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 主隊近期狀態火熱，士氣高昂！")
+            elif a_f_pts > h_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 客隊近期狀態極佳，有力反客為主！")
+            
+            volatility = float(row.get('賽事風格', 0))
+            style_tag = ""
+            if volatility > 3.0: style_tag = "<br><span style='color:#ffc107; font-weight:bold;'>⚡ 賽事風格: 大開大合 (高入球期望)</span>"
+            elif volatility > 0 and volatility < 2.3: style_tag = "<br><span style='color:#00ffff; font-weight:bold;'>🛡️ 賽事風格: 防守嚴密 (入球偏少)</span>"
+            
+            combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "雙方實力接近，勝負取決於臨場發揮。"
+            rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
+            rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
+
+            html_parts = []
+            html_parts.append(f"<div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>")
+            html_parts.append(f"🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>")
+            html_parts.append(f"💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>")
+            if style_tag: html_parts.append(style_tag)
+            html_parts.append(f"<hr style='margin:5px 0; border-top: 1px solid #444;'>")
+            html_parts.append(f"<span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span>")
+            html_parts.append("</div>")
+            final_html = "".join(html_parts)
+
+            with st.container():
+                st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
+                col_match, col_ai = st.columns([1.5, 1])
+                with col_match:
+                    st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
+                    st.write("") 
+                    m_parts = []
+                    m_parts.append("<div class='match-row'>")
+                    m_parts.append("<div class='team-col-home'>")
+                    m_parts.append(f"<div><span class='rank-badge'>#{h_rank}</span></div>")
+                    m_parts.append(f"<div class='team-name'>{row['主隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{h_value_display}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{h_form_html}</div>")
+                    m_parts.append("</div>")
+                    m_parts.append("<div class='score-col'>")
+                    m_parts.append("<div class='score-text'>")
+                    m_parts.append(f"{row['主分'] if row['主分']!='' else 'VS'}")
+                    m_parts.append(f"<span style='font-size:0.9rem; color:#aaa!important; vertical-align:middle;'>{'-' if row['主分'] != '' else ''}</span>")
+                    m_parts.append(f"{row['客分']}")
+                    m_parts.append("</div>")
+                    live_cls = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
+                    m_parts.append(f"<div class='{live_cls}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {row['狀態']}</div>")
+                    m_parts.append("</div>")
+                    m_parts.append("<div class='team-col-away'>")
+                    m_parts.append(f"<div><span class='rank-badge'>#{a_rank}</span></div>")
+                    m_parts.append(f"<div class='team-name'>{row['客隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{a_value_display}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{a_form_html}</div>")
+                    m_parts.append("</div></div>")
+                    match_html = "".join(m_parts)
+                    st.markdown(match_html, unsafe_allow_html=True)
+
+                with col_ai:
+                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 1
