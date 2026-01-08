@@ -5,7 +5,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 import math
 import os
 from datetime import datetime
-import textwrap  # 關鍵修復：引入 textwrap 來處理縮排問題
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -241,7 +240,6 @@ def main():
         st.warning("⚠️ 數據加載中...")
         return
 
-    # 確保數值欄位為數字 (包含新加入的賽事風格)
     numeric_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格']
     for col in numeric_cols:
         if col in df.columns:
@@ -304,7 +302,6 @@ def main():
 
             analysis_notes = []
             
-            # 1. 身價分析 (注意：使用 <b> 標籤)
             try:
                 clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
                 clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
@@ -314,39 +311,36 @@ def main():
                     elif a_v_num > h_v_num * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！")
             except: pass 
 
-            # 2. 近況分析
             h_f_pts = calculate_form_points(row.get('主近況', ''))
             a_f_pts = calculate_form_points(row.get('客近況', ''))
             if h_f_pts > a_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 主隊近期狀態火熱，士氣高昂！")
             elif a_f_pts > h_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 客隊近期狀態極佳，有力反客為主！")
             
-            # 3. 風格分析
             volatility = float(row.get('賽事風格', 0))
             style_tag = ""
             if volatility > 3.0:
-                style_tag = '<br><span style="color:#ffc107; font-weight:bold;">⚡ 賽事風格: 大開大合 (高入球期望)</span>'
+                style_tag = "<br><span style='color:#ffc107; font-weight:bold;'>⚡ 賽事風格: 大開大合 (高入球期望)</span>"
             elif volatility > 0 and volatility < 2.3:
-                style_tag = '<br><span style="color:#00ffff; font-weight:bold;">🛡️ 賽事風格: 防守嚴密 (入球偏少)</span>'
+                style_tag = "<br><span style='color:#00ffff; font-weight:bold;'>🛡️ 賽事風格: 防守嚴密 (入球偏少)</span>"
 
             combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "雙方實力接近，勝負取決於臨場發揮。"
 
             rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
             rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
 
-            # --- 關鍵修正：確保縮排不會被視為 Markdown Code Block ---
-            # 使用 textwrap.dedent 去除多餘縮排
-            final_html_raw = f"""
-            <div style="margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;">
-                🎯 預期入球: <b style="color:#fff">{exp_h} : {exp_a}</b><br>
-                💡 綜合建議: <b style="color:{rec_color}!important">{rec_text}</b>
-                {style_tag}
-                <hr style="margin:5px 0; border-top: 1px solid #444;">
-                <span style="color:#ffa500; font-size: 0.7rem;">{combined_analysis}</span>
-            </div>
-            """
+            # --- 終極修復：無換行符號拼接 (No Newlines) ---
+            # 這是最安全的方法，保證 Streamlit 絕對不會因為縮排而誤判為代碼
+            html_parts = []
+            html_parts.append(f"<div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>")
+            html_parts.append(f"🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>")
+            html_parts.append(f"💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>")
+            if style_tag:
+                html_parts.append(style_tag)
+            html_parts.append(f"<hr style='margin:5px 0; border-top: 1px solid #444;'>")
+            html_parts.append(f"<span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span>")
+            html_parts.append("</div>")
             
-            # 終極修復：先 Dedent 再 Strip，確保 Markdown 不會誤判
-            final_html = textwrap.dedent(final_html_raw).strip()
+            final_html = "".join(html_parts) # 將所有部分接成一行，完全移除換行符號
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
@@ -357,33 +351,33 @@ def main():
                     st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
                     st.write("") 
                     
-                    match_html = f"""
-<div class="match-row">
-<div class="team-col-home">
-<div><span class="rank-badge">#{h_rank}</span></div>
-<div class="team-name">{row['主隊']}</div>
-<div class="market-value-text">{h_value_display}</div>
-<div style="margin-top:2px;">{h_form_html}</div>
-</div>
-<div class="score-col">
-<div class="score-text">
-{row['主分'] if row['主分']!='' else 'VS'}
-<span style="font-size:0.9rem; color:#aaa!important; vertical-align:middle;">{'-' if row['主分'] != '' else ''}</span>
-{row['客分']}
-</div>
-<div class="{'live-status' if '進行中' in row['狀態'] else 'sub-text'}" style="margin-top:2px; font-size:0.75rem;">
-{status_icon} {row['狀態']}
-</div>
-</div>
-<div class="team-col-away">
-<div><span class="rank-badge">#{a_rank}</span></div>
-<div class="team-name">{row['客隊']}</div>
-<div class="market-value-text">{a_value_display}</div>
-<div style="margin-top:2px;">{a_form_html}</div>
-</div>
-</div>
-"""
-                    st.markdown(textwrap.dedent(match_html).strip(), unsafe_allow_html=True)
+                    # 這裡也做同樣處理，確保 match_html 也是單行
+                    m_parts = []
+                    m_parts.append("<div class='match-row'>")
+                    m_parts.append("<div class='team-col-home'>")
+                    m_parts.append(f"<div><span class='rank-badge'>#{h_rank}</span></div>")
+                    m_parts.append(f"<div class='team-name'>{row['主隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{h_value_display}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{h_form_html}</div>")
+                    m_parts.append("</div>")
+                    m_parts.append("<div class='score-col'>")
+                    m_parts.append("<div class='score-text'>")
+                    m_parts.append(f"{row['主分'] if row['主分']!='' else 'VS'}")
+                    m_parts.append(f"<span style='font-size:0.9rem; color:#aaa!important; vertical-align:middle;'>{'-' if row['主分'] != '' else ''}</span>")
+                    m_parts.append(f"{row['客分']}")
+                    m_parts.append("</div>")
+                    live_cls = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
+                    m_parts.append(f"<div class='{live_cls}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {row['狀態']}</div>")
+                    m_parts.append("</div>")
+                    m_parts.append("<div class='team-col-away'>")
+                    m_parts.append(f"<div><span class='rank-badge'>#{a_rank}</span></div>")
+                    m_parts.append(f"<div class='team-name'>{row['客隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{a_value_display}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{a_form_html}</div>")
+                    m_parts.append("</div></div>")
+                    
+                    match_html = "".join(m_parts)
+                    st.markdown(match_html, unsafe_allow_html=True)
 
                 with col_ai:
                     st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
@@ -396,7 +390,6 @@ def main():
                     st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
                     st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
                     
-                    # 渲染修復後的 HTML (使用處理過的 final_html)
                     st.markdown(final_html, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True) 
 
