@@ -66,16 +66,12 @@ def calculate_correct_score_probs(home_exp, away_exp):
         return (lam**k * math.exp(-lam)) / math.factorial(k)
     
     scores = []
-    # 遍歷 0-5 球的所有組合
     for h in range(6):
         for a in range(6):
             prob = poisson(h, home_exp) * poisson(a, away_exp)
             scores.append({'score': f"{h}:{a}", 'prob': prob})
     
-    # 按機率排序，取前 3 名
     scores.sort(key=lambda x: x['prob'], reverse=True)
-    
-    # 格式化輸出
     top_3 = [f"{s['score']} ({int(s['prob']*100)}%)" for s in scores[:3]]
     return " | ".join(top_3)
 
@@ -240,7 +236,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 # ================= 主流程 =================
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (波膽運算版)...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (強制更新版)...")
     
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
@@ -255,7 +251,7 @@ def get_real_data(market_value_map):
 
         cleaned = []
         hk_tz = pytz.timezone('Asia/Hong_Kong')
-        print(f"🔍 發現 {len(matches)} 場賽事...")
+        print(f"🔍 發現 {len(matches)} 場賽事，正在計算波膽...")
 
         for index, match in enumerate(matches):
             utc_dt = datetime.strptime(match['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
@@ -271,7 +267,7 @@ def get_real_data(market_value_map):
             a_info = standings.get(a_id, {'rank':0,'form':'N/A','away_att':1.0,'away_def':1.0,'volatility':2.5,'season_ppg':1.3})
             h_val = market_value_map.get(h_name, "N/A"); a_val = market_value_map.get(a_name, "N/A")
             
-            print(f"   🤖 計算中: {h_name} vs {a_name}...")
+            print(f"   🤖 計算中 [{index+1}/{len(matches)}]: {h_name} vs {a_name}...")
             h2h, ou = get_h2h_and_ou_stats(match['id'], h_id, a_id)
             time.sleep(6.1)
 
@@ -295,7 +291,7 @@ def get_real_data(market_value_map):
                 'H2H': h2h, '大小球統計': ou,
                 '主隊身價': h_val, '客隊身價': a_val,
                 '賽事風格': vol, '主動量': h_mom, '客動量': a_mom,
-                '波膽預測': correct_score_str # 新增欄位
+                '波膽預測': correct_score_str 
             })
         return cleaned
     except Exception as e:
@@ -307,22 +303,23 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
-        # 確保 '波膽預測' 欄位存在
+        # 強制定義欄位順序，包含 '波膽預測'
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測','總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try:
-                # 這裡假設你的數據分頁是第一個分頁。如果不是，請修改 .sheet1
-                upload_sheet = spreadsheet.sheet1
-                print(f"🚀 正在強制重構 Google Sheet 分頁: {upload_sheet.title} ...")
+                # 這裡使用 get_worksheet(0) 確保選到第一個分頁
+                upload_sheet = spreadsheet.get_worksheet(0)
+                print(f"🚀 正在強制重寫 Google Sheet 分頁: {upload_sheet.title}")
+                print(f"   📋 準備寫入欄位: {', '.join(cols)}")
                 
-                # 關鍵：清空舊表，確保新欄位能寫入
+                # 關鍵：清空舊表
                 upload_sheet.clear() 
                 
                 # 寫入新資料（含標題）
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print(f"☁️ 更新成功！已加入波膽欄位。")
-            except Exception as e: print(f"❌ 失敗: {e}")
+                print(f"✅ 成功寫入 {len(df)} 筆數據 (含波膽預測)！")
+            except Exception as e: print(f"❌ 寫入失敗: {e}")
 
 if __name__ == "__main__":
     main()
