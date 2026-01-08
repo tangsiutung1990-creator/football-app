@@ -311,4 +311,18 @@ def main():
                     st.markdown(match_html, unsafe_allow_html=True)
 
                 with col_ai:
-                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 1
+                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='h2h-text'>{h2h_display}</div>", unsafe_allow_html=True)
+                    if ou_display: st.markdown(f"<div class='ou-stats-text'>{ou_display}</div>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時大數據分析</div>", unsafe_allow_html=True)
+                    st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
+                    st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
+                    st.markdown(final_html, unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True) 
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    with tab1: render_matches(filtered_df[filtered_df['狀態'] != '完場'])
+    with tab2: render_matches(filtered_df[filtered_df['狀態'] == '完場'])
+
+if __name__ == "__main__":
+    main()
