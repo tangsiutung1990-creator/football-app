@@ -11,7 +11,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 (保持深色專業風) =================
+# ================= CSS 強力修復區 =================
 st.markdown("""
     <style>
     /* 1. 全局背景設為深色 */
@@ -120,45 +120,18 @@ st.markdown("""
         background-color: #007bff;
     }
 
-    /* 9. Flexbox 佈局類別 */
+    /* 9. Flexbox 佈局 */
     .match-row {
         display: flex;
         align-items: center; 
         justify-content: space-between;
         width: 100%;
     }
-    .team-col-home {
-        flex: 1;
-        text-align: left;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-    .team-col-away {
-        flex: 1;
-        text-align: right;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-    .score-col {
-        flex: 0.8;
-        text-align: center;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-    .team-name {
-        font-size: 1.2rem; 
-        font-weight: bold;
-        margin: 1px 0; 
-        white-space: nowrap;
-    }
-    .score-text {
-        font-size: 1.8rem; 
-        font-weight: bold; 
-        line-height: 1;
-    }
+    .team-col-home { flex: 1; text-align: left; display: flex; flex-direction: column; justify-content: center; }
+    .team-col-away { flex: 1; text-align: right; display: flex; flex-direction: column; justify-content: center; }
+    .score-col { flex: 0.8; text-align: center; display: flex; flex-direction: column; justify-content: center; }
+    .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
+    .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -177,12 +150,9 @@ def get_form_html(form_str):
     if html == "": return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     return html
 
-# 計算近況分數 (用於文字分析)
 def calculate_form_points(form_str):
-    if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A':
-        return 0
-    points = 0
-    count = 0
+    if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A': return 0
+    points = 0; count = 0
     form_str = str(form_str).strip()[-5:]
     for char in form_str:
         if char.upper() == 'W': points += 3
@@ -190,16 +160,13 @@ def calculate_form_points(form_str):
         count += 1
     return points / count if count > 0 else 0
 
-# 格式化身價
 def format_market_value(val):
-    if pd.isna(val) or val == '' or str(val).upper() == 'N/A' or str(val).upper() == 'NONE':
-        return ""
+    if pd.isna(val) or val == '' or str(val).upper() == 'N/A' or str(val).upper() == 'NONE': return ""
     try:
         clean_val = str(val).replace('€','').replace('M','').replace(',','').strip()
         num_val = float(clean_val)
         return f"€{int(num_val)}M"
-    except:
-        return str(val)
+    except: return str(val)
 
 # ================= 數學大腦 =================
 def calculate_probabilities(home_exp, away_exp):
@@ -207,11 +174,8 @@ def calculate_probabilities(home_exp, away_exp):
         if lam <= 0: return 0 if k > 0 else 1
         return (lam**k * math.exp(-lam)) / math.factorial(k)
 
-    home_win_prob = 0
-    draw_prob = 0
-    away_win_prob = 0
-    over_25_prob = 0
-    under_25_prob = 0
+    home_win_prob = 0; draw_prob = 0; away_win_prob = 0
+    over_25_prob = 0; under_25_prob = 0
 
     for h in range(8): 
         for a in range(8): 
@@ -276,7 +240,7 @@ def main():
         st.warning("⚠️ 數據加載中...")
         return
 
-    numeric_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)']
+    numeric_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -324,127 +288,9 @@ def main():
             a_form_html = get_form_html(row.get('客近況', ''))
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
-            # --- 讀取欄位 ---
-            # 1. H2H
+            # --- 讀取與分析 ---
             h2h_info = row.get('H2H', 'N/A')
-            if pd.isna(h2h_info) or str(h2h_info) in ['None', 'N/A', '']: 
-                h2h_display = '<span style="color:#666; font-weight:normal;">對賽往績: N/A</span>'
-            else:
-                h2h_display = f"⚔️ {h2h_info}"
+            h2h_display = f"⚔️ {h2h_info}" if not pd.isna(h2h_info) and str(h2h_info) not in ['None','N/A',''] else '<span style="color:#666;">對賽往績: N/A</span>'
             
-            # 2. 大小球
             ou_stats_info = row.get('大小球統計', 'N/A')
-            if pd.isna(ou_stats_info) or str(ou_stats_info) in ['None', 'N/A', '']:
-                ou_display = ""
-            else:
-                ou_display = f"📊 {ou_stats_info}"
-            
-            # 3. 身價
-            raw_h_val = row.get('主隊身價', 'N/A')
-            raw_a_val = row.get('客隊身價', 'N/A')
-            h_value_display = format_market_value(raw_h_val)
-            a_value_display = format_market_value(raw_a_val)
-
-            # --- 真實數據分析 (保留這些有用的) ---
-            analysis_notes = []
-            
-            # 身價懸殊判斷
-            try:
-                clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
-                clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
-                if clean_h and clean_a and clean_h != 'N/A' and clean_a != 'N/A':
-                    h_v_num = float(clean_h)
-                    a_v_num = float(clean_a)
-                    if h_v_num > a_v_num * 2.5:
-                        analysis_notes.append(f"💰 **身價懸殊**: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！")
-                    elif a_v_num > h_v_num * 2.5:
-                        analysis_notes.append(f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！")
-            except: pass 
-
-            # 近況狀態判斷
-            h_f_pts = calculate_form_points(row.get('主近況', ''))
-            a_f_pts = calculate_form_points(row.get('客近況', ''))
-            if h_f_pts > a_f_pts + 1.2:
-                analysis_notes.append("🔥 **近況優勢**: 主隊近期狀態火熱，士氣高昂！")
-            elif a_f_pts > h_f_pts + 1.2:
-                analysis_notes.append("🔥 **近況優勢**: 客隊近期狀態極佳，有力反客為主！")
-                
-            # 合併分析文字 (不含無用的信心指數)
-            if not analysis_notes:
-                combined_analysis = "雙方實力接近，勝負取決於臨場發揮。"
-            else:
-                combined_analysis = "<br>".join(analysis_notes)
-
-            with st.container():
-                st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
-                
-                col_match, col_ai = st.columns([1.5, 1])
-                
-                with col_match:
-                    st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
-                    st.write("") 
-                    
-                    match_html = f"""
-<div class="match-row">
-<div class="team-col-home">
-<div><span class="rank-badge">#{h_rank}</span></div>
-<div class="team-name">{row['主隊']}</div>
-<div class="market-value-text">{h_value_display}</div>
-<div style="margin-top:2px;">{h_form_html}</div>
-</div>
-<div class="score-col">
-<div class="score-text">
-{row['主分'] if row['主分']!='' else 'VS'}
-<span style="font-size:0.9rem; color:#aaa!important; vertical-align:middle;">{'-' if row['主分'] != '' else ''}</span>
-{row['客分']}
-</div>
-<div class="{'live-status' if '進行中' in row['狀態'] else 'sub-text'}" style="margin-top:2px; font-size:0.75rem;">
-{status_icon} {row['狀態']}
-</div>
-</div>
-<div class="team-col-away">
-<div><span class="rank-badge">#{a_rank}</span></div>
-<div class="team-name">{row['客隊']}</div>
-<div class="market-value-text">{a_value_display}</div>
-<div style="margin-top:2px;">{a_form_html}</div>
-</div>
-</div>
-"""
-                    st.markdown(match_html, unsafe_allow_html=True)
-
-                with col_ai:
-                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
-                    
-                    # === 顯示 H2H 和 大小球 ===
-                    st.markdown(f"<div class='h2h-text'>{h2h_display}</div>", unsafe_allow_html=True)
-                    if ou_display:
-                        st.markdown(f"<div class='ou-stats-text'>{ou_display}</div>", unsafe_allow_html=True)
-
-                    st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時大數據分析</div>", unsafe_allow_html=True)
-                    
-                    st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
-                    st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
-                    
-                    rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
-                    rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
-                    
-                    # 乾淨的底部分析框 (已移除信心指數)
-                    st.markdown(f"""
-                    <div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>
-                        🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
-                        💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>
-                        <hr style='margin:5px 0; border-top: 1px solid #444;'>
-                        <span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True) 
-
-                st.markdown('</div>', unsafe_allow_html=True)
-
-    with tab1:
-        render_matches(filtered_df[filtered_df['狀態'] != '完場'])
-    with tab2:
-        render_matches(filtered_df[filtered_df['狀態'] == '完場'])
-
-if __name__ == "__main__":
-    main()
+            ou_display = f"📊 {ou_stats_info}" if not pd.isna(ou_stats_info
