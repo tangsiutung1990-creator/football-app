@@ -12,7 +12,21 @@ API_KEY = '531bb40a089446bdae76a019f2af3beb'
 BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
-COMPETITIONS = ['PL', 'PD', 'CL', 'SA', 'BL1', 'FL1'] 
+
+# 完整支援的 11 個聯賽 (免費版極限)
+COMPETITIONS = [
+    'PL',   # 英超 (Premier League)
+    'PD',   # 西甲 (La Liga)
+    'CL',   # 歐聯 (Champions League)
+    'SA',   # 意甲 (Serie A)
+    'BL1',  # 德甲 (Bundesliga)
+    'FL1',  # 法甲 (Ligue 1)
+    'DED',  # 荷甲 (Eredivisie) - 新增
+    'PPL',  # 葡超 (Primeira Liga) - 新增
+    'ELC',  # 英冠 (Championship) - 新增
+    'BSA',  # 巴甲 (Brasileiro Série A) - 新增
+    'CLI'   # 南美自由盃 (Copa Libertadores) - 新增
+]
 
 # ================= 連接 Google Sheet =================
 def get_google_spreadsheet():
@@ -55,10 +69,22 @@ def parse_market_value(val_str):
 
 # ================= (新) 計算權重近況分數 =================
 def calculate_weighted_form_score(form_str):
-    if not form_str or form_str == 'N/A': return 1.5
-    score = 0; total_weight = 0
+    """
+    給予最近的場次更高權重 (Weighted Form)。
+    Form string e.g., "WWDLW" (右邊是最近)
+    """
+    if not form_str or form_str == 'N/A': return 1.5 # 預設中立分
+    
+    score = 0
+    total_weight = 0
+    
+    # 取最後 5 場
     relevant_form = form_str.replace(',', '').strip()[-5:]
-    weights = [1.0, 1.1, 1.2, 1.3, 1.5] # 最近一場權重最高
+    
+    # 權重分配: [1.0, 1.1, 1.2, 1.3, 1.5] (最舊 -> 最新)
+    weights = [1.0, 1.1, 1.2, 1.3, 1.5]
+    
+    # 確保長度匹配 (有些球隊可能少於5場)
     start_idx = 5 - len(relevant_form)
     current_weights = weights[start_idx:]
     
@@ -67,8 +93,11 @@ def calculate_weighted_form_score(form_str):
         s = 0
         if char.upper() == 'W': s = 3
         elif char.upper() == 'D': s = 1
+        else: s = 0 # 輸球 0 分
+        
         score += s * w
         total_weight += w
+        
     if total_weight == 0: return 1.5
     return score / total_weight 
 
