@@ -295,7 +295,7 @@ def get_real_data(market_value_map):
                 'H2H': h2h, '大小球統計': ou,
                 '主隊身價': h_val, '客隊身價': a_val,
                 '賽事風格': vol, '主動量': h_mom, '客動量': a_mom,
-                '波膽預測': correct_score_str # 新增欄位
+                '波膽預測': correct_score_str 
             })
         return cleaned
     except Exception as e:
@@ -307,15 +307,14 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
-        # 強制定義欄位順序，包含 '波膽預測'
+        # 強制包含 '波膽預測'
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測','總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try:
                 print(f"🚀 正在強制更新 Google Sheet 欄位...")
                 upload_sheet = spreadsheet.sheet1
-                upload_sheet.clear() # 清除舊表
-                # 寫入包含新欄位標題的數據
+                upload_sheet.clear() # 關鍵：清除舊表頭
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"☁️ 更新成功！Google Sheet 現在已有波膽欄位。")
             except Exception as e: print(f"❌ 失敗: {e}")
