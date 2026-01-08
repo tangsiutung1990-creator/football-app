@@ -295,7 +295,7 @@ def get_real_data(market_value_map):
                 'H2H': h2h, '大小球統計': ou,
                 '主隊身價': h_val, '客隊身價': a_val,
                 '賽事風格': vol, '主動量': h_mom, '客動量': a_mom,
-                '波膽預測': correct_score_str # 這裡確保了資料有「波膽預測」
+                '波膽預測': correct_score_str # 新增欄位
             })
         return cleaned
     except Exception as e:
