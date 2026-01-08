@@ -14,6 +14,16 @@ GOOGLE_SHEET_NAME = "數據上傳"
 MANUAL_TAB_NAME = "球隊身價表" 
 COMPETITIONS = ['PL', 'PD', 'CL', 'SA', 'BL1', 'FL1'] 
 
+# 新增：聯賽入球係數 (根據歷史數據微調 Poisson Lambda)
+LEAGUE_WEIGHTS = {
+    'BL1': 1.15, # 德甲通常大球多
+    'PL': 1.05,  # 英超節奏快
+    'PD': 0.95,  # 西甲技術流，有時入球少
+    'SA': 0.95,  # 意甲防守強
+    'FL1': 1.0,  # 法甲中規中矩
+    'CL': 1.1    # 歐聯強隊多，入球率偏高
+}
+
 # ================= 連接 Google Sheet =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -46,9 +56,6 @@ def load_manual_market_values(spreadsheet):
 
 # ================= 輔助：解析身價為數字 =================
 def parse_market_value(val_str):
-    """
-    將 '€1200M' 或 '1,200' 轉為 float 數字以便計算
-    """
     if not val_str or val_str == 'N/A': return 0
     try:
         clean = str(val_str).replace('€', '').replace('M', '').replace(',', '').strip()
@@ -58,29 +65,21 @@ def parse_market_value(val_str):
 
 # ================= 輔助：計算近況分數 =================
 def calculate_form_score(form_str):
-    """
-    將 WWDLW 轉換為分數: W=3, D=1, L=0
-    回傳平均分 (0~3)
-    """
-    if not form_str or form_str == 'N/A': return 1.5 # 預設中立
-    
+    if not form_str or form_str == 'N/A': return 1.5
     score = 0
     count = 0
-    # 取最後 5 場
     relevant_form = form_str.replace(',', '').strip()[-5:]
-    
     for char in relevant_form:
         if char.upper() == 'W': score += 3
         elif char.upper() == 'D': score += 1
         else: score += 0
         count += 1
-        
     if count == 0: return 1.5
-    return score / count # 平均分
+    return score / count 
 
-# ================= 獲取聯賽詳細數據 (攻防能力) =================
+# ================= (升級版) 獲取聯賽詳細數據：區分主/客場 =================
 def get_all_standings_with_stats():
-    print("📊 正在獲取各聯賽實時排名與攻防數據...")
+    print("📊 正在獲取各聯賽 [主場/客場] 獨立數據...")
     standings_map = {}
     headers = {'X-Auth-Token': API_KEY}
     
@@ -90,77 +89,106 @@ def get_all_standings_with_stats():
             res = requests.get(url, headers=headers)
             if res.status_code == 200:
                 data = res.json()
+                
+                # 我們需要遍歷不同的 table type: TOTAL, HOME, AWAY
                 for table in data.get('standings', []):
-                    if table['type'] == 'TOTAL':
-                        for entry in table['table']:
-                            team_id = entry['team']['id']
-                            raw_form = entry.get('form')
-                            if raw_form is None: raw_form = "N/A"
-                            
-                            # === 關鍵：獲取進球與失球數據 ===
-                            played = entry['playedGames']
-                            goals_for = entry['goalsFor']
-                            goals_against = entry['goalsAgainst']
-                            
-                            # 計算場均數據 (避免除以0)
-                            avg_gf = goals_for / played if played > 0 else 1.2
-                            avg_ga = goals_against / played if played > 0 else 1.2
-
+                    table_type = table['type'] # 'TOTAL', 'HOME', 'AWAY'
+                    
+                    for entry in table['table']:
+                        team_id = entry['team']['id']
+                        if team_id not in standings_map:
                             standings_map[team_id] = {
-                                'rank': entry['position'],
-                                'form': raw_form,
-                                'points': entry['points'],
-                                'avg_gf': avg_gf, # 場均進球 (攻擊力)
-                                'avg_ga': avg_ga  # 場均失球 (防守弱點)
+                                'rank': 0, 'form': 'N/A', 
+                                'home_att': 1.2, 'home_def': 1.2,
+                                'away_att': 1.0, 'away_def': 1.0
                             }
+                        
+                        # 處理數據
+                        played = entry['playedGames']
+                        gf = entry['goalsFor']
+                        ga = entry['goalsAgainst']
+                        avg_gf = gf / played if played > 0 else 0
+                        avg_ga = ga / played if played > 0 else 0
+
+                        if table_type == 'TOTAL':
+                            standings_map[team_id]['rank'] = entry['position']
+                            standings_map[team_id]['form'] = entry.get('form', 'N/A')
+                        elif table_type == 'HOME':
+                            # 主場進攻力 (Home Attack) & 主場防守漏水度 (Home Defense)
+                            standings_map[team_id]['home_att'] = avg_gf if avg_gf > 0 else 0.8
+                            standings_map[team_id]['home_def'] = avg_ga if avg_ga > 0 else 0.8
+                        elif table_type == 'AWAY':
+                            # 客場進攻力 & 客場防守
+                            standings_map[team_id]['away_att'] = avg_gf if avg_gf > 0 else 0.8
+                            standings_map[team_id]['away_def'] = avg_ga if avg_ga > 0 else 0.8
+                            
             time.sleep(1.5) 
         except Exception as e:
             print(f"⚠️ 無法獲取 {comp} 排名: {e}")
     return standings_map
 
-# ================= 核心算法：真實預測模型 =================
-def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str):
+# ================= 核心算法：真實預測模型 (升級版) =================
+def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2h_summary, league_code):
     """
-    基於真實數據計算預期進球 (Expected Goals)
+    Inputs:
+    - home_stats: 包含主場攻擊力
+    - away_stats: 包含客場防守力
+    - h2h_summary: H2H 統計字串 (例如 "近5場: 主3勝...")
+    - league_code: 聯賽代碼 (例如 PL, BL1)
     """
-    # 1. 基礎攻防模型
-    # 主隊預期入球 = (主隊攻擊 + 客隊防守) / 2
-    raw_h_exp = (home_stats['avg_gf'] + away_stats['avg_ga']) / 2
-    # 客隊預期入球 = (客隊攻擊 + 主隊防守) / 2
-    raw_a_exp = (away_stats['avg_gf'] + home_stats['avg_ga']) / 2
     
-    # 2. 加入主場優勢 (通常主隊有 +0.2 ~ +0.3 的優勢)
-    raw_h_exp *= 1.15
+    # 1. 主客場獨立運算 (最準確的基礎)
+    # 主隊預期入球 = (主隊主場攻擊力 + 客隊客場防守力) / 2
+    raw_h_exp = (home_stats['home_att'] + away_stats['away_def']) / 2
     
-    # 3. 身價修正 (Market Value Adjustment)
+    # 客隊預期入球 = (客隊客場攻擊力 + 主隊主場防守力) / 2
+    raw_a_exp = (away_stats['away_att'] + home_stats['home_def']) / 2
+    
+    # 2. 聯賽係數修正
+    league_factor = LEAGUE_WEIGHTS.get(league_code, 1.0)
+    raw_h_exp *= league_factor
+    raw_a_exp *= league_factor
+    
+    # 3. 身價修正
     h_val = parse_market_value(home_val_str)
     a_val = parse_market_value(away_val_str)
     
     if h_val > 0 and a_val > 0:
         ratio = h_val / a_val
-        if ratio > 5.0: # 身價懸殊 (主隊強)
-            raw_h_exp *= 1.25
-            raw_a_exp *= 0.8
-        elif ratio > 2.0:
-            raw_h_exp *= 1.1
-            raw_a_exp *= 0.9
-        elif ratio < 0.2: # 身價懸殊 (客隊強)
-            raw_h_exp *= 0.8
-            raw_a_exp *= 1.25
-        elif ratio < 0.5:
-            raw_h_exp *= 0.9
-            raw_a_exp *= 1.1
+        if ratio > 5.0:
+            raw_h_exp *= 1.25; raw_a_exp *= 0.8
+        elif ratio > 2.5:
+            raw_h_exp *= 1.15; raw_a_exp *= 0.9
+        elif ratio < 0.2:
+            raw_h_exp *= 0.8; raw_a_exp *= 1.25
+        elif ratio < 0.4:
+            raw_h_exp *= 0.9; raw_a_exp *= 1.15
 
-    # 4. 近況修正 (Form Adjustment)
-    h_form_score = calculate_form_score(home_stats['form']) # 0~3
-    a_form_score = calculate_form_score(away_stats['form']) # 0~3
-    
-    form_diff = h_form_score - a_form_score
-    # 如果主隊近況好很多 (例如差 2 分以上)
-    if form_diff > 1.5:
-        raw_h_exp *= 1.1
-    elif form_diff < -1.5:
-        raw_a_exp *= 1.1
+    # 4. 近況修正
+    h_form = calculate_form_score(home_stats['form'])
+    a_form = calculate_form_score(away_stats['form'])
+    if h_form - a_form > 1.0: raw_h_exp *= 1.1
+    if a_form - h_form > 1.0: raw_a_exp *= 1.1
+
+    # 5. (新增) H2H 歷史權重修正
+    # 解析 "近10場: 主5勝 | 和2 | 客3勝"
+    try:
+        if "主" in h2h_summary and "勝" in h2h_summary:
+            parts = h2h_summary.split('|')
+            h_wins = int(parts[0].split('主')[1].split('勝')[0]) # 提取主勝場數
+            a_wins = int(parts[2].split('客')[1].split('勝')[0]) # 提取客勝場數
+            total = h_wins + a_wins + int(parts[1].split('和')[1])
+            
+            if total > 0:
+                h_win_rate = h_wins / total
+                a_win_rate = a_wins / total
+                
+                # 如果主隊剋死客隊 (勝率 > 60%)
+                if h_win_rate > 0.6: raw_h_exp *= 1.1
+                # 如果客隊反客為主
+                elif a_win_rate > 0.6: raw_a_exp *= 1.1
+    except:
+        pass # 解析失敗就不修正
 
     return round(raw_h_exp, 2), round(raw_a_exp, 2)
 
@@ -215,9 +243,8 @@ def get_h2h_and_ou_stats(match_id, current_home_id, current_away_id):
 
 # ================= 主流程 =================
 def get_real_data(market_value_map):
-    # 1. 獲取帶有攻防數據的排名表
-    standings = get_all_standings_with_stats()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動...")
+    standings = get_all_standings_with_stats() # 這裡現在包含了主客場獨立數據
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (主客分離模式)...")
     
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
@@ -259,30 +286,30 @@ def get_real_data(market_value_map):
             away_id = match['awayTeam']['id']
             home_name = match['homeTeam']['shortName'] or match['homeTeam']['name']
             away_name = match['awayTeam']['shortName'] or match['awayTeam']['name']
+            league_code = match['competition']['code'] # 例如 'PL'
             
-            # 獲取球隊數據 (如果沒有數據，給予預設值)
-            default_stats = {'rank': '-', 'form': 'N/A', 'avg_gf': 1.3, 'avg_ga': 1.3}
+            # 獲取球隊數據
+            default_stats = {'rank': '-', 'form': 'N/A', 'home_att': 1.2, 'home_def': 1.2, 'away_att': 1.0, 'away_def': 1.0}
             home_info = standings.get(home_id, default_stats)
             away_info = standings.get(away_id, default_stats)
 
             home_value = market_value_map.get(home_name, "N/A")
             away_value = market_value_map.get(away_name, "N/A")
             
-            # --- API 限制保護 ---
+            # --- API 限制保護 & H2H 獲取 ---
             if status != '完場':
-                print(f"   🤖 計算中: {home_name} vs {away_name} ...")
+                print(f"   🤖 深度運算: {home_name} (主) vs {away_name} (客)...")
                 h2h_str, ou_stats_str = get_h2h_and_ou_stats(match['id'], home_id, away_id)
-                time.sleep(6.1) # 避免 API 封鎖
+                time.sleep(6.1) 
             else:
                 h2h_str = "N/A"
                 ou_stats_str = "N/A"
 
-            # === AI 核心預測 (不再是 Random) ===
-            pred_h_goals, pred_a_goals = predict_match_outcome(home_info, away_info, home_value, away_value)
+            # === AI 核心預測 (主客分離 + 聯賽係數 + H2H權重) ===
+            pred_h_goals, pred_a_goals = predict_match_outcome(home_info, away_info, home_value, away_value, h2h_str, league_code)
 
-            # 計算主攻/客攻指數 (UI用)
-            att_h = round(pred_h_goals * 1.3, 1) # 攻擊指數通常比預期進球高一點
-            att_a = round(pred_a_goals * 1.3, 1)
+            att_h = round(pred_h_goals * 1.2, 1)
+            att_a = round(pred_a_goals * 1.2, 1)
 
             match_info = {
                 '時間': time_str,
@@ -293,8 +320,8 @@ def get_real_data(market_value_map):
                 '客排名': away_info['rank'],
                 '主近況': home_info['form'],
                 '客近況': away_info['form'],
-                '主預測': pred_h_goals,   # 真實計算結果
-                '客預測': pred_a_goals,   # 真實計算結果
+                '主預測': pred_h_goals,
+                '客預測': pred_a_goals,
                 '總球數': round(pred_h_goals + pred_a_goals, 1),
                 '主攻(H)': att_h,
                 '客攻(A)': att_a,
