@@ -148,7 +148,7 @@ def main():
             a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
-            # 波膽讀取
+            # 波膽讀取 (安全讀取)
             correct_score = row.get('波膽預測', 'N/A')
 
             analysis_notes = []
