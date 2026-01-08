@@ -177,6 +177,19 @@ def get_form_html(form_str):
     if html == "": return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     return html
 
+# 新增：計算近況分數以顯示分析文字
+def calculate_form_points(form_str):
+    if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A':
+        return 0
+    points = 0
+    count = 0
+    form_str = str(form_str).strip()[-5:]
+    for char in form_str:
+        if char.upper() == 'W': points += 3
+        elif char.upper() == 'D': points += 1
+        count += 1
+    return points / count if count > 0 else 0
+
 # 格式化身價
 def format_market_value(val):
     if pd.isna(val) or val == '' or str(val).upper() == 'N/A' or str(val).upper() == 'NONE':
@@ -243,7 +256,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球賽事預測 (Ultimate Pro Black)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro Black)")
     
     df = load_data()
     if df is not None and not df.empty:
@@ -319,10 +332,9 @@ def main():
             else:
                 h2h_display = f"⚔️ {h2h_info}"
             
-            # 2. 大小球統計 (這裡就是你說不見了的部分)
+            # 2. 大小球統計
             ou_stats_info = row.get('大小球統計', 'N/A')
             if pd.isna(ou_stats_info) or str(ou_stats_info) in ['None', 'N/A', '']:
-                # 即使沒數據，也可以顯示提示，或者留空
                 ou_display = ""
             else:
                 ou_display = f"📊 {ou_stats_info}"
@@ -346,6 +358,22 @@ def main():
                     elif a_v_num > h_v_num * 2.5:
                         market_analysis = f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！"
             except: pass 
+
+            # --- 近況分析邏輯 (新增) ---
+            form_analysis = ""
+            h_f_pts = calculate_form_points(row.get('主近況', ''))
+            a_f_pts = calculate_form_points(row.get('客近況', ''))
+            
+            if h_f_pts > a_f_pts + 1.0:
+                form_analysis = "🔥 **近況優勢**: 主隊近期狀態火熱，士氣高昂！"
+            elif a_f_pts > h_f_pts + 1.0:
+                form_analysis = "🔥 **近況優勢**: 客隊近期狀態極佳，有力反客為主！"
+
+            # 合併分析文字
+            combined_analysis = ""
+            if market_analysis: combined_analysis += f"{market_analysis}<br>"
+            if form_analysis: combined_analysis += f"{form_analysis}"
+            if combined_analysis == "": combined_analysis = "雙方實力接近，勝負取決於臨場發揮。"
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
@@ -387,14 +415,13 @@ def main():
                 with col_ai:
                     st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
                     
-                    # === 這裡就是顯示 H2H 和 大小球 的地方 ===
+                    # === 顯示 H2H 和 大小球 ===
                     st.markdown(f"<div class='h2h-text'>{h2h_display}</div>", unsafe_allow_html=True)
                     
-                    # 確保 ou_display 存在才顯示，如果 Sheet 裡有資料，這裡一定會顯示
                     if ou_display:
                         st.markdown(f"<div class='ou-stats-text'>{ou_display}</div>", unsafe_allow_html=True)
 
-                    st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時分析</div>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時大數據分析</div>", unsafe_allow_html=True)
                     
                     st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
                     st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
@@ -402,15 +429,12 @@ def main():
                     rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
                     rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
                     
-                    analysis_html = ""
-                    if market_analysis:
-                        analysis_html = f"<br><span style='color:#ffa500; font-size: 0.75rem;'>{market_analysis}</span>"
-
                     st.markdown(f"""
                     <div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>
-                        🎯 預期: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
-                        💡 建議: <b style='color:{rec_color}!important'>{rec_text}</b>
-                        {analysis_html}
+                        🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
+                        💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b><br>
+                        <hr style='margin:5px 0; border-top: 1px solid #444;'>
+                        <span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span>
                     </div>
                     """, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True) 
