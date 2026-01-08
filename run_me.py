@@ -14,14 +14,14 @@ GOOGLE_SHEET_NAME = "數據上傳"
 MANUAL_TAB_NAME = "球隊身價表" 
 COMPETITIONS = ['PL', 'PD', 'CL', 'SA', 'BL1', 'FL1'] 
 
-# 聯賽係數 (League Weights)
+# 聯賽係數 (League Weights) - 修正跨聯賽入球率差異
 LEAGUE_WEIGHTS = {
-    'BL1': 1.15, # 德甲
-    'PL': 1.05,  # 英超
-    'PD': 0.95,  # 西甲
-    'SA': 0.95,  # 意甲
-    'FL1': 1.0,  # 法甲
-    'CL': 1.1    # 歐聯
+    'BL1': 1.15, # 德甲: 風格開放
+    'PL': 1.05,  # 英超: 節奏快
+    'PD': 0.95,  # 西甲: 技術流
+    'SA': 0.95,  # 意甲: 重防守
+    'FL1': 1.0,  # 法甲: 中規中矩
+    'CL': 1.1    # 歐聯: 強隊多
 }
 
 # ================= 連接 Google Sheet =================
@@ -63,13 +63,13 @@ def parse_market_value(val_str):
     except:
         return 0
 
-# ================= (升級) 計算權重近況分數 =================
+# ================= (新) 計算權重近況分數 =================
 def calculate_weighted_form_score(form_str):
     """
-    舊版只是平均，新版給予最近的場次更高權重。
+    給予最近的場次更高權重 (Weighted Form)。
     Form string e.g., "WWDLW" (右邊是最近)
     """
-    if not form_str or form_str == 'N/A': return 1.5
+    if not form_str or form_str == 'N/A': return 1.5 # 預設中立分
     
     score = 0
     total_weight = 0
@@ -77,7 +77,7 @@ def calculate_weighted_form_score(form_str):
     # 取最後 5 場
     relevant_form = form_str.replace(',', '').strip()[-5:]
     
-    # 權重分配: 最舊 [1.0, 1.1, 1.2, 1.3, 1.5] 最新
+    # 權重分配: [1.0, 1.1, 1.2, 1.3, 1.5] (最舊 -> 最新)
     weights = [1.0, 1.1, 1.2, 1.3, 1.5]
     
     # 確保長度匹配 (有些球隊可能少於5場)
@@ -89,7 +89,7 @@ def calculate_weighted_form_score(form_str):
         s = 0
         if char.upper() == 'W': s = 3
         elif char.upper() == 'D': s = 1
-        else: s = 0
+        else: s = 0 # 輸球 0 分
         
         score += s * w
         total_weight += w
@@ -97,9 +97,9 @@ def calculate_weighted_form_score(form_str):
     if total_weight == 0: return 1.5
     return score / total_weight 
 
-# ================= 獲取聯賽詳細數據 (主客分離) =================
+# ================= 獲取聯賽詳細數據 (主客分離 + 波動值) =================
 def get_all_standings_with_stats():
-    print("📊 正在獲取各聯賽 [主場/客場] 獨立數據...")
+    print("📊 正在獲取各聯賽 [主場/客場] 獨立數據及波動值...")
     standings_map = {}
     headers = {'X-Auth-Token': API_KEY}
     
@@ -120,7 +120,7 @@ def get_all_standings_with_stats():
                                 'rank': 0, 'form': 'N/A', 
                                 'home_att': 1.2, 'home_def': 1.2,
                                 'away_att': 1.0, 'away_def': 1.0,
-                                'volatility': 2.5 # 預設波動值
+                                'volatility': 2.5 # 預設波動值 (Total Goals per game)
                             }
                         
                         played = entry['playedGames']
@@ -133,7 +133,7 @@ def get_all_standings_with_stats():
                         if table_type == 'TOTAL':
                             standings_map[team_id]['rank'] = entry['position']
                             standings_map[team_id]['form'] = entry.get('form', 'N/A')
-                            # 計算波動值 (場均總入球 + 場均總失球) -> 反映球隊風格是大開大合還是防守型
+                            # 計算波動值 (場均總球數) -> 反映球隊風格
                             if played > 0:
                                 standings_map[team_id]['volatility'] = (gf + ga) / played
                                 
@@ -160,7 +160,7 @@ def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2
     raw_h_exp *= league_factor
     raw_a_exp *= league_factor
     
-    # 3. 身價修正
+    # 3. 身價修正 (Market Value)
     h_val = parse_market_value(home_val_str)
     a_val = parse_market_value(away_val_str)
     
@@ -175,7 +175,7 @@ def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2
         elif ratio < 0.4:
             raw_h_exp *= 0.9; raw_a_exp *= 1.15
 
-    # 4. (升級) 權重近況修正
+    # 4. (升級) 權重近況修正 (Weighted Form)
     h_form = calculate_weighted_form_score(home_stats['form'])
     a_form = calculate_weighted_form_score(away_stats['form'])
     
@@ -201,14 +201,17 @@ def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2
     except: pass
 
     # 6. (升級) 波動值修正 (Volatility Adjustment)
-    # 如果兩隊都是「大開大合」(波動 > 3.0 球)，比賽容易變成入球大戰
-    avg_volatility = (home_stats['volatility'] + away_stats['volatility']) / 2
-    if avg_volatility > 3.2:
-        # 高波動：增加雙方入球預期
+    # 獲取兩隊的場均總球數 (Volatility)
+    vol_h = home_stats.get('volatility', 2.5)
+    vol_a = away_stats.get('volatility', 2.5)
+    avg_volatility = (vol_h + vol_a) / 2
+    
+    # 如果兩隊都是「大開大合」(例如平均 > 3.0 球)，比賽容易變成入球大戰
+    if avg_volatility > 3.0:
         raw_h_exp *= 1.1
         raw_a_exp *= 1.1
-    elif avg_volatility < 2.2:
-        # 低波動：雙方都便秘
+    # 如果兩隊都是「死守型」(例如平均 < 2.3 球)
+    elif avg_volatility < 2.3:
         raw_h_exp *= 0.9
         raw_a_exp *= 0.9
 
@@ -317,6 +320,7 @@ def get_real_data(market_value_map):
             away_value = market_value_map.get(away_name, "N/A")
             
             print(f"   🤖 深度運算 [{index+1}/{len(matches)}]: {home_name} vs {away_name} ({status})...")
+            # 無論是否完場，都抓取 H2H
             h2h_str, ou_stats_str = get_h2h_and_ou_stats(match['id'], home_id, away_id)
             time.sleep(6.1) 
 
@@ -347,7 +351,7 @@ def get_real_data(market_value_map):
                 '大小球統計': ou_stats_str,
                 '主隊身價': home_value, 
                 '客隊身價': away_value,
-                '賽事風格': game_volatility # 新增欄位
+                '賽事風格': game_volatility # 新增欄位: 波動值
             }
             cleaned_data.append(match_info)
             
