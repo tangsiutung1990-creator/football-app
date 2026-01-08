@@ -14,14 +14,14 @@ GOOGLE_SHEET_NAME = "數據上傳"
 MANUAL_TAB_NAME = "球隊身價表" 
 COMPETITIONS = ['PL', 'PD', 'CL', 'SA', 'BL1', 'FL1'] 
 
-# 新增：聯賽入球係數 (根據歷史數據微調 Poisson Lambda)
+# 聯賽係數
 LEAGUE_WEIGHTS = {
-    'BL1': 1.15, # 德甲通常大球多
-    'PL': 1.05,  # 英超節奏快
-    'PD': 0.95,  # 西甲技術流，有時入球少
-    'SA': 0.95,  # 意甲防守強
-    'FL1': 1.0,  # 法甲中規中矩
-    'CL': 1.1    # 歐聯強隊多，入球率偏高
+    'BL1': 1.15, 
+    'PL': 1.05,  
+    'PD': 0.95,  
+    'SA': 0.95,  
+    'FL1': 1.0,  
+    'CL': 1.1    
 }
 
 # ================= 連接 Google Sheet =================
@@ -77,7 +77,7 @@ def calculate_form_score(form_str):
     if count == 0: return 1.5
     return score / count 
 
-# ================= (升級版) 獲取聯賽詳細數據：區分主/客場 =================
+# ================= 獲取聯賽詳細數據 (主客分離) =================
 def get_all_standings_with_stats():
     print("📊 正在獲取各聯賽 [主場/客場] 獨立數據...")
     standings_map = {}
@@ -90,7 +90,6 @@ def get_all_standings_with_stats():
             if res.status_code == 200:
                 data = res.json()
                 
-                # 我們需要遍歷不同的 table type: TOTAL, HOME, AWAY
                 for table in data.get('standings', []):
                     table_type = table['type'] # 'TOTAL', 'HOME', 'AWAY'
                     
@@ -103,7 +102,6 @@ def get_all_standings_with_stats():
                                 'away_att': 1.0, 'away_def': 1.0
                             }
                         
-                        # 處理數據
                         played = entry['playedGames']
                         gf = entry['goalsFor']
                         ga = entry['goalsAgainst']
@@ -114,11 +112,9 @@ def get_all_standings_with_stats():
                             standings_map[team_id]['rank'] = entry['position']
                             standings_map[team_id]['form'] = entry.get('form', 'N/A')
                         elif table_type == 'HOME':
-                            # 主場進攻力 (Home Attack) & 主場防守漏水度 (Home Defense)
                             standings_map[team_id]['home_att'] = avg_gf if avg_gf > 0 else 0.8
                             standings_map[team_id]['home_def'] = avg_ga if avg_ga > 0 else 0.8
                         elif table_type == 'AWAY':
-                            # 客場進攻力 & 客場防守
                             standings_map[team_id]['away_att'] = avg_gf if avg_gf > 0 else 0.8
                             standings_map[team_id]['away_def'] = avg_ga if avg_ga > 0 else 0.8
                             
@@ -127,21 +123,10 @@ def get_all_standings_with_stats():
             print(f"⚠️ 無法獲取 {comp} 排名: {e}")
     return standings_map
 
-# ================= 核心算法：真實預測模型 (升級版) =================
+# ================= 核心算法：真實預測模型 =================
 def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2h_summary, league_code):
-    """
-    Inputs:
-    - home_stats: 包含主場攻擊力
-    - away_stats: 包含客場防守力
-    - h2h_summary: H2H 統計字串 (例如 "近5場: 主3勝...")
-    - league_code: 聯賽代碼 (例如 PL, BL1)
-    """
-    
-    # 1. 主客場獨立運算 (最準確的基礎)
-    # 主隊預期入球 = (主隊主場攻擊力 + 客隊客場防守力) / 2
+    # 1. 主客場獨立運算
     raw_h_exp = (home_stats['home_att'] + away_stats['away_def']) / 2
-    
-    # 客隊預期入球 = (客隊客場攻擊力 + 主隊主場防守力) / 2
     raw_a_exp = (away_stats['away_att'] + home_stats['home_def']) / 2
     
     # 2. 聯賽係數修正
@@ -170,25 +155,19 @@ def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2
     if h_form - a_form > 1.0: raw_h_exp *= 1.1
     if a_form - h_form > 1.0: raw_a_exp *= 1.1
 
-    # 5. (新增) H2H 歷史權重修正
-    # 解析 "近10場: 主5勝 | 和2 | 客3勝"
+    # 5. H2H 歷史權重
     try:
         if "主" in h2h_summary and "勝" in h2h_summary:
             parts = h2h_summary.split('|')
-            h_wins = int(parts[0].split('主')[1].split('勝')[0]) # 提取主勝場數
-            a_wins = int(parts[2].split('客')[1].split('勝')[0]) # 提取客勝場數
+            h_wins = int(parts[0].split('主')[1].split('勝')[0])
+            a_wins = int(parts[2].split('客')[1].split('勝')[0])
             total = h_wins + a_wins + int(parts[1].split('和')[1])
-            
             if total > 0:
                 h_win_rate = h_wins / total
                 a_win_rate = a_wins / total
-                
-                # 如果主隊剋死客隊 (勝率 > 60%)
                 if h_win_rate > 0.6: raw_h_exp *= 1.1
-                # 如果客隊反客為主
                 elif a_win_rate > 0.6: raw_a_exp *= 1.1
-    except:
-        pass # 解析失敗就不修正
+    except: pass
 
     return round(raw_h_exp, 2), round(raw_a_exp, 2)
 
@@ -243,7 +222,7 @@ def get_h2h_and_ou_stats(match_id, current_home_id, current_away_id):
 
 # ================= 主流程 =================
 def get_real_data(market_value_map):
-    standings = get_all_standings_with_stats() # 這裡現在包含了主客場獨立數據
+    standings = get_all_standings_with_stats()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (主客分離模式)...")
     
     headers = {'X-Auth-Token': API_KEY}
@@ -266,7 +245,7 @@ def get_real_data(market_value_map):
 
         cleaned_data = []
         hk_tz = pytz.timezone('Asia/Hong_Kong')
-        print(f"🔍 發現 {len(matches)} 場賽事，正在進行 AI 運算...")
+        print(f"🔍 發現 {len(matches)} 場賽事，正在進行深度 AI 運算 (含已完場)...")
 
         for index, match in enumerate(matches):
             utc_str = match['utcDate']
@@ -286,26 +265,21 @@ def get_real_data(market_value_map):
             away_id = match['awayTeam']['id']
             home_name = match['homeTeam']['shortName'] or match['homeTeam']['name']
             away_name = match['awayTeam']['shortName'] or match['awayTeam']['name']
-            league_code = match['competition']['code'] # 例如 'PL'
+            league_code = match['competition']['code']
             
-            # 獲取球隊數據
-            default_stats = {'rank': '-', 'form': 'N/A', 'home_att': 1.2, 'home_def': 1.2, 'away_att': 1.0, 'away_def': 1.0}
-            home_info = standings.get(home_id, default_stats)
-            away_info = standings.get(away_id, default_stats)
+            home_info = standings.get(home_id, {'rank': '-', 'form': 'N/A', 'home_att': 1.2, 'home_def': 1.2})
+            away_info = standings.get(away_id, {'rank': '-', 'form': 'N/A', 'away_att': 1.0, 'away_def': 1.0})
 
             home_value = market_value_map.get(home_name, "N/A")
             away_value = market_value_map.get(away_name, "N/A")
             
-            # --- API 限制保護 & H2H 獲取 ---
-            if status != '完場':
-                print(f"   🤖 深度運算: {home_name} (主) vs {away_name} (客)...")
-                h2h_str, ou_stats_str = get_h2h_and_ou_stats(match['id'], home_id, away_id)
-                time.sleep(6.1) 
-            else:
-                h2h_str = "N/A"
-                ou_stats_str = "N/A"
+            # --- 關鍵修正：無論是否完場，都抓取 H2H ---
+            print(f"   🤖 深度運算 [{index+1}/{len(matches)}]: {home_name} vs {away_name} ({status})...")
+            # 這裡移除了 "if status != '完場'" 的限制
+            h2h_str, ou_stats_str = get_h2h_and_ou_stats(match['id'], home_id, away_id)
+            time.sleep(6.1) # 保持延遲以防被封鎖
 
-            # === AI 核心預測 (主客分離 + 聯賽係數 + H2H權重) ===
+            # === AI 核心預測 ===
             pred_h_goals, pred_a_goals = predict_match_outcome(home_info, away_info, home_value, away_value, h2h_str, league_code)
 
             att_h = round(pred_h_goals * 1.2, 1)
