@@ -240,6 +240,7 @@ def main():
         st.warning("⚠️ 數據加載中...")
         return
 
+    # 確保數值欄位為數字
     numeric_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格']
     for col in numeric_cols:
         if col in df.columns:
@@ -302,23 +303,23 @@ def main():
 
             analysis_notes = []
             
-            # 1. 身價分析
+            # 1. 身價分析 (注意：這裡改用 <b> 標籤而非 **)
             try:
                 clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
                 clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
                 if clean_h and clean_a and clean_h != 'N/A' and clean_a != 'N/A':
                     h_v_num = float(clean_h); a_v_num = float(clean_a)
-                    if h_v_num > a_v_num * 2.5: analysis_notes.append(f"💰 **身價懸殊**: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！")
-                    elif a_v_num > h_v_num * 2.5: analysis_notes.append(f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！")
+                    if h_v_num > a_v_num * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！")
+                    elif a_v_num > h_v_num * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！")
             except: pass 
 
-            # 2. 近況分析
+            # 2. 近況分析 (改用 <b> 標籤)
             h_f_pts = calculate_form_points(row.get('主近況', ''))
             a_f_pts = calculate_form_points(row.get('客近況', ''))
-            if h_f_pts > a_f_pts + 1.2: analysis_notes.append("🔥 **近況優勢**: 主隊近期狀態火熱，士氣高昂！")
-            elif a_f_pts > h_f_pts + 1.2: analysis_notes.append("🔥 **近況優勢**: 客隊近期狀態極佳，有力反客為主！")
+            if h_f_pts > a_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 主隊近期狀態火熱，士氣高昂！")
+            elif a_f_pts > h_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 客隊近期狀態極佳，有力反客為主！")
             
-            # 3. (新增) 風格分析 (Volatility)
+            # 3. 風格分析
             volatility = float(row.get('賽事風格', 0))
             style_tag = ""
             if volatility > 3.0:
@@ -327,6 +328,20 @@ def main():
                 style_tag = "<br><span style='color:#00ffff; font-weight:bold;'>🛡️ 賽事風格: 防守嚴密 (入球偏少)</span>"
 
             combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "雙方實力接近，勝負取決於臨場發揮。"
+
+            rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
+            rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
+
+            # 這裡構建安全的 HTML，避免 f-string 混淆
+            final_html = f"""
+            <div style="margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;">
+                🎯 預期入球: <b style="color:#fff">{exp_h} : {exp_a}</b><br>
+                💡 綜合建議: <b style="color:{rec_color}!important">{rec_text}</b>
+                {style_tag}
+                <hr style="margin:5px 0; border-top: 1px solid #444;">
+                <span style="color:#ffa500; font-size: 0.7rem;">{combined_analysis}</span>
+            </div>
+            """
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
@@ -376,18 +391,8 @@ def main():
                     st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
                     st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
                     
-                    rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
-                    rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
-                    
-                    st.markdown(f"""
-                    <div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>
-                        🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
-                        💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>
-                        {style_tag}
-                        <hr style='margin:5px 0; border-top: 1px solid #444;'>
-                        <span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # 使用預先組裝好的 final_html
+                    st.markdown(final_html, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True) 
 
                 st.markdown('</div>', unsafe_allow_html=True)
