@@ -12,7 +12,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
 
-# ================= CSS =================
+# ================= CSS 強力修復區 =================
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; }
@@ -100,7 +100,6 @@ def main():
         total_m = len(df)
         live_m = len(df[df['狀態'].str.contains("進行中", na=False)])
         finish_m = len(df[df['狀態'] == '完場'])
-        
         c1.metric("總賽事", f"{total_m} 場")
         c2.metric("LIVE 進行中", f"{live_m} 場")
         c3.metric("已完場", f"{finish_m} 場")
@@ -147,6 +146,8 @@ def main():
             a_mom = float(row.get('客動量', 0)) if '客動量' in row else 0
             h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
             a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
+            
+            # --- ✅ 關鍵修復：這裡定義了 status_icon，解決了 NameError ---
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
             # 波膽讀取
@@ -170,17 +171,13 @@ def main():
             rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
             rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
 
-            # --- 單行拼接 HTML (確保顯示無 Bug) ---
             html_parts = []
             html_parts.append(f"<div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>")
             html_parts.append(f"🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b>")
             html_parts.append(f"<br>🎲 <b>首選波膽: <span style='color:#00ff00'>{correct_score}</span></b>") 
             html_parts.append(f"<br>💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>")
             html_parts.append(style_tag)
-            html_parts.append(f"<hr style='margin:5px 0; border-top: 1px solid #444;'>")
-            html_parts.append(f"<span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span>")
-            html_parts.append("</div>")
-            
+            html_parts.append(f"<hr style='margin:5px 0; border-top: 1px solid #444;'><span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span></div>")
             final_html = "".join(html_parts)
 
             with st.container():
@@ -190,39 +187,29 @@ def main():
                     st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
                     st.write("") 
                     
-                    m_parts = []
-                    m_parts.append("<div class='match-row'>")
-                    m_parts.append("<div class='team-col-home'>")
+                    m_parts = ["<div class='match-row'>", "<div class='team-col-home'>"]
                     m_parts.append(f"<div><span class='rank-badge'>#{h_rank}</span> {h_trend}</div>")
                     m_parts.append(f"<div class='team-name'>{row['主隊']}</div>")
-                    m_parts.append(f"<div class='market-value-text'>{h_value_display}</div>")
-                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('主近況', ''))}</div>")
-                    m_parts.append("</div>")
+                    m_parts.append(f"<div class='market-value-text'>{h_val_disp}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('主近況', ''))}</div></div>")
                     
-                    m_parts.append("<div class='score-col'>")
-                    m_parts.append("<div class='score-text'>")
-                    m_parts.append(f"{row['主分'] if row['主分']!='' else 'VS'}")
-                    m_parts.append(f"<span style='font-size:0.9rem; color:#aaa!important; vertical-align:middle;'>{'-' if row['主分']!='' else ''}</span>")
-                    m_parts.append(f"{row['客分']}")
-                    m_parts.append("</div>")
+                    m_parts.append("<div class='score-col'><div class='score-text'>")
+                    m_parts.append(f"{row['主分'] if row['主分']!='' else 'VS'} <span style='font-size:0.9rem; color:#aaa; vertical-align:middle;'>{'-' if row['主分']!='' else ''}</span> {row['客分']}</div>")
                     live_cls = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
-                    m_parts.append(f"<div class='{live_cls}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {row['狀態']}</div>")
-                    m_parts.append("</div>")
+                    m_parts.append(f"<div class='{live_cls}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {row['狀態']}</div></div>")
                     
                     m_parts.append("<div class='team-col-away'>")
                     m_parts.append(f"<div><span class='rank-badge'>#{a_rank}</span> {a_trend}</div>")
                     m_parts.append(f"<div class='team-name'>{row['客隊']}</div>")
-                    m_parts.append(f"<div class='market-value-text'>{a_value_display}</div>")
-                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('客近況', ''))}</div>")
-                    m_parts.append("</div></div>")
+                    m_parts.append(f"<div class='market-value-text'>{a_val_disp}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('客近況', ''))}</div></div></div>")
                     
-                    match_html = "".join(m_parts)
-                    st.markdown(match_html, unsafe_allow_html=True)
+                    st.markdown("".join(m_parts), unsafe_allow_html=True)
 
                 with col_ai:
                     st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
-                    st.markdown(f"<div class='h2h-text'>{h2h_display}</div>", unsafe_allow_html=True)
-                    if ou_display: st.markdown(f"<div class='ou-stats-text'>{ou_display}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='h2h-text'>⚔️ {row.get('H2H','N/A')}</div>", unsafe_allow_html=True)
+                    if row.get('大小球統計') != 'N/A': st.markdown(f"<div class='ou-stats-text'>📊 {row['大小球統計']}</div>", unsafe_allow_html=True)
                     st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時大數據分析</div>", unsafe_allow_html=True)
                     st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
                     st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
