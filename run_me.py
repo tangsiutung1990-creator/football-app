@@ -13,7 +13,7 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# 11 個聯賽 (免費版支援列表)
+# 完整支援的 11 個聯賽
 COMPETITIONS = [
     'PL', 'PD', 'CL', 'SA', 'BL1', 'FL1', 
     'DED', 'PPL', 'ELC', 'BSA', 'CLI'
@@ -295,7 +295,7 @@ def get_real_data(market_value_map):
                 'H2H': h2h, '大小球統計': ou,
                 '主隊身價': h_val, '客隊身價': a_val,
                 '賽事風格': vol, '主動量': h_mom, '客動量': a_mom,
-                '波膽預測': correct_score_str 
+                '波膽預測': correct_score_str # 新增欄位
             })
         return cleaned
     except Exception as e:
@@ -307,18 +307,21 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
-        # 強制定義欄位順序，包含 '波膽預測'
+        # 確保 '波膽預測' 欄位存在
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測','總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try:
-                print(f"🚀 正在強制更新 Google Sheet 欄位...")
+                # 這裡假設你的數據分頁是第一個分頁。如果不是，請修改 .sheet1
                 upload_sheet = spreadsheet.sheet1
-                # 關鍵：清空舊資料，確保標題列被重寫
+                print(f"🚀 正在強制重構 Google Sheet 分頁: {upload_sheet.title} ...")
+                
+                # 關鍵：清空舊表，確保新欄位能寫入
                 upload_sheet.clear() 
-                # 寫入新資料（含新標題）
+                
+                # 寫入新資料（含標題）
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print(f"☁️ 更新成功！Google Sheet 現在已有波膽欄位。")
+                print(f"☁️ 更新成功！已加入波膽欄位。")
             except Exception as e: print(f"❌ 失敗: {e}")
 
 if __name__ == "__main__":
