@@ -11,7 +11,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 
 st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
 
-# ================= CSS 強力修復區 =================
+# ================= CSS 強力修復區 (保持深色專業風) =================
 st.markdown("""
     <style>
     /* 1. 全局背景設為深色 */
@@ -56,17 +56,17 @@ st.markdown("""
         text-shadow: 0px 0px 5px rgba(255, 215, 0, 0.3);
     }
     
-    /* 大小球統計樣式 (淺藍色 - 確保顯示) */
+    /* 大小球統計樣式 (淺藍色) */
     .ou-stats-text {
         color: #00ffff !important;
         font-size: 0.75rem;
-        margin-bottom: 10px; /* 增加底部間距，分開 AI 分析 */
+        margin-bottom: 10px; 
         font-weight: normal;
         letter-spacing: 0.5px;
         opacity: 0.9;
     }
     
-    /* 身價樣式 (綠色 - 顯示在球隊名下) */
+    /* 身價樣式 (綠色) */
     .market-value-text {
         color: #28a745 !important;
         font-size: 0.85rem;
@@ -177,7 +177,7 @@ def get_form_html(form_str):
     if html == "": return "<span style='color:#555; font-size:0.7rem;'>---</span>"
     return html
 
-# 新增：計算近況分數以顯示分析文字
+# 計算近況分數 (用於文字分析)
 def calculate_form_points(form_str):
     if pd.isna(form_str) or str(form_str).strip() == '' or str(form_str) == 'N/A':
         return 0
@@ -325,14 +325,14 @@ def main():
             status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
             
             # --- 讀取欄位 ---
-            # 1. H2H (對賽往績)
+            # 1. H2H
             h2h_info = row.get('H2H', 'N/A')
             if pd.isna(h2h_info) or str(h2h_info) in ['None', 'N/A', '']: 
                 h2h_display = '<span style="color:#666; font-weight:normal;">對賽往績: N/A</span>'
             else:
                 h2h_display = f"⚔️ {h2h_info}"
             
-            # 2. 大小球統計
+            # 2. 大小球
             ou_stats_info = row.get('大小球統計', 'N/A')
             if pd.isna(ou_stats_info) or str(ou_stats_info) in ['None', 'N/A', '']:
                 ou_display = ""
@@ -345,8 +345,10 @@ def main():
             h_value_display = format_market_value(raw_h_val)
             a_value_display = format_market_value(raw_a_val)
 
-            # --- 身價分析邏輯 ---
-            market_analysis = ""
+            # --- 真實數據分析 (保留這些有用的) ---
+            analysis_notes = []
+            
+            # 身價懸殊判斷
             try:
                 clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
                 clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
@@ -354,26 +356,24 @@ def main():
                     h_v_num = float(clean_h)
                     a_v_num = float(clean_a)
                     if h_v_num > a_v_num * 2.5:
-                        market_analysis = f"💰 **身價懸殊**: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！"
+                        analysis_notes.append(f"💰 **身價懸殊**: 主隊身價是客隊的 {h_v_num/a_v_num:.1f} 倍，紙面實力碾壓！")
                     elif a_v_num > h_v_num * 2.5:
-                        market_analysis = f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！"
+                        analysis_notes.append(f"💰 **身價懸殊**: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！")
             except: pass 
 
-            # --- 近況分析邏輯 (新增) ---
-            form_analysis = ""
+            # 近況狀態判斷
             h_f_pts = calculate_form_points(row.get('主近況', ''))
             a_f_pts = calculate_form_points(row.get('客近況', ''))
-            
-            if h_f_pts > a_f_pts + 1.0:
-                form_analysis = "🔥 **近況優勢**: 主隊近期狀態火熱，士氣高昂！"
-            elif a_f_pts > h_f_pts + 1.0:
-                form_analysis = "🔥 **近況優勢**: 客隊近期狀態極佳，有力反客為主！"
-
-            # 合併分析文字
-            combined_analysis = ""
-            if market_analysis: combined_analysis += f"{market_analysis}<br>"
-            if form_analysis: combined_analysis += f"{form_analysis}"
-            if combined_analysis == "": combined_analysis = "雙方實力接近，勝負取決於臨場發揮。"
+            if h_f_pts > a_f_pts + 1.2:
+                analysis_notes.append("🔥 **近況優勢**: 主隊近期狀態火熱，士氣高昂！")
+            elif a_f_pts > h_f_pts + 1.2:
+                analysis_notes.append("🔥 **近況優勢**: 客隊近期狀態極佳，有力反客為主！")
+                
+            # 合併分析文字 (不含無用的信心指數)
+            if not analysis_notes:
+                combined_analysis = "雙方實力接近，勝負取決於臨場發揮。"
+            else:
+                combined_analysis = "<br>".join(analysis_notes)
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
@@ -417,7 +417,6 @@ def main():
                     
                     # === 顯示 H2H 和 大小球 ===
                     st.markdown(f"<div class='h2h-text'>{h2h_display}</div>", unsafe_allow_html=True)
-                    
                     if ou_display:
                         st.markdown(f"<div class='ou-stats-text'>{ou_display}</div>", unsafe_allow_html=True)
 
@@ -429,10 +428,11 @@ def main():
                     rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
                     rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
                     
+                    # 乾淨的底部分析框 (已移除信心指數)
                     st.markdown(f"""
                     <div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>
                         🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b><br>
-                        💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b><br>
+                        💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>
                         <hr style='margin:5px 0; border-top: 1px solid #444;'>
                         <span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span>
                     </div>
