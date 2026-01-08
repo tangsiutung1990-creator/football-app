@@ -66,12 +66,16 @@ def calculate_correct_score_probs(home_exp, away_exp):
         return (lam**k * math.exp(-lam)) / math.factorial(k)
     
     scores = []
+    # 遍歷 0-5 球的所有組合
     for h in range(6):
         for a in range(6):
             prob = poisson(h, home_exp) * poisson(a, away_exp)
             scores.append({'score': f"{h}:{a}", 'prob': prob})
     
+    # 按機率排序，取前 3 名
     scores.sort(key=lambda x: x['prob'], reverse=True)
+    
+    # 格式化輸出
     top_3 = [f"{s['score']} ({int(s['prob']*100)}%)" for s in scores[:3]]
     return " | ".join(top_3)
 
@@ -236,7 +240,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 # ================= 主流程 =================
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (強制更新版)...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (強制重構表頭版)...")
     
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
@@ -308,18 +312,17 @@ def main():
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try:
-                # 這裡使用 get_worksheet(0) 確保選到第一個分頁
-                upload_sheet = spreadsheet.get_worksheet(0)
-                print(f"🚀 正在強制重寫 Google Sheet 分頁: {upload_sheet.title}")
-                print(f"   📋 準備寫入欄位: {', '.join(cols)}")
+                # 這裡使用 sheet1，如果失敗，請檢查你的 Google Sheet 分頁名稱是否為預設的 Sheet1
+                upload_sheet = spreadsheet.sheet1 
                 
-                # 關鍵：清空舊表
+                print(f"🚀 正在強制清空舊資料表 (Clear)...")
                 upload_sheet.clear() 
                 
-                # 寫入新資料（含標題）
+                print(f"📝 正在寫入新數據 (含波膽預測)... 共 {len(df)} 筆")
+                # 使用 update 寫入列表數據
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print(f"✅ 成功寫入 {len(df)} 筆數據 (含波膽預測)！")
-            except Exception as e: print(f"❌ 寫入失敗: {e}")
+                print(f"✅ 成功！Google Sheet 已更新，包含『波膽預測』欄位！")
+            except Exception as e: print(f"❌ 上傳失敗: {e}")
 
 if __name__ == "__main__":
     main()
