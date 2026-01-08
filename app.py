@@ -5,6 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import math
 import os
 from datetime import datetime
+import textwrap # 新增這個庫來處理縮排問題
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -303,7 +304,7 @@ def main():
 
             analysis_notes = []
             
-            # 1. 身價分析 (注意：已改用 HTML <b> 標籤，解決 Markdown 衝突)
+            # 1. 身價分析 (注意：使用 <b> 標籤)
             try:
                 clean_h = str(raw_h_val).replace('€','').replace('M','').replace(',','').strip()
                 clean_a = str(raw_a_val).replace('€','').replace('M','').replace(',','').strip()
@@ -313,13 +314,13 @@ def main():
                     elif a_v_num > h_v_num * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 客隊身價是主隊的 {a_v_num/h_v_num:.1f} 倍，客隊質素佔優！")
             except: pass 
 
-            # 2. 近況分析 (改用 <b>)
+            # 2. 近況分析
             h_f_pts = calculate_form_points(row.get('主近況', ''))
             a_f_pts = calculate_form_points(row.get('客近況', ''))
             if h_f_pts > a_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 主隊近期狀態火熱，士氣高昂！")
             elif a_f_pts > h_f_pts + 1.2: analysis_notes.append("🔥 <b>近況優勢</b>: 客隊近期狀態極佳，有力反客為主！")
             
-            # 3. 風格分析 (修正引號衝突)
+            # 3. 風格分析
             volatility = float(row.get('賽事風格', 0))
             style_tag = ""
             if volatility > 3.0:
@@ -332,16 +333,19 @@ def main():
             rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
             rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
 
-            # --- 終極修復：安全的 HTML 組裝 ---
+            # --- 關鍵修正：確保縮排不會被視為 Markdown Code Block ---
             final_html = f"""
-            <div style="margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;">
-                🎯 預期入球: <b style="color:#fff">{exp_h} : {exp_a}</b><br>
-                💡 綜合建議: <b style="color:{rec_color}!important">{rec_text}</b>
-                {style_tag}
-                <hr style="margin:5px 0; border-top: 1px solid #444;">
-                <span style="color:#ffa500; font-size: 0.7rem;">{combined_analysis}</span>
-            </div>
+<div style="margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;">
+    🎯 預期入球: <b style="color:#fff">{exp_h} : {exp_a}</b><br>
+    💡 綜合建議: <b style="color:{rec_color}!important">{rec_text}</b>
+    {style_tag}
+    <hr style="margin:5px 0; border-top: 1px solid #444;">
+    <span style="color:#ffa500; font-size: 0.7rem;">{combined_analysis}</span>
+</div>
             """
+            
+            # 使用 .strip() 確保字串前後無多餘縮排
+            final_html = final_html.strip()
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
