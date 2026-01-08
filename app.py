@@ -5,7 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import math
 import os
 from datetime import datetime
-import textwrap # 新增這個庫來處理縮排問題
+import textwrap  # 關鍵修復：引入 textwrap 來處理縮排問題
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -241,7 +241,7 @@ def main():
         st.warning("⚠️ 數據加載中...")
         return
 
-    # 確保數值欄位為數字
+    # 確保數值欄位為數字 (包含新加入的賽事風格)
     numeric_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格']
     for col in numeric_cols:
         if col in df.columns:
@@ -334,18 +334,19 @@ def main():
             rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
 
             # --- 關鍵修正：確保縮排不會被視為 Markdown Code Block ---
-            final_html = f"""
-<div style="margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;">
-    🎯 預期入球: <b style="color:#fff">{exp_h} : {exp_a}</b><br>
-    💡 綜合建議: <b style="color:{rec_color}!important">{rec_text}</b>
-    {style_tag}
-    <hr style="margin:5px 0; border-top: 1px solid #444;">
-    <span style="color:#ffa500; font-size: 0.7rem;">{combined_analysis}</span>
-</div>
+            # 使用 textwrap.dedent 去除多餘縮排
+            final_html_raw = f"""
+            <div style="margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;">
+                🎯 預期入球: <b style="color:#fff">{exp_h} : {exp_a}</b><br>
+                💡 綜合建議: <b style="color:{rec_color}!important">{rec_text}</b>
+                {style_tag}
+                <hr style="margin:5px 0; border-top: 1px solid #444;">
+                <span style="color:#ffa500; font-size: 0.7rem;">{combined_analysis}</span>
+            </div>
             """
             
-            # 使用 .strip() 確保字串前後無多餘縮排
-            final_html = final_html.strip()
+            # 終極修復：先 Dedent 再 Strip，確保 Markdown 不會誤判
+            final_html = textwrap.dedent(final_html_raw).strip()
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
@@ -382,7 +383,7 @@ def main():
 </div>
 </div>
 """
-                    st.markdown(match_html, unsafe_allow_html=True)
+                    st.markdown(textwrap.dedent(match_html).strip(), unsafe_allow_html=True)
 
                 with col_ai:
                     st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
@@ -395,7 +396,7 @@ def main():
                     st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
                     st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
                     
-                    # 渲染修復後的 HTML
+                    # 渲染修復後的 HTML (使用處理過的 final_html)
                     st.markdown(final_html, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True) 
 
