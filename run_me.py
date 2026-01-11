@@ -13,8 +13,7 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# 完整支援的聯賽列表 (已擴充以包含更多可能賽事)
-# 注意：免費版 API 可能不支援部分盃賽，但加進去不會壞，只是抓不到而已
+# 完整支援的聯賽列表
 COMPETITIONS = [
     'PL',   # 英超
     'PD',   # 西甲
@@ -30,6 +29,33 @@ COMPETITIONS = [
     'WC',   # 世界盃/國際賽
     'EC'    # 歐國盃
 ]
+
+# ================= 智能 API 請求函式 (新增) =================
+def call_api_with_retry(url, params=None, headers=None, retries=3):
+    """
+    發送 API 請求，如果遇到 429 (頻率限制)，會自動休息後重試。
+    """
+    for i in range(retries):
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:
+                wait_time = 65 # 免費版通常限制 1分鐘，設定 65秒 確保安全
+                print(f"🛑 觸發 API 頻率限制 (429)。程式將暫停 {wait_time} 秒後自動重試 ({i+1}/{retries})...")
+                time.sleep(wait_time)
+                continue # 重試
+            else:
+                # 其他錯誤 (如 403 無權限, 404 找不到) 就不重試了，直接印出來
+                print(f"⚠️ API 請求錯誤: {response.status_code} | {url}")
+                return None
+        except Exception as e:
+            print(f"❌ 連線異常: {e}")
+            time.sleep(5)
+            continue
+    print("❌ 重試次數已用盡，放棄此請求。")
+    return None
 
 # ================= 連接 Google Sheet =================
 def get_google_spreadsheet():
@@ -71,23 +97,16 @@ def parse_market_value(val_str):
 
 # ================= 輔助：計算波膽 (Correct Score) =================
 def calculate_correct_score_probs(home_exp, away_exp):
-    """
-    計算最可能的 3 個波膽
-    """
     def poisson(k, lam):
         return (lam**k * math.exp(-lam)) / math.factorial(k)
     
     scores = []
-    # 遍歷 0-5 球的所有組合
     for h in range(6):
         for a in range(6):
             prob = poisson(h, home_exp) * poisson(a, away_exp)
             scores.append({'score': f"{h}:{a}", 'prob': prob})
     
-    # 按機率排序，取前 3 名
     scores.sort(key=lambda x: x['prob'], reverse=True)
-    
-    # 格式化輸出
     top_3 = [f"{s['score']} ({int(s['prob']*100)}%)" for s in scores[:3]]
     return " | ".join(top_3)
 
@@ -114,57 +133,57 @@ def get_all_standings_with_stats():
     league_stats = {} 
     headers = {'X-Auth-Token': API_KEY}
     
-    for comp in COMPETITIONS:
-        try:
-            url = f"{BASE_URL}/competitions/{comp}/standings"
-            res = requests.get(url, headers=headers)
-            if res.status_code == 200:
-                data = res.json()
-                total_h=0; total_a=0; total_m=0
-                
-                for table in data.get('standings', []):
-                    table_type = table['type']
-                    for entry in table['table']:
-                        team_id = entry['team']['id']
-                        if team_id not in standings_map:
-                            standings_map[team_id] = {
-                                'rank': 0, 'form': 'N/A', 
-                                'home_att': 1.0, 'home_def': 1.0,
-                                'away_att': 1.0, 'away_def': 1.0,
-                                'volatility': 2.5, 'season_ppg': 1.3
-                            }
-                        
-                        played = entry['playedGames']
-                        points = entry['points']
-                        gf = entry['goalsFor']; ga = entry['goalsAgainst']
-                        avg_gf = gf/played if played>0 else 0
-                        avg_ga = ga/played if played>0 else 0
+    for i, comp in enumerate(COMPETITIONS):
+        print(f"   ↳ 正在抓取積分榜: {comp} ({i+1}/{len(COMPETITIONS)})...")
+        url = f"{BASE_URL}/competitions/{comp}/standings"
+        
+        # 使用新的重試函式
+        data = call_api_with_retry(url, headers=headers)
+        
+        if data:
+            total_h=0; total_a=0; total_m=0
+            
+            for table in data.get('standings', []):
+                table_type = table['type']
+                for entry in table['table']:
+                    team_id = entry['team']['id']
+                    if team_id not in standings_map:
+                        standings_map[team_id] = {
+                            'rank': 0, 'form': 'N/A', 
+                            'home_att': 1.0, 'home_def': 1.0,
+                            'away_att': 1.0, 'away_def': 1.0,
+                            'volatility': 2.5, 'season_ppg': 1.3
+                        }
+                    
+                    played = entry['playedGames']
+                    points = entry['points']
+                    gf = entry['goalsFor']; ga = entry['goalsAgainst']
+                    avg_gf = gf/played if played>0 else 0
+                    avg_ga = ga/played if played>0 else 0
 
-                        if table_type == 'TOTAL':
-                            standings_map[team_id]['rank'] = entry['position']
-                            standings_map[team_id]['form'] = entry.get('form', 'N/A')
-                            standings_map[team_id]['season_ppg'] = points/played if played>0 else 1.3
-                            if played>0: standings_map[team_id]['volatility'] = (gf+ga)/played
-                        elif table_type == 'HOME':
-                            standings_map[team_id]['home_att'] = avg_gf if avg_gf>0 else 1.0
-                            standings_map[team_id]['home_def'] = avg_ga if avg_ga>0 else 1.0
-                            total_h += gf; 
-                            if played>0: total_m += played
-                        elif table_type == 'AWAY':
-                            standings_map[team_id]['away_att'] = avg_gf if avg_gf>0 else 1.0
-                            standings_map[team_id]['away_def'] = avg_ga if avg_ga>0 else 1.0
-                            total_a += gf
+                    if table_type == 'TOTAL':
+                        standings_map[team_id]['rank'] = entry['position']
+                        standings_map[team_id]['form'] = entry.get('form', 'N/A')
+                        standings_map[team_id]['season_ppg'] = points/played if played>0 else 1.3
+                        if played>0: standings_map[team_id]['volatility'] = (gf+ga)/played
+                    elif table_type == 'HOME':
+                        standings_map[team_id]['home_att'] = avg_gf if avg_gf>0 else 1.0
+                        standings_map[team_id]['home_def'] = avg_ga if avg_ga>0 else 1.0
+                        total_h += gf; 
+                        if played>0: total_m += played
+                    elif table_type == 'AWAY':
+                        standings_map[team_id]['away_att'] = avg_gf if avg_gf>0 else 1.0
+                        standings_map[team_id]['away_def'] = avg_ga if avg_ga>0 else 1.0
+                        total_a += gf
 
-                if total_m > 10:
-                    league_stats[data['competition']['code']] = {'avg_home': total_h/total_m, 'avg_away': total_a/total_m}
-                else:
-                    league_stats[data['competition']['code']] = {'avg_home': 1.5, 'avg_away': 1.2}
+            if total_m > 10:
+                league_stats[data['competition']['code']] = {'avg_home': total_h/total_m, 'avg_away': total_a/total_m}
             else:
-                # 403 錯誤通常是免費 Key 沒有該聯賽權限，忽略即可
-                pass
-            time.sleep(1.2) 
-        except Exception as e:
-            print(f"⚠️ 無法獲取 {comp} 積分榜 (可能無權限或休賽): {e}")
+                league_stats[data['competition']['code']] = {'avg_home': 1.5, 'avg_away': 1.2}
+        
+        # 增加冷卻時間：免費版限制每分鐘 10 次。
+        # 為了避免連續抓 13 個聯賽後馬上被鎖，這裡設定 6.5 秒間隔
+        time.sleep(6.5) 
             
     return standings_map, league_stats
 
@@ -220,10 +239,12 @@ def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2
 def get_h2h_and_ou_stats(match_id, h_id, a_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
+    
+    # 使用新的重試函式
+    data = call_api_with_retry(url, headers=headers)
+    
     try:
-        res = requests.get(url, headers=headers)
-        if res.status_code == 200:
-            data = res.json()
+        if data:
             matches = data.get('matches', []) 
             if not matches: return "無對賽記錄", "N/A"
             matches.sort(key=lambda x: x['utcDate'], reverse=True)
@@ -254,30 +275,31 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 
 # ================= 主流程 =================
 def get_real_data(market_value_map):
+    # 1. 先抓積分榜 (會消耗請求次數)
     standings, league_stats = get_all_standings_with_stats()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (強制重構表頭版)...")
+    
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (智能重試版)...")
     
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
-    # 修正重點：把搜尋範圍擴大，避免抓不到週末賽事
     start_date = (today - timedelta(days=5)).strftime('%Y-%m-%d') 
-    end_date = (today + timedelta(days=10)).strftime('%Y-%m-%d') # 改成未來 10 天
+    end_date = (today + timedelta(days=10)).strftime('%Y-%m-%d') 
     
     print(f"📅 正在搜尋賽事範圍: {start_date} 至 {end_date}")
     params = { 'dateFrom': start_date, 'dateTo': end_date, 'competitions': ",".join(COMPETITIONS) }
 
     try:
-        response = requests.get(f"{BASE_URL}/matches", headers=headers, params=params)
+        # 2. 抓賽程 (這裡最容易因為前面跑完積分榜而爆 429 錯誤)
+        # 使用智能重試函式，確保這裡不會因為太快而死掉
+        response_json = call_api_with_retry(f"{BASE_URL}/matches", params=params, headers=headers)
         
-        if response.status_code != 200:
-            print(f"❌ API 請求失敗，狀態碼: {response.status_code}")
-            print(f"原因: {response.text}")
+        if not response_json:
+            print("⚠️ 無法獲取賽程數據 (API 返回空或錯誤)。")
             return []
 
-        matches = response.json().get('matches', [])
+        matches = response_json.get('matches', [])
         if not matches: 
             print("⚠️ 警告: 在此日期範圍內找不到符合條件的賽事。")
-            print(f"請檢查: 1. 聯賽是否休賽 2. API Key 是否過期 3. 範圍是否太窄")
             return []
 
         cleaned = []
@@ -301,18 +323,15 @@ def get_real_data(market_value_map):
             
             print(f"   🤖 計算中 [{index+1}/{len(matches)}]: {lg_name} - {h_name} vs {a_name}...")
             
-            # 只有當比賽未開賽或進行中，或者剛完場不久，才頻繁 call API。
-            # 為了避免 API Limit，這裡保持 6.1秒
+            # H2H 查詢
             h2h, ou = get_h2h_and_ou_stats(match['id'], h_id, a_id)
-            time.sleep(6.1)
+            time.sleep(6.1) # 保持每個賽事查詢的間隔
 
             lg_avg = league_stats.get(lg_code, {'avg_home': 1.5, 'avg_away': 1.2})
             pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(h_info, a_info, h_val, a_val, h2h, lg_avg)
             
-            # 計算波膽
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
             
-            # 獲取比分 (避免 None)
             score_h = match['score']['fullTime']['home']
             score_a = match['score']['fullTime']['away']
             if score_h is None: score_h = ''
@@ -344,19 +363,14 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
-        # 強制定義欄位順序，包含 '波膽預測'
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測','總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try:
-                # 這裡使用 sheet1，如果失敗，請檢查你的 Google Sheet 分頁名稱是否為預設的 Sheet1
                 upload_sheet = spreadsheet.sheet1 
-                
                 print(f"🚀 正在強制清空舊資料表 (Clear)...")
                 upload_sheet.clear() 
-                
                 print(f"📝 正在寫入新數據 (含波膽預測)... 共 {len(df)} 筆")
-                # 使用 update 寫入列表數據
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 成功！Google Sheet 已更新，包含『波膽預測』欄位！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
