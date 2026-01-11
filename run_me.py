@@ -286,7 +286,7 @@ def get_real_data(market_value_map):
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
     
-    # [修正] API 限制 max 10 天。設定為 前3天 到 後7天。
+    # [API 限制] 鎖定 10 天窗口：前 3 天 + 後 7 天
     start_date = (today - timedelta(days=3)).strftime('%Y-%m-%d') 
     end_date = (today + timedelta(days=7)).strftime('%Y-%m-%d') 
     
@@ -307,12 +307,15 @@ def get_real_data(market_value_map):
             return []
 
         cleaned = []
+        # [關鍵] 這裡定義了香港時區
         hk_tz = pytz.timezone('Asia/Hong_Kong')
         print(f"🔍 發現 {len(matches)} 場賽事，正在計算波膽與動量...")
 
         for index, match in enumerate(matches):
+            # [關鍵] 將 UTC 轉換為 香港時間
             utc_dt = datetime.strptime(match['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
             time_str = utc_dt.astimezone(hk_tz).strftime('%Y-%m-%d %H:%M') 
+            
             status = '進行中' if match['status'] in ['IN_PLAY', 'PAUSED'] else '完場' if match['status'] == 'FINISHED' else '未開賽'
             
             h_id = match['homeTeam']['id']; a_id = match['awayTeam']['id']
