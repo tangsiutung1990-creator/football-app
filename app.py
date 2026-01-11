@@ -88,24 +88,43 @@ def load_data():
     try:
         if os.path.exists("key.json"): creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         else: creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-        return pd.DataFrame(gspread.authorize(creds).open(GOOGLE_SHEET_NAME).sheet1.get_all_records())
-    except Exception as e: st.error(f"連線錯誤: {e}"); return None
+        client = gspread.authorize(creds)
+        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+        data = sheet.get_all_records()
+        return pd.DataFrame(data)
+    except Exception as e: 
+        st.error(f"連線或讀取錯誤: {e}")
+        return None
 
 # ================= 主程式 =================
 def main():
     st.title("⚽ 足球AI全能預測 (Ultimate Pro Black)")
+    
+    # 載入數據
     df = load_data()
+    
+    # 頂部狀態列
+    c1, c2, c3, c4 = st.columns(4)
     if df is not None and not df.empty:
-        c1, c2, c3, c4 = st.columns(4)
         total_m = len(df)
-        live_m = len(df[df['狀態'].str.contains("進行中", na=False)])
+        live_m = len(df[df['狀態'].astype(str).str.contains("進行中", na=False)])
         finish_m = len(df[df['狀態'] == '完場'])
         c1.metric("總賽事", f"{total_m} 場")
         c2.metric("LIVE 進行中", f"{live_m} 場")
         c3.metric("已完場", f"{finish_m} 場")
-        if c4.button("🔄 刷新數據", use_container_width=True): st.cache_data.clear(); st.rerun()
+    else:
+        c1.metric("總賽事", "0 場")
+        c2.metric("LIVE 進行中", "0 場")
+        c3.metric("已完場", "0 場")
 
-    if df is None or df.empty: st.warning("⚠️ 數據加載中..."); return
+    if c4.button("🔄 刷新數據", use_container_width=True): 
+        st.cache_data.clear()
+        st.rerun()
+
+    # 數據檢查
+    if df is None or df.empty: 
+        st.warning("⚠️ 目前無數據，請確認：\n1. `run_me.py` 是否已成功執行並更新 Google Sheet？\n2. 賽事日期範圍是否正確？")
+        return
 
     cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量']
     for col in cols: 
@@ -114,6 +133,7 @@ def main():
     st.sidebar.header("🔍 篩選條件")
     leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
     selected_league = st.sidebar.selectbox("選擇聯賽:", leagues)
+    
     df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
     available_dates = ["全部"] + sorted(list(set(df['日期'])))
     selected_date = st.sidebar.selectbox("📅 選擇日期:", available_dates)
@@ -125,7 +145,10 @@ def main():
     tab1, tab2 = st.tabs(["📅 未開賽 / 進行中", "✅ 已完場 (核對賽果)"])
 
     def render_matches(target_df):
-        if target_df.empty: st.info("暫無相關賽事。"); return
+        if target_df.empty: 
+            st.info("在此篩選條件下暫無賽事。")
+            return
+            
         target_df = target_df.sort_values(by='時間')
         current_date_header = None
         for index, row in target_df.iterrows():
@@ -138,7 +161,7 @@ def main():
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
             probs = calculate_probabilities(exp_h, exp_a)
-            h_rank = row['主排名']; a_rank = row['客排名']
+            h_rank = row.get('主排名', '-'); a_rank = row.get('客排名', '-')
             h_val_disp = format_market_value(row.get('主隊身價', ''))
             a_val_disp = format_market_value(row.get('客隊身價', ''))
             
@@ -146,9 +169,9 @@ def main():
             a_mom = float(row.get('客動量', 0)) if '客動量' in row else 0
             h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
             a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
-            status_icon = '🔴' if '進行中' in row['狀態'] else '🟢' if '完場' in row['狀態'] else '⚪'
+            status_icon = '🔴' if '進行中' in str(row['狀態']) else '🟢' if '完場' in str(row['狀態']) else '⚪'
             
-            # 波膽讀取
+            # 波膽讀取 (安全讀取)
             correct_score = row.get('波膽預測', 'N/A')
 
             analysis_notes = []
@@ -192,8 +215,11 @@ def main():
                     m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('主近況', ''))}</div></div>")
                     
                     m_parts.append("<div class='score-col'><div class='score-text'>")
-                    m_parts.append(f"{row['主分'] if row['主分']!='' else 'VS'} <span style='font-size:0.9rem; color:#aaa; vertical-align:middle;'>{'-' if row['主分']!='' else ''}</span> {row['客分']}</div>")
-                    live_cls = 'live-status' if '進行中' in row['狀態'] else 'sub-text'
+                    s_h = row.get('主分', ''); s_a = row.get('客分', '')
+                    display_score = f"{s_h} - {s_a}" if str(s_h) != '' else "VS"
+                    m_parts.append(f"{display_score}</div>")
+                    
+                    live_cls = 'live-status' if '進行中' in str(row['狀態']) else 'sub-text'
                     m_parts.append(f"<div class='{live_cls}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {row['狀態']}</div></div>")
                     
                     m_parts.append("<div class='team-col-away'>")
