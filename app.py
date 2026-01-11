@@ -205,7 +205,8 @@ def main():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
                 col_match, col_ai = st.columns([1.5, 1])
                 with col_match:
-                    st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
+                    # 這裡加入了 (HKT) 的顯示
+                    st.markdown(f"<div class='sub-text'>🕒 {time_part} (HKT) | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
                     st.write("") 
                     
                     m_parts = ["<div class='match-row'>", "<div class='team-col-home'>"]
