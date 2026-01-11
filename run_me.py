@@ -30,7 +30,7 @@ COMPETITIONS = [
     'EC'    # 歐國盃
 ]
 
-# ================= 智能 API 請求函式 (新增) =================
+# ================= 智能 API 請求函式 =================
 def call_api_with_retry(url, params=None, headers=None, retries=3):
     """
     發送 API 請求，如果遇到 429 (頻率限制)，會自動休息後重試。
@@ -46,8 +46,13 @@ def call_api_with_retry(url, params=None, headers=None, retries=3):
                 print(f"🛑 觸發 API 頻率限制 (429)。程式將暫停 {wait_time} 秒後自動重試 ({i+1}/{retries})...")
                 time.sleep(wait_time)
                 continue # 重試
+            elif response.status_code == 400:
+                 print(f"⚠️ 請求參數錯誤 (400): {url}")
+                 print(f"   參數詳情: {params}")
+                 print(f"   API 回傳: {response.text}")
+                 return None
             else:
-                # 其他錯誤 (如 403 無權限, 404 找不到) 就不重試了，直接印出來
+                # 其他錯誤 (如 403 無權限, 404 找不到)
                 print(f"⚠️ API 請求錯誤: {response.status_code} | {url}")
                 return None
         except Exception as e:
@@ -137,7 +142,7 @@ def get_all_standings_with_stats():
         print(f"   ↳ 正在抓取積分榜: {comp} ({i+1}/{len(COMPETITIONS)})...")
         url = f"{BASE_URL}/competitions/{comp}/standings"
         
-        # 使用新的重試函式
+        # 使用智能重試函式
         data = call_api_with_retry(url, headers=headers)
         
         if data:
@@ -181,8 +186,7 @@ def get_all_standings_with_stats():
             else:
                 league_stats[data['competition']['code']] = {'avg_home': 1.5, 'avg_away': 1.2}
         
-        # 增加冷卻時間：免費版限制每分鐘 10 次。
-        # 為了避免連續抓 13 個聯賽後馬上被鎖，這裡設定 6.5 秒間隔
+        # 增加冷卻時間以避免 429
         time.sleep(6.5) 
             
     return standings_map, league_stats
@@ -240,7 +244,6 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
     
-    # 使用新的重試函式
     data = call_api_with_retry(url, headers=headers)
     
     try:
@@ -275,22 +278,23 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 
 # ================= 主流程 =================
 def get_real_data(market_value_map):
-    # 1. 先抓積分榜 (會消耗請求次數)
+    # 1. 抓積分榜
     standings, league_stats = get_all_standings_with_stats()
     
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (智能重試版)...")
     
     headers = {'X-Auth-Token': API_KEY}
     today = datetime.now()
-    start_date = (today - timedelta(days=5)).strftime('%Y-%m-%d') 
-    end_date = (today + timedelta(days=10)).strftime('%Y-%m-%d') 
     
-    print(f"📅 正在搜尋賽事範圍: {start_date} 至 {end_date}")
+    # [修正] API 限制 max 10 天。設定為 前3天 到 後7天。
+    start_date = (today - timedelta(days=3)).strftime('%Y-%m-%d') 
+    end_date = (today + timedelta(days=7)).strftime('%Y-%m-%d') 
+    
+    print(f"📅 正在搜尋賽事範圍: {start_date} 至 {end_date} (API 10天限制)")
     params = { 'dateFrom': start_date, 'dateTo': end_date, 'competitions': ",".join(COMPETITIONS) }
 
     try:
-        # 2. 抓賽程 (這裡最容易因為前面跑完積分榜而爆 429 錯誤)
-        # 使用智能重試函式，確保這裡不會因為太快而死掉
+        # 2. 抓賽程
         response_json = call_api_with_retry(f"{BASE_URL}/matches", params=params, headers=headers)
         
         if not response_json:
@@ -323,9 +327,8 @@ def get_real_data(market_value_map):
             
             print(f"   🤖 計算中 [{index+1}/{len(matches)}]: {lg_name} - {h_name} vs {a_name}...")
             
-            # H2H 查詢
             h2h, ou = get_h2h_and_ou_stats(match['id'], h_id, a_id)
-            time.sleep(6.1) # 保持每個賽事查詢的間隔
+            time.sleep(6.1) # 避免爆頻
 
             lg_avg = league_stats.get(lg_code, {'avg_home': 1.5, 'avg_away': 1.2})
             pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(h_info, a_info, h_val, a_val, h2h, lg_avg)
