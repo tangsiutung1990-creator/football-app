@@ -284,13 +284,15 @@ def get_real_data(market_value_map):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (智能重試版)...")
     
     headers = {'X-Auth-Token': API_KEY}
-    today = datetime.now()
+    
+    # [修正點] 使用 UTC 時間作為基準，避免伺服器時區造成的日期偏差
+    utc_now = datetime.now(pytz.utc)
     
     # [API 限制] 鎖定 10 天窗口：前 3 天 + 後 7 天
-    start_date = (today - timedelta(days=3)).strftime('%Y-%m-%d') 
-    end_date = (today + timedelta(days=7)).strftime('%Y-%m-%d') 
+    start_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d') 
+    end_date = (utc_now + timedelta(days=7)).strftime('%Y-%m-%d') 
     
-    print(f"📅 正在搜尋賽事範圍: {start_date} 至 {end_date} (API 10天限制)")
+    print(f"📅 正在搜尋賽事範圍 (UTC基準): {start_date} 至 {end_date}")
     params = { 'dateFrom': start_date, 'dateTo': end_date, 'competitions': ",".join(COMPETITIONS) }
 
     try:
@@ -314,9 +316,19 @@ def get_real_data(market_value_map):
         for index, match in enumerate(matches):
             # [關鍵] 將 UTC 轉換為 香港時間
             utc_dt = datetime.strptime(match['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
+            # 轉換為香港時間字串，格式確保為 YYYY-MM-DD HH:MM
             time_str = utc_dt.astimezone(hk_tz).strftime('%Y-%m-%d %H:%M') 
             
-            status = '進行中' if match['status'] in ['IN_PLAY', 'PAUSED'] else '完場' if match['status'] == 'FINISHED' else '未開賽'
+            # [修正點] 更精確的狀態判斷，解決延期賽事顯示問題
+            raw_status = match['status']
+            if raw_status == 'FINISHED':
+                status = '完場'
+            elif raw_status in ['IN_PLAY', 'PAUSED']:
+                status = '進行中'
+            elif raw_status in ['POSTPONED', 'SUSPENDED', 'CANCELLED']:
+                status = '延期/取消'
+            else:
+                status = '未開賽'
             
             h_id = match['homeTeam']['id']; a_id = match['awayTeam']['id']
             h_name = match['homeTeam']['shortName'] or match['homeTeam']['name']
@@ -328,7 +340,7 @@ def get_real_data(market_value_map):
             a_info = standings.get(a_id, {'rank':0,'form':'N/A','away_att':1.0,'away_def':1.0,'volatility':2.5,'season_ppg':1.3})
             h_val = market_value_map.get(h_name, "N/A"); a_val = market_value_map.get(a_name, "N/A")
             
-            print(f"   🤖 計算中 [{index+1}/{len(matches)}]: {lg_name} - {h_name} vs {a_name}...")
+            print(f"   🤖 計算中 [{index+1}/{len(matches)}]: {lg_name} - {h_name} vs {a_name} ({status})...")
             
             h2h, ou = get_h2h_and_ou_stats(match['id'], h_id, a_id)
             time.sleep(6.1) # 避免爆頻
@@ -376,7 +388,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 正在強制清空舊資料表 (Clear)...")
                 upload_sheet.clear() 
-                print(f"📝 正在寫入新數據 (含波膽預測)... 共 {len(df)} 筆")
+                print(f"📝 正在寫入新數據 (含波膽預測及新狀態)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 成功！Google Sheet 已更新，包含『波膽預測』欄位！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
