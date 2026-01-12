@@ -20,32 +20,32 @@ REQUEST_COUNT = 0
 # 聯賽列表
 COMPETITIONS = ['PL','PD','CL','SA','BL1','FL1','DED','PPL','ELC','BSA','CLI','WC','EC']
 
-# [V5.0] 聯賽風格係數 (進一步調高大球聯賽權重)
+# [V5.0] 聯賽風格係數 (維持高入球傾向)
 LEAGUE_GOAL_FACTOR = {
-    'BL1': 1.35, # 德甲 (極大)
-    'DED': 1.35, # 荷甲 (極大)
-    'PL': 1.15,  # 英超 (偏大)
-    'PD': 1.05,  # 西甲 (標準)
-    'SA': 1.08,  # 意甲 (略升)
-    'FL1': 1.05, # 法甲
-    'PPL': 1.15, # 葡超 (強弱懸殊大)
-    'BSA': 1.00, # 巴甲
-    'ELC': 1.08  # 英冠
+    'BL1': 1.35, 'DED': 1.35, 'PL': 1.15, 'PD': 1.05,
+    'SA': 1.08, 'FL1': 1.05, 'PPL': 1.15, 'BSA': 1.00, 'ELC': 1.08
 }
+
+# [V5.1 新增] 絕對豪門名單 (防止身價表隊名不符導致預測偏低)
+# 只要主隊名稱包含以下關鍵字，強制啟動屠殺模式
+TITAN_TEAMS = [
+    'Man City', 'Liverpool', 'Arsenal', 'Real Madrid', 'Barça', 'Barcelona', 
+    'Atlético', 'Bayern', 'Leverkusen', 'Dortmund', 'PSG', 'Inter', 'Juventus', 
+    'Milan', 'Napoli', 'Sporting CP', 'Benfica', 'Porto', 'PSV', 'Feyenoord', 'Ajax'
+]
 
 # ================= 智能 API 請求函式 (含計數器) =================
 def check_rate_limit():
     """每發送一定數量的請求後，強制休息，避免 429"""
     global REQUEST_COUNT
     REQUEST_COUNT += 1
-    # 免費版 API 限制約每分鐘 10 次。
-    # 這裡設定保守策略：每 8 次請求 (約 4 場比賽的量)，強制休息 62 秒
+    # 每 8 次請求 (約 4 場比賽)，強制休息 62 秒
     if REQUEST_COUNT % 8 == 0:
         print(f"⏳ [智能限流] 已發送 {REQUEST_COUNT} 次請求，強制休息 62 秒以保護連線...")
         time.sleep(62)
 
 def call_api_with_retry(url, params=None, headers=None, retries=3):
-    check_rate_limit() # 發送前先檢查限流
+    check_rate_limit() 
     
     for i in range(retries):
         try:
@@ -127,7 +127,6 @@ def calculate_advanced_probs(home_exp, away_exp):
 def calculate_correct_score_probs(home_exp, away_exp):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     scores = []
-    # 擴大波膽範圍至 9 球，捕捉極端比分
     for h in range(9):
         for a in range(9):
             prob = poisson(h, home_exp) * poisson(a, away_exp)
@@ -140,7 +139,7 @@ def calculate_weighted_form_score(form_str):
     if not form_str or form_str == 'N/A': return 1.5 
     score = 0; total_weight = 0
     relevant = form_str.replace(',', '').strip()[-5:]
-    weights = [1.0, 1.2, 1.4, 1.8, 2.2] # 加重最近兩場權重
+    weights = [1.0, 1.2, 1.4, 1.8, 2.2] 
     start_idx = 5 - len(relevant)
     curr_weights = weights[start_idx:]
     for i, char in enumerate(relevant):
@@ -192,7 +191,6 @@ def get_all_standings_with_stats():
                         standings_map[tid]['away_def'] = avg_ga
                         total_a += gf
             
-            # [核心修正] 聯賽平均值地板 (Floor) - 提高至 2.8 球
             if total_m > 10:
                 avg_h = max(total_h/total_m, 1.55) 
                 avg_a = max(total_a/total_m, 1.25)
@@ -200,11 +198,10 @@ def get_all_standings_with_stats():
                 avg_h = 1.6; avg_a = 1.3
             
             league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
-        # 這裡不需要長時間 sleep，因為 call_api_with_retry 內部已經有計數器
     return standings_map, league_stats
 
-# ================= 預測模型 (V5.0 Titan Boost) =================
-def predict_match_outcome(h_info, a_info, h_val_str, a_val_str, h2h_summary, league_avg, lg_code):
+# ================= 預測模型 (V5.1 Titan Force) =================
+def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_summary, league_avg, lg_code):
     # 1. 聯賽基數
     lg_h = league_avg.get('avg_home', 1.6)
     lg_a = league_avg.get('avg_away', 1.3)
@@ -212,7 +209,7 @@ def predict_match_outcome(h_info, a_info, h_val_str, a_val_str, h2h_summary, lea
     # 2. 聯賽風格加成
     factor = LEAGUE_GOAL_FACTOR.get(lg_code, 1.1)
     
-    # 3. 攻防能力計算 (維持 ^1.3 拉開基本差距)
+    # 3. 攻防能力
     h_att_r = (h_info['home_att'] / lg_h) 
     a_def_r = (a_info['away_def'] / lg_h)
     h_strength = (h_att_r * a_def_r) ** 1.3
@@ -225,37 +222,48 @@ def predict_match_outcome(h_info, a_info, h_val_str, a_val_str, h2h_summary, lea
     raw_h = h_strength * lg_h * factor
     raw_a = a_strength * lg_a * factor
     
-    # ================= [V5.0 新增] 豪門屠殺機制 =================
+    # ================= [V5.1 核心] 雙重身價/名氣鎖定 =================
     h_v = parse_market_value(h_val_str); a_v = parse_market_value(a_val_str)
     
-    # A. 身價碾壓加成 (Titan Multiplier)
+    is_titan = False
+    # 檢查是否為絕對豪門 (無論有沒有身價數據)
+    for titan in TITAN_TEAMS:
+        if titan in h_name:
+            is_titan = True
+            break
+            
+    # A. 身價碾壓加成
     if h_v > 0 and a_v > 0:
         ratio = h_v / a_v
-        if ratio > 8.0: # 身價差 8 倍 (例如 PSG vs 護級隊)
-            raw_h *= 1.45 # 強制提升 45% 攻擊力
-            raw_a *= 0.7  # 對手難以得分
-        elif ratio > 4.0: # 身價差 4 倍
-            raw_h *= 1.25
-            raw_a *= 0.85
+        if ratio > 8.0: 
+            raw_h *= 1.45; raw_a *= 0.7
+        elif ratio > 4.0: 
+            raw_h *= 1.25; raw_a *= 0.85
         
-        # 基礎身價微調
         val_factor = max(min(math.log(ratio) * 0.2, 0.5), -0.5)
         raw_h *= (1 + val_factor)
         raw_a *= (1 - val_factor)
 
-    # B. 排名碾壓加成 (Top vs Bottom)
-    h_rank = h_info.get('rank', 10); a_rank = a_info.get('rank', 10)
-    if h_rank <= 4 and a_rank >= 15: # 前四打榜尾
-        raw_h *= 1.25 # 再加 25%
-        print(f"🔥 觸發豪門屠殺: 主排名{h_rank} vs 客排名{a_rank}")
+    # B. [V5.1 新增] 絕對豪門強制補正 (若身價沒讀到，這裡會救回來)
+    if is_titan:
+        # 如果計算出來的預測值低於 1.6 (意外偏低)，強制拉升
+        if raw_h < 1.6:
+            print(f"🔱 [豪門保護] 強制提升 {h_name} 攻擊力 (原預測: {raw_h:.2f})")
+            raw_h = max(raw_h * 1.4, 1.85) # 至少提升到 1.85 球
+        else:
+            raw_h *= 1.15 # 豪門主場自帶 15% 氣勢加成
 
-    # 6. 動量修正
+    # 6. 排名與動量
+    h_rank = h_info.get('rank', 10); a_rank = a_info.get('rank', 10)
+    if h_rank <= 4 and a_rank >= 15: 
+        raw_h *= 1.25 
+        
     h_mom = calculate_weighted_form_score(h_info['form']) - h_info['season_ppg']
     a_mom = calculate_weighted_form_score(a_info['form']) - a_info['season_ppg']
-    raw_h *= (1 + (h_mom * 0.15)) # 提高狀態權重
+    raw_h *= (1 + (h_mom * 0.15)) 
     raw_a *= (1 + (a_mom * 0.15))
     
-    # 7. H2H 修正
+    # 7. H2H
     try:
         if "主" in h2h_summary and "勝" in h2h_summary:
             parts = h2h_summary.split('|')
@@ -271,11 +279,8 @@ def predict_match_outcome(h_info, a_info, h_val_str, a_val_str, h2h_summary, lea
     if vol > 3.2: 
         raw_h *= 1.2; raw_a *= 1.2
     
-    # 9. 最低保底 (豪門主場不低於 1.2)
-    if h_v > 300 and h_rank <= 5: 
-        raw_h = max(raw_h, 1.5)
-    
-    if raw_h < 0.3: raw_h = 0.35 # 避免出現 0
+    # 9. 最低保底
+    if raw_h < 0.3: raw_h = 0.35
     if raw_a < 0.3: raw_a = 0.35
 
     return round(raw_h, 2), round(raw_a, 2), round(vol, 1), round(h_mom, 2), round(a_mom, 2)
@@ -284,7 +289,6 @@ def predict_match_outcome(h_info, a_info, h_val_str, a_val_str, h2h_summary, lea
 def get_h2h_and_ou_stats(match_id, h_id, a_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
-    # 使用 check_rate_limit 在 call_api_with_retry 內部處理，這裡不用再 sleep
     data = call_api_with_retry(url, headers=headers)
     try:
         if data:
@@ -320,7 +324,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V5.0 豪門屠殺版 (含智能限流) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V5.1 終極補完版 (豪門名單鎖定) 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d') 
@@ -352,17 +356,13 @@ def get_real_data(market_value_map):
             a_info = standings.get(a_id, {'rank':10,'form':'N/A','away_att':1.1,'away_def':1.1,'volatility':2.5,'season_ppg':1.3})
             h_val = market_value_map.get(h_name, "N/A"); a_val = market_value_map.get(a_name, "N/A")
             
-            # 這裡不需手動 sleep，因為 get_h2h_and_ou_stats 內部會呼叫 check_rate_limit
             h2h, ou = get_h2h_and_ou_stats(match['id'], h_id, a_id)
 
             lg_avg = league_stats.get(lg_code, {'avg_home': 1.6, 'avg_away': 1.3})
             
-            pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(h_info, a_info, h_val, a_val, h2h, lg_avg, lg_code)
+            # [修正] 傳入 h_name 以進行豪門鎖定
+            pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(h_name, h_info, a_info, h_val, a_val, h2h, lg_avg, lg_code)
             
-            # [Debug] 檢查是否有豪門預測過低
-            if (h_name in ['PSG','Real Madrid','Man City','Bayern']) and pred_h < 1.5:
-                 print(f"⚠️ [Debug] {h_name} 預測仍偏低: {pred_h} (已觸發保護機制)")
-
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
             adv_stats = calculate_advanced_probs(pred_h, pred_a)
 
@@ -411,7 +411,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 清空舊資料...")
                 upload_sheet.clear() 
-                print(f"📝 寫入新數據 (V5.0)... 共 {len(df)} 筆")
+                print(f"📝 寫入新數據 (V5.1)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
