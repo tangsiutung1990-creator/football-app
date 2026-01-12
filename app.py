@@ -32,6 +32,7 @@ st.markdown("""
     .form-l { background-color: #dc3545 !important; }
     .live-status { color: #ff4b4b !important; font-weight: bold; animation: blinker 1.5s linear infinite; }
     @keyframes blinker { 50% { opacity: 0; } }
+    .postponed-status { color: #888888 !important; font-style: italic; border: 1px dashed #555; padding: 2px 5px; border-radius: 4px; }
     .stProgress > div > div > div > div { background-color: #007bff; }
     .match-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
     .team-col-home { flex: 1; text-align: left; display: flex; flex-direction: column; justify-content: center; }
@@ -80,6 +81,16 @@ def calculate_probabilities(home_exp, away_exp):
             if h + a > 2.5: over += prob
             else: under += prob
     return {"home_win": home_win*100, "draw": draw*100, "away_win": away_win*100, "over": over*100, "under": under*100}
+
+# [新增] 星期幾對照表
+WEEKDAY_MAP = {
+    0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五', 5: '週六', 6: '週日'
+}
+def get_weekday_str(date_str):
+    try:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+        return WEEKDAY_MAP[dt.weekday()]
+    except: return ""
 
 # ================= 連接 Google Sheet =================
 @st.cache_data(ttl=60) 
@@ -134,7 +145,9 @@ def main():
     leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
     selected_league = st.sidebar.selectbox("選擇聯賽:", leagues)
     
+    # [修正] 確保日期格式一致，避免排序問題
     df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
+    
     available_dates = ["全部"] + sorted(list(set(df['日期'])))
     selected_date = st.sidebar.selectbox("📅 選擇日期:", available_dates)
 
@@ -142,6 +155,7 @@ def main():
     if selected_league != "全部": filtered_df = filtered_df[filtered_df['聯賽'] == selected_league]
     if selected_date != "全部": filtered_df = filtered_df[filtered_df['日期'] == selected_date]
 
+    # [修正] 分頁邏輯更新，排除「完場」以外的都放在 Tab1，但要注意延期
     tab1, tab2 = st.tabs(["📅 未開賽 / 進行中", "✅ 已完場 (核對賽果)"])
 
     def render_matches(target_df):
@@ -149,14 +163,19 @@ def main():
             st.info("在此篩選條件下暫無賽事。")
             return
             
-        target_df = target_df.sort_values(by='時間')
+        # [修正] 依照時間嚴格排序
+        target_df = target_df.sort_values(by='時間', ascending=True)
         current_date_header = None
+        
         for index, row in target_df.iterrows():
             date_part = row['日期']
             time_part = str(row['時間']).split(' ')[1] if ' ' in str(row['時間']) else row['時間']
+            
             if date_part != current_date_header:
                 current_date_header = date_part
-                st.markdown(f"#### 🗓️ {current_date_header}")
+                # [新增] 顯示星期幾
+                weekday_str = get_weekday_str(date_part)
+                st.markdown(f"#### 🗓️ {current_date_header} ({weekday_str})")
                 st.divider()
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
@@ -169,9 +188,22 @@ def main():
             a_mom = float(row.get('客動量', 0)) if '客動量' in row else 0
             h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
             a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
-            status_icon = '🔴' if '進行中' in str(row['狀態']) else '🟢' if '完場' in str(row['狀態']) else '⚪'
             
-            # 波膽讀取 (安全讀取)
+            status_str = str(row['狀態'])
+            # [修正] 狀態燈號邏輯
+            if '進行中' in status_str:
+                status_icon = '🔴'
+                status_class = 'live-status'
+            elif '完場' in status_str:
+                status_icon = '🟢'
+                status_class = 'sub-text'
+            elif '延期' in status_str or '取消' in status_str:
+                status_icon = '⚠️'
+                status_class = 'postponed-status'
+            else:
+                status_icon = '⚪'
+                status_class = 'sub-text'
+            
             correct_score = row.get('波膽預測', 'N/A')
 
             analysis_notes = []
@@ -205,7 +237,6 @@ def main():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
                 col_match, col_ai = st.columns([1.5, 1])
                 with col_match:
-                    # 這裡加入了 (HKT) 的顯示
                     st.markdown(f"<div class='sub-text'>🕒 {time_part} (HKT) | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
                     st.write("") 
                     
@@ -220,8 +251,8 @@ def main():
                     display_score = f"{s_h} - {s_a}" if str(s_h) != '' else "VS"
                     m_parts.append(f"{display_score}</div>")
                     
-                    live_cls = 'live-status' if '進行中' in str(row['狀態']) else 'sub-text'
-                    m_parts.append(f"<div class='{live_cls}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {row['狀態']}</div></div>")
+                    # [修正] 顯示更具體的狀態 (例如: 延期/取消)
+                    m_parts.append(f"<div class='{status_class}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {status_str}</div></div>")
                     
                     m_parts.append("<div class='team-col-away'>")
                     m_parts.append(f"<div><span class='rank-badge'>#{a_rank}</span> {a_trend}</div>")
