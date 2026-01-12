@@ -40,6 +40,11 @@ st.markdown("""
     .score-col { flex: 0.8; text-align: center; display: flex; flex-direction: column; justify-content: center; }
     .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
     .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
+    
+    /* 新增樣式 */
+    .adv-stats-box { background-color: #25262b; padding: 8px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
+    .odds-tag { background-color: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #555; margin-right: 4px; color: #ddd; }
+    .value-bet { color: #28a745; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -82,10 +87,7 @@ def calculate_probabilities(home_exp, away_exp):
             else: under += prob
     return {"home_win": home_win*100, "draw": draw*100, "away_win": away_win*100, "over": over*100, "under": under*100}
 
-# [新增] 星期幾對照表
-WEEKDAY_MAP = {
-    0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五', 5: '週六', 6: '週日'
-}
+WEEKDAY_MAP = { 0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五', 5: '週六', 6: '週日' }
 def get_weekday_str(date_str):
     try:
         dt = datetime.strptime(date_str, '%Y-%m-%d')
@@ -111,10 +113,8 @@ def load_data():
 def main():
     st.title("⚽ 足球AI全能預測 (Ultimate Pro Black)")
     
-    # 載入數據
     df = load_data()
     
-    # 頂部狀態列
     c1, c2, c3, c4 = st.columns(4)
     if df is not None and not df.empty:
         total_m = len(df)
@@ -132,22 +132,20 @@ def main():
         st.cache_data.clear()
         st.rerun()
 
-    # 數據檢查
     if df is None or df.empty: 
-        st.warning("⚠️ 目前無數據，請確認：\n1. `run_me.py` 是否已成功執行並更新 Google Sheet？\n2. 賽事日期範圍是否正確？")
+        st.warning("⚠️ 目前無數據，請確認 run_me.py 是否執行成功。")
         return
 
-    cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量']
-    for col in cols: 
+    # 確保數值型別正確
+    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封']
+    for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     st.sidebar.header("🔍 篩選條件")
     leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
     selected_league = st.sidebar.selectbox("選擇聯賽:", leagues)
     
-    # [修正] 確保日期格式一致，避免排序問題
     df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
-    
     available_dates = ["全部"] + sorted(list(set(df['日期'])))
     selected_date = st.sidebar.selectbox("📅 選擇日期:", available_dates)
 
@@ -155,7 +153,6 @@ def main():
     if selected_league != "全部": filtered_df = filtered_df[filtered_df['聯賽'] == selected_league]
     if selected_date != "全部": filtered_df = filtered_df[filtered_df['日期'] == selected_date]
 
-    # [修正] 分頁邏輯更新，排除「完場」以外的都放在 Tab1，但要注意延期
     tab1, tab2 = st.tabs(["📅 未開賽 / 進行中", "✅ 已完場 (核對賽果)"])
 
     def render_matches(target_df):
@@ -163,7 +160,6 @@ def main():
             st.info("在此篩選條件下暫無賽事。")
             return
             
-        # [修正] 依照時間嚴格排序
         target_df = target_df.sort_values(by='時間', ascending=True)
         current_date_header = None
         
@@ -173,64 +169,71 @@ def main():
             
             if date_part != current_date_header:
                 current_date_header = date_part
-                # [新增] 顯示星期幾
                 weekday_str = get_weekday_str(date_part)
                 st.markdown(f"#### 🗓️ {current_date_header} ({weekday_str})")
                 st.divider()
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
             probs = calculate_probabilities(exp_h, exp_a)
+            
+            # 讀取進階數據
+            btts_prob = float(row.get('BTTS', 0))
+            cs_h_prob = float(row.get('主零封', 0))
+            cs_a_prob = float(row.get('客零封', 0))
+            odds_h = row.get('主賠', '-'); odds_d = row.get('和賠', '-'); odds_a = row.get('客賠', '-')
+            
             h_rank = row.get('主排名', '-'); a_rank = row.get('客排名', '-')
             h_val_disp = format_market_value(row.get('主隊身價', ''))
             a_val_disp = format_market_value(row.get('客隊身價', ''))
             
-            h_mom = float(row.get('主動量', 0)) if '主動量' in row else 0
-            a_mom = float(row.get('客動量', 0)) if '客動量' in row else 0
+            h_mom = float(row.get('主動量', 0)); a_mom = float(row.get('客動量', 0))
             h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
             a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
             
             status_str = str(row['狀態'])
-            # [修正] 狀態燈號邏輯
-            if '進行中' in status_str:
-                status_icon = '🔴'
-                status_class = 'live-status'
-            elif '完場' in status_str:
-                status_icon = '🟢'
-                status_class = 'sub-text'
-            elif '延期' in status_str or '取消' in status_str:
-                status_icon = '⚠️'
-                status_class = 'postponed-status'
-            else:
-                status_icon = '⚪'
-                status_class = 'sub-text'
+            if '進行中' in status_str: status_icon = '🔴'; status_class = 'live-status'
+            elif '完場' in status_str: status_icon = '🟢'; status_class = 'sub-text'
+            elif '延期' in status_str or '取消' in status_str: status_icon = '⚠️'; status_class = 'postponed-status'
+            else: status_icon = '⚪'; status_class = 'sub-text'
             
             correct_score = row.get('波膽預測', 'N/A')
 
+            # 智能分析邏輯
             analysis_notes = []
+            
+            # BTTS 分析
+            if btts_prob > 60: analysis_notes.append(f"🔥 <b>互攻局</b>: 雙方入球機率高達 {btts_prob}%，可關注大球。")
+            
+            # 防守分析
+            if cs_h_prob > 35: analysis_notes.append(f"🛡️ <b>主隊防守強</b>: 零封對手機率 {cs_h_prob}%，客隊得分難度大。")
+            if cs_a_prob > 35: analysis_notes.append(f"🛡️ <b>客隊防守強</b>: 零封對手機率 {cs_a_prob}%，主隊得分難度大。")
+            
+            # 身價/動量
             try:
                 cv_h = float(str(row.get('主隊身價','')).replace('€','').replace('M','').replace(',',''))
                 cv_a = float(str(row.get('客隊身價','')).replace('€','').replace('M','').replace(',',''))
-                if cv_h > cv_a * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 主隊身價是客隊的 {cv_h/cv_a:.1f} 倍！")
-                elif cv_a > cv_h * 2.5: analysis_notes.append(f"💰 <b>身價懸殊</b>: 客隊身價是主隊的 {cv_a/cv_h:.1f} 倍！")
+                if cv_h > cv_a * 2.5: analysis_notes.append(f"💰 <b>實力懸殊</b>: 主隊身價是客隊的 {cv_h/cv_a:.1f} 倍。")
             except: pass
             
-            if h_mom > 0.5: analysis_notes.append(f"🔥 <b>主隊強勢</b>: 近況表現優於賽季平均 (動量 +{h_mom:.1f})")
-            if a_mom > 0.5: analysis_notes.append(f"🔥 <b>客隊強勢</b>: 近況表現優於賽季平均 (動量 +{a_mom:.1f})")
-
             vol = float(row.get('賽事風格', 0))
-            style_tag = "<br><span style='color:#ffc107; font-weight:bold;'>⚡ 賽事風格: 大開大合 (高入球期望)</span>" if vol > 3.0 else "<br><span style='color:#00ffff; font-weight:bold;'>🛡️ 賽事風格: 防守嚴密 (入球偏少)</span>" if 0 < vol < 2.3 else ""
+            style_tag = ""
+            if vol > 3.0: style_tag = "<br><span style='color:#ffc107; font-weight:bold;'>⚡ 風格: 大開大合 (波動大)</span>"
             
-            combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "雙方實力接近，勝負取決於臨場發揮。"
             rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
             rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
 
+            combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "數據顯示雙方勢均力敵，建議參考賠率變化。"
+
+            # HTML 構建
             html_parts = []
-            html_parts.append(f"<div style='margin-top:8px; background-color:#25262b; padding:8px; border-radius:6px; font-size:0.75rem; border:1px solid #333;'>")
+            html_parts.append(f"<div class='adv-stats-box'>")
             html_parts.append(f"🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b>")
-            html_parts.append(f"<br>🎲 <b>首選波膽: <span style='color:#00ff00'>{correct_score}</span></b>") 
-            html_parts.append(f"<br>💡 綜合建議: <b style='color:{rec_color}!important'>{rec_text}</b>")
+            html_parts.append(f"<br>🎲 首選波膽: <span style='color:#00ff00'>{correct_score}</span>") 
+            html_parts.append(f"<hr style='margin:4px 0; border-top:1px dashed #444;'>")
+            html_parts.append(f"📊 <b>進階數據:</b> BTTS {btts_prob}% | 主零封 {cs_h_prob}% | 客零封 {cs_a_prob}%")
+            html_parts.append(f"<br>⚖️ <b>AI 合理賠率:</b> <span class='odds-tag'>主 {odds_h}</span> <span class='odds-tag'>和 {odds_d}</span> <span class='odds-tag'>客 {odds_a}</span>")
             html_parts.append(style_tag)
-            html_parts.append(f"<hr style='margin:5px 0; border-top: 1px solid #444;'><span style='color:#ffa500; font-size: 0.7rem;'>{combined_analysis}</span></div>")
+            html_parts.append(f"<hr style='margin:4px 0; border-top: 1px solid #444;'><span style='color:#ffa500;'>{combined_analysis}</span></div>")
             final_html = "".join(html_parts)
 
             with st.container():
@@ -251,7 +254,6 @@ def main():
                     display_score = f"{s_h} - {s_a}" if str(s_h) != '' else "VS"
                     m_parts.append(f"{display_score}</div>")
                     
-                    # [修正] 顯示更具體的狀態 (例如: 延期/取消)
                     m_parts.append(f"<div class='{status_class}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {status_str}</div></div>")
                     
                     m_parts.append("<div class='team-col-away'>")
