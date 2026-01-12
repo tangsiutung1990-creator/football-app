@@ -42,17 +42,16 @@ def call_api_with_retry(url, params=None, headers=None, retries=3):
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 429:
-                wait_time = 65 # 免費版通常限制 1分鐘，設定 65秒 確保安全
+                wait_time = 65 
                 print(f"🛑 觸發 API 頻率限制 (429)。程式將暫停 {wait_time} 秒後自動重試 ({i+1}/{retries})...")
                 time.sleep(wait_time)
-                continue # 重試
+                continue 
             elif response.status_code == 400:
                  print(f"⚠️ 請求參數錯誤 (400): {url}")
                  print(f"   參數詳情: {params}")
                  print(f"   API 回傳: {response.text}")
                  return None
             else:
-                # 其他錯誤 (如 403 無權限, 404 找不到)
                 print(f"⚠️ API 請求錯誤: {response.status_code} | {url}")
                 return None
         except Exception as e:
@@ -100,6 +99,47 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
+# ================= [新增] 進階機率計算 (BTTS, 零封, 合理賠率) =================
+def calculate_advanced_probs(home_exp, away_exp):
+    def poisson(k, lam):
+        return (lam**k * math.exp(-lam)) / math.factorial(k)
+    
+    # 1. 基礎勝平負機率 (用於計算合理賠率)
+    h_win_prob = 0; draw_prob = 0; a_win_prob = 0
+    for h in range(10):
+        for a in range(10):
+            p = poisson(h, home_exp) * poisson(a, away_exp)
+            if h > a: h_win_prob += p
+            elif h == a: draw_prob += p
+            else: a_win_prob += p
+            
+    # 2. BTTS (雙方都有入球)
+    # P(Home > 0) * P(Away > 0)
+    p_h_score = 1 - poisson(0, home_exp)
+    p_a_score = 1 - poisson(0, away_exp)
+    btts_prob = p_h_score * p_a_score
+    
+    # 3. 零封率 (Clean Sheet)
+    # 主隊零封 = 客隊進 0 球的機率
+    cs_home = poisson(0, away_exp)
+    # 客隊零封 = 主隊進 0 球的機率
+    cs_away = poisson(0, home_exp)
+    
+    # 4. 合理賠率 (Fair Odds) = 1 / 機率
+    # 避免除以零，設定最大賠率為 99.0
+    odds_h = 1 / h_win_prob if h_win_prob > 0.01 else 99.0
+    odds_d = 1 / draw_prob if draw_prob > 0.01 else 99.0
+    odds_a = 1 / a_win_prob if a_win_prob > 0.01 else 99.0
+    
+    return {
+        'btts': round(btts_prob * 100, 1),
+        'cs_h': round(cs_home * 100, 1),
+        'cs_a': round(cs_away * 100, 1),
+        'odds_h': round(odds_h, 2),
+        'odds_d': round(odds_d, 2),
+        'odds_a': round(odds_a, 2)
+    }
+
 # ================= 輔助：計算波膽 (Correct Score) =================
 def calculate_correct_score_probs(home_exp, away_exp):
     def poisson(k, lam):
@@ -142,7 +182,6 @@ def get_all_standings_with_stats():
         print(f"   ↳ 正在抓取積分榜: {comp} ({i+1}/{len(COMPETITIONS)})...")
         url = f"{BASE_URL}/competitions/{comp}/standings"
         
-        # 使用智能重試函式
         data = call_api_with_retry(url, headers=headers)
         
         if data:
@@ -186,7 +225,6 @@ def get_all_standings_with_stats():
             else:
                 league_stats[data['competition']['code']] = {'avg_home': 1.5, 'avg_away': 1.2}
         
-        # 增加冷卻時間以避免 429
         time.sleep(6.5) 
             
     return standings_map, league_stats
@@ -278,57 +316,40 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 
 # ================= 主流程 =================
 def get_real_data(market_value_map):
-    # 1. 抓積分榜
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (智能重試版)...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (Pro + Advanced Stats)...")
     
     headers = {'X-Auth-Token': API_KEY}
     
-    # [修正點] 使用 UTC 時間作為基準，避免伺服器時區造成的日期偏差
     utc_now = datetime.now(pytz.utc)
-    
-    # [API 限制] 鎖定 10 天窗口：前 3 天 + 後 7 天
     start_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d') 
     end_date = (utc_now + timedelta(days=7)).strftime('%Y-%m-%d') 
     
-    print(f"📅 正在搜尋賽事範圍 (UTC基準): {start_date} 至 {end_date}")
+    print(f"📅 搜尋範圍 (UTC): {start_date} 至 {end_date}")
     params = { 'dateFrom': start_date, 'dateTo': end_date, 'competitions': ",".join(COMPETITIONS) }
 
     try:
-        # 2. 抓賽程
         response_json = call_api_with_retry(f"{BASE_URL}/matches", params=params, headers=headers)
         
-        if not response_json:
-            print("⚠️ 無法獲取賽程數據 (API 返回空或錯誤)。")
-            return []
+        if not response_json: return []
 
         matches = response_json.get('matches', [])
-        if not matches: 
-            print("⚠️ 警告: 在此日期範圍內找不到符合條件的賽事。")
-            return []
+        if not matches: return []
 
         cleaned = []
-        # [關鍵] 這裡定義了香港時區
         hk_tz = pytz.timezone('Asia/Hong_Kong')
-        print(f"🔍 發現 {len(matches)} 場賽事，正在計算波膽與動量...")
+        print(f"🔍 發現 {len(matches)} 場賽事，正在計算高階機率...")
 
         for index, match in enumerate(matches):
-            # [關鍵] 將 UTC 轉換為 香港時間
             utc_dt = datetime.strptime(match['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.utc)
-            # 轉換為香港時間字串，格式確保為 YYYY-MM-DD HH:MM
             time_str = utc_dt.astimezone(hk_tz).strftime('%Y-%m-%d %H:%M') 
             
-            # [修正點] 更精確的狀態判斷，解決延期賽事顯示問題
             raw_status = match['status']
-            if raw_status == 'FINISHED':
-                status = '完場'
-            elif raw_status in ['IN_PLAY', 'PAUSED']:
-                status = '進行中'
-            elif raw_status in ['POSTPONED', 'SUSPENDED', 'CANCELLED']:
-                status = '延期/取消'
-            else:
-                status = '未開賽'
+            if raw_status == 'FINISHED': status = '完場'
+            elif raw_status in ['IN_PLAY', 'PAUSED']: status = '進行中'
+            elif raw_status in ['POSTPONED', 'SUSPENDED', 'CANCELLED']: status = '延期/取消'
+            else: status = '未開賽'
             
             h_id = match['homeTeam']['id']; a_id = match['awayTeam']['id']
             h_name = match['homeTeam']['shortName'] or match['homeTeam']['name']
@@ -340,16 +361,19 @@ def get_real_data(market_value_map):
             a_info = standings.get(a_id, {'rank':0,'form':'N/A','away_att':1.0,'away_def':1.0,'volatility':2.5,'season_ppg':1.3})
             h_val = market_value_map.get(h_name, "N/A"); a_val = market_value_map.get(a_name, "N/A")
             
-            print(f"   🤖 計算中 [{index+1}/{len(matches)}]: {lg_name} - {h_name} vs {a_name} ({status})...")
+            print(f"   🤖 分析中 [{index+1}/{len(matches)}]: {h_name} vs {a_name}...")
             
             h2h, ou = get_h2h_and_ou_stats(match['id'], h_id, a_id)
-            time.sleep(6.1) # 避免爆頻
+            time.sleep(6.1)
 
             lg_avg = league_stats.get(lg_code, {'avg_home': 1.5, 'avg_away': 1.2})
             pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(h_info, a_info, h_val, a_val, h2h, lg_avg)
             
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
             
+            # [新增] 計算進階數據 (BTTS, 零封, 合理賠率)
+            adv_stats = calculate_advanced_probs(pred_h, pred_a)
+
             score_h = match['score']['fullTime']['home']
             score_a = match['score']['fullTime']['away']
             if score_h is None: score_h = ''
@@ -364,12 +388,15 @@ def get_real_data(market_value_map):
                 '總球數': round(pred_h + pred_a, 1),
                 '主攻(H)': round(pred_h * 1.2, 1), '客攻(A)': round(pred_a * 1.2, 1),
                 '狀態': status,
-                '主分': score_h,
-                '客分': score_a,
+                '主分': score_h, '客分': score_a,
                 'H2H': h2h, '大小球統計': ou,
                 '主隊身價': h_val, '客隊身價': a_val,
                 '賽事風格': vol, '主動量': h_mom, '客動量': a_mom,
-                '波膽預測': correct_score_str 
+                '波膽預測': correct_score_str,
+                # [新增欄位]
+                'BTTS': adv_stats['btts'],
+                '主零封': adv_stats['cs_h'], '客零封': adv_stats['cs_a'],
+                '主賠': adv_stats['odds_h'], '和賠': adv_stats['odds_d'], '客賠': adv_stats['odds_a']
             })
         return cleaned
     except Exception as e:
@@ -381,19 +408,24 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
-        cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測','總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測']
+        # 擴充欄位定義
+        cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測',
+                '總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計',
+                '主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測',
+                'BTTS','主零封','客零封','主賠','和賠','客賠'] # 新增欄位
+        
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try:
                 upload_sheet = spreadsheet.sheet1 
-                print(f"🚀 正在強制清空舊資料表 (Clear)...")
+                print(f"🚀 正在強制清空舊資料表...")
                 upload_sheet.clear() 
-                print(f"📝 正在寫入新數據 (含波膽預測及新狀態)... 共 {len(df)} 筆")
+                print(f"📝 正在寫入新數據 (含進階分析)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print(f"✅ 成功！Google Sheet 已更新，包含『波膽預測』欄位！")
+                print(f"✅ Google Sheet 更新完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
     else:
-        print("⚠️ 無數據產生，Google Sheet 未更新。")
+        print("⚠️ 無數據產生。")
 
 if __name__ == "__main__":
     main()
