@@ -6,6 +6,7 @@ import gspread
 from datetime import datetime, timedelta
 import pytz
 from oauth2client.service_account import ServiceAccountCredentials
+import random
 
 # ================= 設定區 =================
 API_KEY = '531bb40a089446bdae76a019f2af3beb'
@@ -29,6 +30,19 @@ COMPETITIONS = [
     'WC',   # 世界盃/國際賽
     'EC'    # 歐國盃
 ]
+
+# [新增] 聯賽入球風格係數 (大於 1.0 代表大球聯賽，小於 1.0 代表防守聯賽)
+LEAGUE_GOAL_FACTOR = {
+    'BL1': 1.18, # 德甲 (大球)
+    'DED': 1.20, # 荷甲 (大球)
+    'PL': 1.05,  # 英超 (標準偏大)
+    'PD': 0.95,  # 西甲 (技術型，入球稍少)
+    'SA': 0.98,  # 意甲 (防守反擊)
+    'FL1': 0.95, # 法甲
+    'PPL': 1.05, # 葡超
+    'BSA': 0.90, # 巴甲 (較為保守)
+    'ELC': 1.02  # 英冠
+}
 
 # ================= 智能 API 請求函式 =================
 def call_api_with_retry(url, params=None, headers=None, retries=3):
@@ -104,7 +118,6 @@ def calculate_advanced_probs(home_exp, away_exp):
     def poisson(k, lam):
         return (lam**k * math.exp(-lam)) / math.factorial(k)
     
-    # 1. 基礎勝平負機率 (用於計算合理賠率)
     h_win_prob = 0; draw_prob = 0; a_win_prob = 0
     for h in range(10):
         for a in range(10):
@@ -113,20 +126,13 @@ def calculate_advanced_probs(home_exp, away_exp):
             elif h == a: draw_prob += p
             else: a_win_prob += p
             
-    # 2. BTTS (雙方都有入球)
-    # P(Home > 0) * P(Away > 0)
     p_h_score = 1 - poisson(0, home_exp)
     p_a_score = 1 - poisson(0, away_exp)
     btts_prob = p_h_score * p_a_score
     
-    # 3. 零封率 (Clean Sheet)
-    # 主隊零封 = 客隊進 0 球的機率
     cs_home = poisson(0, away_exp)
-    # 客隊零封 = 主隊進 0 球的機率
     cs_away = poisson(0, home_exp)
     
-    # 4. 合理賠率 (Fair Odds) = 1 / 機率
-    # 避免除以零，設定最大賠率為 99.0
     odds_h = 1 / h_win_prob if h_win_prob > 0.01 else 99.0
     odds_d = 1 / draw_prob if draw_prob > 0.01 else 99.0
     odds_a = 1 / a_win_prob if a_win_prob > 0.01 else 99.0
@@ -146,12 +152,14 @@ def calculate_correct_score_probs(home_exp, away_exp):
         return (lam**k * math.exp(-lam)) / math.factorial(k)
     
     scores = []
-    for h in range(6):
-        for a in range(6):
+    # [優化] 擴大波膽計算範圍到 7 球，避免漏掉大比分
+    for h in range(8):
+        for a in range(8):
             prob = poisson(h, home_exp) * poisson(a, away_exp)
             scores.append({'score': f"{h}:{a}", 'prob': prob})
     
     scores.sort(key=lambda x: x['prob'], reverse=True)
+    # 顯示前 3 個最高機率波膽
     top_3 = [f"{s['score']} ({int(s['prob']*100)}%)" for s in scores[:3]]
     return " | ".join(top_3)
 
@@ -187,7 +195,11 @@ def get_all_standings_with_stats():
         if data:
             total_h=0; total_a=0; total_m=0
             
-            for table in data.get('standings', []):
+            # [優化] 確保數據結構安全
+            standings_list = data.get('standings', [])
+            if not standings_list: continue
+
+            for table in standings_list:
                 table_type = table['type']
                 for entry in table['table']:
                     team_id = entry['team']['id']
@@ -202,8 +214,10 @@ def get_all_standings_with_stats():
                     played = entry['playedGames']
                     points = entry['points']
                     gf = entry['goalsFor']; ga = entry['goalsAgainst']
-                    avg_gf = gf/played if played>0 else 0
-                    avg_ga = ga/played if played>0 else 0
+                    
+                    # [優化] 防止 played 為 0 導致除以零錯誤，設定基礎值
+                    avg_gf = gf/played if played>0 else 1.2
+                    avg_ga = ga/played if played>0 else 1.2
 
                     if table_type == 'TOTAL':
                         standings_map[team_id]['rank'] = entry['position']
@@ -211,55 +225,72 @@ def get_all_standings_with_stats():
                         standings_map[team_id]['season_ppg'] = points/played if played>0 else 1.3
                         if played>0: standings_map[team_id]['volatility'] = (gf+ga)/played
                     elif table_type == 'HOME':
-                        standings_map[team_id]['home_att'] = avg_gf if avg_gf>0 else 1.0
-                        standings_map[team_id]['home_def'] = avg_ga if avg_ga>0 else 1.0
+                        standings_map[team_id]['home_att'] = avg_gf 
+                        standings_map[team_id]['home_def'] = avg_ga 
                         total_h += gf; 
                         if played>0: total_m += played
                     elif table_type == 'AWAY':
-                        standings_map[team_id]['away_att'] = avg_gf if avg_gf>0 else 1.0
-                        standings_map[team_id]['away_def'] = avg_ga if avg_ga>0 else 1.0
+                        standings_map[team_id]['away_att'] = avg_gf 
+                        standings_map[team_id]['away_def'] = avg_ga 
                         total_a += gf
 
+            # [優化] 計算聯賽平均入球，如果樣本太少，給予較高的現代足球預設值 (2.8球)
             if total_m > 10:
-                league_stats[data['competition']['code']] = {'avg_home': total_h/total_m, 'avg_away': total_a/total_m}
+                avg_h_score = total_h/total_m
+                avg_a_score = total_a/total_m
             else:
-                league_stats[data['competition']['code']] = {'avg_home': 1.5, 'avg_away': 1.2}
+                avg_h_score = 1.65
+                avg_a_score = 1.35
+            
+            league_stats[data['competition']['code']] = {'avg_home': avg_h_score, 'avg_away': avg_a_score}
         
         time.sleep(6.5) 
             
     return standings_map, league_stats
 
-# ================= 預測模型 =================
-def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2h_summary, league_avg):
-    lg_h = max(league_avg.get('avg_home', 1.5), 0.5)
-    lg_a = max(league_avg.get('avg_away', 1.2), 0.5)
+# ================= 預測模型 (核心優化) =================
+def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2h_summary, league_avg, lg_code):
+    # 1. 獲取聯賽平均值，並確保不為零
+    lg_h = max(league_avg.get('avg_home', 1.6), 0.8)
+    lg_a = max(league_avg.get('avg_away', 1.3), 0.8)
 
-    # 1. Poisson
-    h_att = home_stats['home_att'] / lg_h
-    a_def = away_stats['away_def'] / lg_h
-    raw_h = h_att * a_def * lg_h
+    # 2. 應用「聯賽風格係數」 (放大/縮小基礎入球率)
+    style_factor = LEAGUE_GOAL_FACTOR.get(lg_code, 1.0)
     
-    a_att = away_stats['away_att'] / lg_a
-    h_def = home_stats['home_def'] / lg_a
-    raw_a = a_att * h_def * lg_a
+    # [數學修正] 攻擊力 = 球隊平均入球 / 聯賽平均主場入球
+    # 這裡引入 style_factor 來整體提升或降低該聯賽的入球期望
+    h_att_strength = (home_stats['home_att'] / lg_h) * math.sqrt(style_factor)
+    a_def_strength = (away_stats['away_def'] / lg_h) * math.sqrt(style_factor)
     
-    # 2. 身價
+    a_att_strength = (away_stats['away_att'] / lg_a) * math.sqrt(style_factor)
+    h_def_strength = (home_stats['home_def'] / lg_a) * math.sqrt(style_factor)
+    
+    # 3. 初始預期入球 (Lambda)
+    # 增加 1.1 的係數，解決泊松分佈傾向保守的問題
+    raw_h = h_att_strength * a_def_strength * lg_h * 1.1
+    raw_a = a_att_strength * h_def_strength * lg_a * 1.1
+    
+    # 4. 身價修正 (實力懸殊修正)
     h_v = parse_market_value(home_val_str); a_v = parse_market_value(away_val_str)
     if h_v > 0 and a_v > 0:
         ratio = h_v / a_v
-        factor = max(min(math.log(ratio) * 0.08, 0.25), -0.25)
+        # 放大身價的影響力：使用 log 後 x 0.15 (之前是 0.08)
+        factor = max(min(math.log(ratio) * 0.15, 0.4), -0.4)
         raw_h *= (1 + factor)
         raw_a *= (1 - factor)
 
-    # 3. 動量
+    # 5. 動量 (Form) 修正
     h_form = calculate_weighted_form_score(home_stats['form'])
     a_form = calculate_weighted_form_score(away_stats['form'])
+    # 動量差值
     h_mom = h_form - home_stats['season_ppg']
     a_mom = a_form - away_stats['season_ppg']
-    raw_h *= (1 + (h_mom * 0.05))
-    raw_a *= (1 + (a_mom * 0.05))
+    
+    # [優化] 狀態好會直接增加入球期望值
+    raw_h *= (1 + (h_mom * 0.1))
+    raw_a *= (1 + (a_mom * 0.1))
 
-    # 4. H2H
+    # 6. H2H 歷史修正
     try:
         if "主" in h2h_summary and "勝" in h2h_summary:
             parts = h2h_summary.split('|')
@@ -268,13 +299,19 @@ def predict_match_outcome(home_stats, away_stats, home_val_str, away_val_str, h2
             total = h_wins + a_wins + int(parts[1].split('和')[1])
             if total > 0:
                 h_rate = h_wins/total; a_rate = a_wins/total
-                raw_h *= (1 + (h_rate - 0.33) * 0.2)
-                raw_a *= (1 + (a_rate - 0.33) * 0.2)
+                raw_h *= (1 + (h_rate - 0.33) * 0.15)
+                raw_a *= (1 + (a_rate - 0.33) * 0.15)
     except: pass
 
-    # 5. 波動
+    # 7. 波動性修正 (解決所有比賽都預測小球的問題)
     vol = (home_stats.get('volatility', 2.5) + away_stats.get('volatility', 2.5)) / 2
-    
+    if vol > 3.0: # 如果兩隊歷史上都是大開大合
+        raw_h *= 1.15
+        raw_a *= 1.15
+    elif vol < 2.0: # 如果兩隊都是鐵桶陣
+        raw_h *= 0.9
+        raw_a *= 0.9
+
     return round(raw_h, 2), round(raw_a, 2), round(vol, 1), round(h_mom, 2), round(a_mom, 2)
 
 # ================= H2H =================
@@ -318,7 +355,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (Pro + Advanced Stats)...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 數據引擎啟動 (V3.0 Aggressive Mode)...")
     
     headers = {'X-Auth-Token': API_KEY}
     
@@ -366,12 +403,13 @@ def get_real_data(market_value_map):
             h2h, ou = get_h2h_and_ou_stats(match['id'], h_id, a_id)
             time.sleep(6.1)
 
-            lg_avg = league_stats.get(lg_code, {'avg_home': 1.5, 'avg_away': 1.2})
-            pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(h_info, a_info, h_val, a_val, h2h, lg_avg)
+            lg_avg = league_stats.get(lg_code, {'avg_home': 1.6, 'avg_away': 1.3}) # 提高預設值
+            
+            # [修正] 傳入 lg_code 以獲取聯賽風格係數
+            pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(h_info, a_info, h_val, a_val, h2h, lg_avg, lg_code)
             
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
             
-            # [新增] 計算進階數據 (BTTS, 零封, 合理賠率)
             adv_stats = calculate_advanced_probs(pred_h, pred_a)
 
             score_h = match['score']['fullTime']['home']
@@ -393,7 +431,6 @@ def get_real_data(market_value_map):
                 '主隊身價': h_val, '客隊身價': a_val,
                 '賽事風格': vol, '主動量': h_mom, '客動量': a_mom,
                 '波膽預測': correct_score_str,
-                # [新增欄位]
                 'BTTS': adv_stats['btts'],
                 '主零封': adv_stats['cs_h'], '客零封': adv_stats['cs_a'],
                 '主賠': adv_stats['odds_h'], '和賠': adv_stats['odds_d'], '客賠': adv_stats['odds_a']
@@ -408,11 +445,10 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
-        # 擴充欄位定義
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測',
                 '總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計',
                 '主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測',
-                'BTTS','主零封','客零封','主賠','和賠','客賠'] # 新增欄位
+                'BTTS','主零封','客零封','主賠','和賠','客賠']
         
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
@@ -420,7 +456,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 正在強制清空舊資料表...")
                 upload_sheet.clear() 
-                print(f"📝 正在寫入新數據 (含進階分析)... 共 {len(df)} 筆")
+                print(f"📝 正在寫入新數據 (優化版V3)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ Google Sheet 更新完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
