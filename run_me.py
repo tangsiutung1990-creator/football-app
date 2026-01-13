@@ -14,7 +14,7 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [V14.2] 市場入球通膨係數
+# [V14.3] 市場入球通膨係數
 MARKET_GOAL_INFLATION = 1.28 
 
 REQUEST_COUNT = 0
@@ -95,38 +95,28 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= [V14.2] 智能標籤與風險分析 (修復 Crash 問題) =================
+# ================= [V14.3] Alpha 獵殺邏輯 =================
 def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals):
     tags = []
-    
-    # [V14.2 Fix] 強制轉換為字串，防止 NoneType Error
+    # 強制轉字串防錯
     h_form = str(h_info.get('form', 'N/A'))
     a_form = str(a_info.get('form', 'N/A'))
-    
+
     if h_info['home_att'] > 2.2: tags.append("🏠主場龍")
     if a_info['away_def'] > 2.0: tags.append("🚌客場蟲")
     if a_info['away_att'] > 2.0: tags.append("⚔️客場殺手")
     if h_info['home_def'] < 0.8: tags.append("🛡️主場鐵壁")
-    
     if match_vol > 3.5: tags.append("🎆入球機器")
     elif match_vol < 2.0: tags.append("💤悶戰專家")
-    
-    # 安全檢查 form 字串
     if 'WWWW' in h_form: tags.append("🔥主連勝")
-    if 'WWWW' in a_form: tags.append("🔥客連勝")
     if 'LLLL' in h_form: tags.append("📉主頹勢")
-    if 'LLLL' in a_form: tags.append("📉客頹勢")
-
     if h2h_avg_goals > 3.5: tags.append("💣宿敵對攻")
-    
     return " ".join(tags) if tags else "⚖️ 數據平衡"
 
 def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol):
-    """
-    V14 核心：計算 Alpha Score (信心分)，強制決策
-    """
     scores = {}
     
+    # 大小球
     scores['2.5大'] = prob_o25 * 100
     if h2h_avg > 3.0: scores['2.5大'] += 15
     if match_vol > 3.2: scores['2.5大'] += 10
@@ -134,6 +124,7 @@ def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol):
     scores['2.5細'] = (1 - prob_o25) * 100
     if match_vol < 2.2: scores['2.5細'] += 15
     
+    # 主客和
     scores['主勝'] = h_win * 100
     scores['客勝'] = a_win * 100
     
@@ -141,11 +132,14 @@ def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol):
     scores['主(+0/0.5)'] = (h_win + (1-h_win-a_win)) * 100 
     scores['客(+0/0.5)'] = (a_win + (1-h_win-a_win)) * 100
     
+    # BTTS
     scores['BTTS-是'] = prob_btts * 100
     
+    # 上半場
     scores['上半大0.5/1'] = 0
     if match_vol > 3.5: scores['上半大0.5/1'] = 85 
     
+    # 強制決策
     valid_scores = {k: v for k, v in scores.items()}
     if not valid_scores: return "數據混亂 (避)"
     
@@ -168,15 +162,13 @@ def calculate_risk_level(ou_conf, match_vol, prob_o25):
     elif score < 55: return "🔵 穩健"
     else: return "🔴 高險"
 
-# ================= [數學核心] V14.2 =================
+# ================= [數學核心] =================
 def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
     h_win=0; draw=0; a_win=0
     prob_o15 = 0; prob_o25 = 0; prob_o35 = 0
-    prob_ht_o05 = 0 # 上半場 > 0.5
     
-    # 全場分佈
     for h in range(12):
         for a in range(12):
             p = poisson(h, home_exp) * poisson(a, away_exp)
@@ -189,7 +181,7 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
             if total > 2.5: prob_o25 += p
             if total > 3.5: prob_o35 += p
     
-    # [V14.2] 簡單估算上半場入球概率 (假設上半場約佔全場 40-45% 入球)
+    # 估算上半場 > 0.5
     ht_lambda_h = home_exp * 0.42
     ht_lambda_a = away_exp * 0.42
     prob_ht_00 = poisson(0, ht_lambda_h) * poisson(0, ht_lambda_a)
@@ -228,7 +220,6 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     
     total_conf = max(min(math_conf + h2h_conf + vol_conf, 99), 25) 
     
-    # 策略生成 (加入角球與半場)
     live_strat = "中性觀望"
     corner_trend = "中"
     if match_vol > 3.1: 
@@ -254,7 +245,7 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
         'prob_o15': round(prob_o15*100, 1),
         'prob_o25': round(prob_o25*100, 1),
         'prob_o35': round(prob_o35*100, 1),
-        'prob_ht_o05': round(prob_ht_o05*100, 1), # 上半場 > 0.5
+        'prob_ht_o05': round(prob_ht_o05*100, 1), 
         'ou_conf': round(total_conf, 1),
         'h2h_avg_goals': h2h_avg_goals,
         'fair_1x2_h': round(fair_1x2_h, 2),
@@ -293,7 +284,7 @@ def calculate_weighted_form_score(form_str):
         total_weight += w
     return score / total_weight if total_weight > 0 else 1.5
 
-# ================= 數據獲取 (V14.2 Fix) =================
+# ================= 數據獲取 (修復補回) =================
 def get_all_standings_with_stats():
     print("📊 計算聯賽基數...")
     standings_map = {}
@@ -322,7 +313,7 @@ def get_all_standings_with_stats():
 
                     if t_type == 'TOTAL':
                         standings_map[tid]['rank'] = entry['position']
-                        # [Fix] 確保 form 永遠是字串，防止 NoneType Crash
+                        # 強制轉字串，防止 API 回傳 None
                         raw_form = entry.get('form')
                         standings_map[tid]['form'] = str(raw_form) if raw_form else 'N/A'
                         standings_map[tid]['season_ppg'] = points/played if played>0 else 1.3
@@ -347,7 +338,7 @@ def get_all_standings_with_stats():
             league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
     return standings_map, league_stats
 
-# ================= 預測模型 (V14.2) =================
+# ================= 預測模型 =================
 def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_rate, h2h_avg_goals, league_avg, lg_code):
     lg_h = league_avg.get('avg_home', 1.6)
     lg_a = league_avg.get('avg_away', 1.3)
@@ -404,11 +395,56 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
 
     return round(raw_h, 2), round(raw_a, 2), round(match_vol, 2), round(h_mom, 2), round(a_mom, 2)
 
+# ================= H2H 函式 (已修復) =================
+def get_h2h_and_ou_stats(match_id, h_id, a_id):
+    headers = {'X-Auth-Token': API_KEY}
+    url = f"{BASE_URL}/matches/{match_id}/head2head"
+    data = call_api_with_retry(url, headers=headers)
+    try:
+        if data:
+            matches = data.get('matches', []) 
+            if not matches: return "無對賽記錄", "N/A", -1, -1
+            
+            matches.sort(key=lambda x: x['utcDate'], reverse=True)
+            recent = matches[:10]
+            total=0; h_w=0; a_w=0; d=0; o15=0; o25=0; o35=0; total_goals=0
+            
+            for m in recent:
+                if m['status'] != 'FINISHED': continue
+                total+=1
+                w = m['score']['winner']
+                if w == 'DRAW': d+=1
+                elif w == 'HOME_TEAM':
+                    if m['homeTeam']['id'] == h_id: h_w+=1
+                    else: a_w+=1
+                elif w == 'AWAY_TEAM':
+                    if m['awayTeam']['id'] == h_id: h_w+=1
+                    else: a_w+=1
+                try:
+                    g = m['score']['fullTime']['home'] + m['score']['fullTime']['away']
+                    total_goals += g
+                    if g>1.5: o15+=1; 
+                    if g>2.5: o25+=1; 
+                    if g>3.5: o35+=1
+                except: pass
+            
+            if total==0: return "無有效對賽", "N/A", -1, -1
+            
+            p15=round(o15/total*100); p25=round(o25/total*100); p35=round(o35/total*100)
+            avg_g = round(total_goals/total, 1)
+            
+            h2h_str = f"近{total}場: 主{h_w}勝 | 和{d} | 客{a_w}勝"
+            ou_str = f"對賽大球率: 1.5球({p15}%) | 2.5球({p25}%) | 3.5球({p35}%)"
+            
+            return h2h_str, ou_str, (o25/total), avg_g
+        return "N/A", "N/A", -1, -1
+    except: return "N/A", "N/A", -1, -1
+
 # ================= 主流程 =================
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V14.2 Alpha 防爆修復版 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V14.3 Alpha 修復版 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -487,7 +523,7 @@ def get_real_data(market_value_map):
                 '大球率1.5': adv_stats['prob_o15'], 
                 '大球率2.5': adv_stats['prob_o25'],
                 '大球率3.5': adv_stats['prob_o35'], 
-                '上半大0.5': adv_stats['prob_ht_o05'], # 新增
+                '上半大0.5': adv_stats['prob_ht_o05'],
                 'OU信心': adv_stats['ou_conf'],
                 
                 '合理主賠': adv_stats['fair_1x2_h'],
@@ -526,7 +562,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 清空舊資料...")
                 upload_sheet.clear() 
-                print(f"📝 寫入新數據 (V14.2)... 共 {len(df)} 筆")
+                print(f"📝 寫入新數據 (V14.3)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
