@@ -14,7 +14,7 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [V11.0] 市場入球通膨係數
+# [V12.0] 市場入球通膨係數
 MARKET_GOAL_INFLATION = 1.28 
 
 REQUEST_COUNT = 0
@@ -95,7 +95,64 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= [數學核心] V11.0 全盤口合理賠率 =================
+# ================= [V12.0] 智能標籤與風險分析 =================
+def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals):
+    tags = []
+    
+    # 1. 主客場特性
+    if h_info['home_att'] > 2.2: tags.append("🏠主場龍")
+    if a_info['away_def'] > 2.0: tags.append("🚌客場蟲")
+    if a_info['away_att'] > 2.0: tags.append("⚔️客場殺手")
+    if h_info['home_def'] < 0.8: tags.append("🛡️主場鐵壁")
+
+    # 2. 進球特性
+    if match_vol > 3.5: tags.append("🎆入球機器")
+    elif match_vol < 2.0: tags.append("💤悶戰專家")
+    
+    # 3. 近況 (Form)
+    if 'WWWW' in h_info['form']: tags.append("🔥主連勝")
+    if 'WWWW' in a_info['form']: tags.append("🔥客連勝")
+    if 'LLLL' in h_info['form']: tags.append("📉主頹勢")
+    if 'LLLL' in a_info['form']: tags.append("📉客頹勢")
+
+    # 4. 對賽
+    if h2h_avg_goals > 3.5: tags.append("💣宿敵對攻")
+    
+    return " ".join(tags) if tags else "⚖️ 數據平衡"
+
+def calculate_risk_level(ou_conf, match_vol, h2h_avg_goals):
+    # 基礎風險分 (越低越安全)
+    risk_score = 50 
+    
+    # 信心越高，風險越低
+    risk_score -= (ou_conf - 50) 
+    
+    # 波動性過大或過小增加風險
+    if match_vol > 3.8 or match_vol < 1.8: risk_score += 15
+    
+    # H2H 數據缺乏或衝突
+    if h2h_avg_goals == -1: risk_score += 20
+    
+    if risk_score < 30: return "🟢 低風險 (穩)"
+    elif risk_score < 60: return "🟡 中風險"
+    else: return "🔴 高風險 (博)"
+
+def identify_top_pick(fair_1x2_h, fair_1x2_a, fair_o25, fair_u25, prob_o25, h_win, a_win):
+    # 簡單的決策樹
+    picks = []
+    
+    # 大小球首選
+    if prob_o25 > 65: picks.append("2.5大")
+    elif prob_o25 < 35: picks.append("2.5細")
+    
+    # 主客和首選 (機率 > 55% 且 賠率合理)
+    if h_win > 0.55: picks.append("主勝")
+    elif a_win > 0.55: picks.append("客勝")
+    
+    if not picks: return "觀望/走地"
+    return " + ".join(picks)
+
+# ================= [數學核心] V12.0 =================
 def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
@@ -118,27 +175,19 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     p_a_score = 1 - poisson(0, away_exp)
     btts = p_h_score * p_a_score
     
-    # 莊家隱含賠率 (僅供參考)
     odds_h = 1/h_win if h_win > 0.01 else 99.0
     odds_d = 1/draw if draw > 0.01 else 99.0
     odds_a = 1/a_win if a_win > 0.01 else 99.0
 
-    # ================= [V11.0] 全盤口合理賠率計算 =================
-    # 安全邊際 (Utility Margin): 5% -> 只有當賠率比 AI 高 5% 以上才建議買
-    margin = 1.05
-    limit = 50.0
-
-    # 1. 主客和合理賠率 (1x2 Fair Odds)
+    # 合理賠率 (5% Margin + Max Limit)
+    margin = 1.05; limit = 50.0
+    
     fair_1x2_h = min((1 / max(h_win, 0.01)) * margin, limit)
     fair_1x2_d = min((1 / max(draw, 0.01)) * margin, limit)
     fair_1x2_a = min((1 / max(a_win, 0.01)) * margin, limit)
 
-    # 2. 大小球合理賠率 (OU Fair Odds) - 明確區分 2.5 與 3.5
-    # 2.5 球
     fair_o25 = min((1 / max(prob_o25, 0.01)) * margin, limit)
     fair_u25 = min((1 / max(1-prob_o25, 0.01)) * margin, limit)
-    
-    # 3.5 球 (專攻高賠)
     fair_o35 = min((1 / max(prob_o35, 0.01)) * margin, limit)
     fair_u35 = min((1 / max(1-prob_o35, 0.01)) * margin, limit)
 
@@ -168,20 +217,22 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
         'btts': round(btts*100, 1), 
         'cs_h': round(poisson(0, away_exp)*100, 1), 
         'cs_a': round(poisson(0, home_exp)*100, 1), 
-        # 傳遞合理賠率
-        'fair_1x2_h': round(fair_1x2_h, 2),
-        'fair_1x2_d': round(fair_1x2_d, 2),
-        'fair_1x2_a': round(fair_1x2_a, 2),
-        'fair_o25': round(fair_o25, 2),
-        'fair_u25': round(fair_u25, 2),
-        'fair_o35': round(fair_o35, 2),
-        'fair_u35': round(fair_u35, 2),
-        
+        'h_win': h_win, 'a_win': a_win, # 供 Top Pick 使用
+        'odds_h': round(odds_h, 2), 
+        'odds_d': round(odds_d, 2), 
+        'odds_a': round(odds_a, 2),
         'prob_o15': round(prob_o15*100, 1),
         'prob_o25': round(prob_o25*100, 1),
         'prob_o35': round(prob_o35*100, 1),
         'ou_conf': round(total_conf, 1),
         'h2h_avg_goals': h2h_avg_goals,
+        'fair_1x2_h': round(fair_1x2_h, 2),
+        'fair_1x2_d': round(fair_1x2_d, 2),
+        'fair_1x2_a': round(fair_1x2_a, 2),
+        'fair_o25': round(fair_o25, 2),
+        'fair_u25': round(fair_u25, 2), 
+        'fair_o35': round(fair_o35, 2),
+        'fair_u35': round(fair_u35, 2),
         'live_strat': live_strat
     }
 
@@ -262,7 +313,7 @@ def get_all_standings_with_stats():
             league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
     return standings_map, league_stats
 
-# ================= 預測模型 (V11.0) =================
+# ================= 預測模型 (V12.0) =================
 def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_rate, h2h_avg_goals, league_avg, lg_code):
     lg_h = league_avg.get('avg_home', 1.6)
     lg_a = league_avg.get('avg_away', 1.3)
@@ -368,7 +419,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V11.0 全盤口狙擊版 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V12.0 全能狙擊版 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -408,15 +459,23 @@ def get_real_data(market_value_map):
             )
             
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
-            # 獲取全盤口數據
             adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate, vol, h2h_avg)
+            
+            # [V12] 新增標籤與風險運算
+            smart_tags = analyze_team_tags(h_info, a_info, vol, h2h_avg)
+            risk_level = calculate_risk_level(adv_stats['ou_conf'], vol, h2h_avg)
+            top_pick = identify_top_pick(
+                adv_stats['fair_1x2_h'], adv_stats['fair_1x2_a'], 
+                adv_stats['fair_o25'], adv_stats['fair_u25'], 
+                adv_stats['prob_o25'], adv_stats['h_win'], adv_stats['a_win']
+            )
 
             score_h = match['score']['fullTime']['home']
             score_a = match['score']['fullTime']['away']
             if score_h is None: score_h = ''
             if score_a is None: score_a = ''
 
-            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | O2.5:{adv_stats['fair_o25']} | O3.5:{adv_stats['fair_o35']}")
+            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | {risk_level} | 首選:{top_pick}")
 
             cleaned.append({
                 '時間': time_str, '聯賽': lg_name,
@@ -441,7 +500,6 @@ def get_real_data(market_value_map):
                 '大球率3.5': adv_stats['prob_o35'], 
                 'OU信心': adv_stats['ou_conf'],
                 
-                # 新增的全盤口合理賠率
                 '合理主賠': adv_stats['fair_1x2_h'],
                 '合理和賠': adv_stats['fair_1x2_d'],
                 '合理客賠': adv_stats['fair_1x2_a'],
@@ -450,7 +508,11 @@ def get_real_data(market_value_map):
                 '合理大賠3.5': adv_stats['fair_o35'], 
                 '合理細賠3.5': adv_stats['fair_u35'], 
                 
-                '走地策略': adv_stats['live_strat'] 
+                '走地策略': adv_stats['live_strat'],
+                # 新增欄位
+                '智能標籤': smart_tags,
+                '風險評級': risk_level,
+                '首選推介': top_pick
             })
         return cleaned
     except Exception as e:
@@ -466,14 +528,15 @@ def main():
                 '總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','H2H平均球',
                 '主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測',
                 'BTTS','主零封','客零封','大球率1.5','大球率2.5','大球率3.5','OU信心',
-                '合理主賠','合理和賠','合理客賠','合理大賠2.5','合理細賠2.5','合理大賠3.5','合理細賠3.5','走地策略']
+                '合理主賠','合理和賠','合理客賠','合理大賠2.5','合理細賠2.5','合理大賠3.5','合理細賠3.5',
+                '走地策略','智能標籤','風險評級','首選推介']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try:
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 清空舊資料...")
                 upload_sheet.clear() 
-                print(f"📝 寫入新數據 (V11.0)... 共 {len(df)} 筆")
+                print(f"📝 寫入新數據 (V12.0)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
