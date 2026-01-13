@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V12)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V13)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -34,7 +34,7 @@ st.markdown("""
     @keyframes blinker { 50% { opacity: 0; } }
     .postponed-status { color: #888888 !important; font-style: italic; border: 1px dashed #555; padding: 2px 5px; border-radius: 4px; }
     
-    /* V12 新增樣式 */
+    /* V13 新增樣式 */
     .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .section-title { font-size: 0.8rem; font-weight: bold; color: #ff9800; border-bottom: 1px solid #444; padding-bottom: 2px; margin-bottom: 5px; margin-top: 5px; }
     .odds-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 0.75rem; }
@@ -49,15 +49,16 @@ st.markdown("""
     .goal-val { font-size: 0.9rem; font-weight: bold; color: #fff; }
     .highlight-goal { border: 1px solid #28a745 !important; background: rgba(40, 167, 69, 0.2) !important; box-shadow: 0 0 8px rgba(40,167,69,0.4); }
     
-    /* 標籤與風險 */
+    /* V13 標籤與風險優化 */
     .smart-tag { display: inline-block; background: #444; border-radius: 3px; padding: 1px 5px; font-size: 0.7rem; margin-right: 3px; color: #fff; border: 1px solid #555; }
-    .risk-badge { font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; }
-    .risk-low { background-color: rgba(40, 167, 69, 0.2); color: #28a745; border: 1px solid #28a745; }
-    .risk-med { background-color: rgba(255, 193, 7, 0.2); color: #ffc107; border: 1px solid #ffc107; }
-    .risk-high { background-color: rgba(220, 53, 69, 0.2); color: #dc3545; border: 1px solid #dc3545; }
-    .top-pick-box { background: linear-gradient(45deg, #1e3c72, #2a5298); padding: 8px; border-radius: 5px; text-align: center; margin-bottom: 8px; border: 1px solid #4a90e2; }
-    .top-pick-title { font-size: 0.7rem; color: #ccc; }
-    .top-pick-val { font-size: 1.1rem; font-weight: bold; color: #fff; text-shadow: 0 0 5px #00d2ff; }
+    .risk-badge { font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color:#fff; }
+    .risk-low { background-color: #28a745; border: 1px solid #1e7e34; }
+    .risk-med { background-color: #17a2b8; border: 1px solid #117a8b; }
+    .risk-high { background-color: #dc3545; border: 1px solid #bd2130; } /* 紅色代表博高賠 */
+    
+    .top-pick-box { background: linear-gradient(45deg, #FFD700, #DAA520); padding: 8px; border-radius: 5px; text-align: center; margin-bottom: 8px; border: 1px solid #B8860B; }
+    .top-pick-title { font-size: 0.75rem; color: #333; font-weight:bold; }
+    .top-pick-val { font-size: 1.2rem; font-weight: 900; color: #000; text-shadow: 0 0 1px #fff; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -115,7 +116,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V12)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V13)")
     
     df = load_data()
     
@@ -179,7 +180,7 @@ def main():
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
             
-            # V12 數據
+            # V13 數據
             prob_o15 = float(row.get('大球率1.5', 0))
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_o35 = float(row.get('大球率3.5', 0))
@@ -192,7 +193,7 @@ def main():
             h2h_avg = float(row.get('H2H平均球', 0))
             live_strat = row.get('走地策略', '中性觀望')
             smart_tags = row.get('智能標籤', '')
-            risk_level = row.get('風險評級', '🟡 中風險')
+            risk_level = row.get('風險評級', '值博')
             top_pick = row.get('首選推介', '觀望')
             
             h_rank = row.get('主排名', '-'); a_rank = row.get('客排名', '-')
@@ -213,11 +214,11 @@ def main():
             html_parts = []
             html_parts.append(f"<div class='adv-stats-box'>")
             
-            # 首選推介
-            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🏆 AI 首選推介</div><div class='top-pick-val'>{top_pick}</div></div>")
+            # 首選推介 (V13 重點)
+            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🏆 AI 狙擊首選</div><div class='top-pick-val'>{top_pick}</div></div>")
             
             # 風險與標籤
-            risk_class = "risk-low" if "低" in risk_level else "risk-high" if "高" in risk_level else "risk-med"
+            risk_class = "risk-low" if "極穩" in risk_level else "risk-high" if "搏冷" in risk_level else "risk-med"
             tags_html = "".join([f"<span class='smart-tag'>{t}</span>" for t in smart_tags.split(' ') if t])
             html_parts.append(f"<div style='margin-bottom:8px;'><span class='risk-badge {risk_class}'>{risk_level}</span> {tags_html}</div>")
             
