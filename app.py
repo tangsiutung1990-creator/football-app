@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V14.1)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V14.2)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -55,7 +55,6 @@ st.markdown("""
     .risk-med { background-color: #17a2b8; border: 1px solid #117a8b; }
     .risk-high { background-color: #dc3545; border: 1px solid #bd2130; }
     
-    /* Alpha Pick 特效 */
     .top-pick-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 8px; border: 1px solid #8e44ad; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     .top-pick-title { font-size: 0.75rem; color: #eee; font-weight:bold; letter-spacing: 1px; }
     .top-pick-val { font-size: 1.3rem; font-weight: 900; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.5); margin-top: 2px; }
@@ -116,7 +115,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V14.1)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V14.2)")
     
     df = load_data()
     
@@ -191,6 +190,7 @@ def main():
             
             h2h_avg = float(row.get('H2H平均球', 0))
             live_strat = row.get('走地策略', '中性觀望')
+            corner_trend = row.get('角球傾向', '中')
             smart_tags = row.get('智能標籤', '')
             risk_level = row.get('風險評級', '值博')
             top_pick = row.get('首選推介', '數據分析中')
@@ -213,10 +213,8 @@ def main():
             html_parts = []
             html_parts.append(f"<div class='adv-stats-box'>")
             
-            # 首選推介 (V14 Alpha)
             html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha 獵殺首選</div><div class='top-pick-val'>{top_pick}</div></div>")
             
-            # 風險與標籤
             risk_class = "risk-low" if "極穩" in risk_level else "risk-high" if "高險" in risk_level else "risk-med"
             tags_html = "".join([f"<span class='smart-tag'>{t}</span>" for t in smart_tags.split(' ') if t])
             html_parts.append(f"<div style='margin-bottom:8px;'><span class='risk-badge {risk_class}'>{risk_level}</span> {tags_html}</div>")
@@ -226,7 +224,6 @@ def main():
             html_parts.append(f"<span>🎲 波膽: <span style='color:#00ff00'>{correct_score}</span></span>")
             html_parts.append(f"</div>")
             
-            # 合理價位
             html_parts.append(f"<div class='section-title'>💰 合理價位 (1x2)</div>")
             html_parts.append(f"<div class='odds-row'><span>主: <span class='odds-val'>{fmt_odd(fair_h)}</span></span> <span>和: <span class='odds-val'>{fmt_odd(fair_d)}</span></span> <span>客: <span class='odds-val'>{fmt_odd(fair_a)}</span></span></div>")
             
@@ -240,8 +237,8 @@ def main():
             html_parts.append(f"<div class='goal-item {c35}'><div class='goal-title'>3.5大 ({prob_o35:.0f}%)</div><div class='goal-val-high'>{fmt_odd(fair_o35)}</div></div>")
             html_parts.append(f"</div>")
             
-            # 策略
-            html_parts.append(f"<div class='strategy-text'>{live_strat}</div>")
+            # 策略 (含角球)
+            html_parts.append(f"<div class='strategy-text'>策略: {live_strat} | 角球: {corner_trend}</div>")
             
             html_parts.append(f"</div>")
             
