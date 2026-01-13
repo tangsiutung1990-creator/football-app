@@ -14,7 +14,7 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [V10.0] 市場入球通膨係數 (維持高水位)
+# [V10.1] 市場入球通膨係數
 MARKET_GOAL_INFLATION = 1.28 
 
 REQUEST_COUNT = 0
@@ -95,7 +95,7 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= [數學核心] V10.0 合理賠率與策略 =================
+# ================= [數學核心] V10.1 修復版 =================
 def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
@@ -118,18 +118,28 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     p_a_score = 1 - poisson(0, away_exp)
     btts = p_h_score * p_a_score
     
-    # 賠率倒數
     odds_h = 1/h_win if h_win > 0.01 else 99.0
     odds_d = 1/draw if draw > 0.01 else 99.0
     odds_a = 1/a_win if a_win > 0.01 else 99.0
 
-    # ================= [V10.0] 合理賠率計算 (Fair Odds) =================
-    # 這是真正的「不估」，用數學告訴你底價是多少
-    # 如果 prob_o25 是 0.6 (60%)，合理賠率就是 1/0.6 = 1.66
-    fair_odd_o25 = 1 / prob_o25 if prob_o25 > 0 else 99.0
-    fair_odd_u25 = 1 / (1 - prob_o25) if (1-prob_o25) > 0 else 99.0
+    # ================= [V10.1] 合理賠率 (修復 99.0 問題) =================
+    # 這裡加入 max(0.01) 保護，防止機率為 0
+    safe_prob_o25 = max(prob_o25, 0.01)
+    safe_prob_u25 = max(1 - prob_o25, 0.01)
+
+    # 基礎倒數賠率
+    raw_fair_o25 = 1 / safe_prob_o25
+    raw_fair_u25 = 1 / safe_prob_u25
     
-    # 信心指數計算 (V9.0 邏輯保留)
+    # 加上 5% 安全邊際 (Utility: 讓你買得更安全)
+    fair_odd_o25 = raw_fair_o25 * 1.05 
+    fair_odd_u25 = raw_fair_u25 * 1.05
+    
+    # 限制最大顯示值，避免 99.0 或無限大
+    fair_odd_o25 = min(fair_odd_o25, 50.0)
+    fair_odd_u25 = min(fair_odd_u25, 50.0)
+
+    # 信心指數
     math_conf = abs(prob_o25 - 0.5) * 2 * 40
     h2h_conf = 0
     if h2h_avg_goals != -1:
@@ -146,11 +156,11 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     total_conf = math_conf + h2h_conf + vol_conf
     total_conf = max(min(total_conf, 99), 25) 
     
-    # ================= [V10.0] 走地策略建議 =================
+    # 走地策略
     live_strat = "中性觀望"
-    if match_vol > 3.1: live_strat = "🔥 適合追大/絕殺 (後段入球率高)"
-    elif match_vol < 2.3: live_strat = "🛡️ 適合半場細/角球 (入球難產)"
-    elif home_exp > away_exp * 2: live_strat = "🏰 主隊領先後控場 (入球早)"
+    if match_vol > 3.1: live_strat = "🔥 適合追大/絕殺"
+    elif match_vol < 2.3: live_strat = "🛡️ 適合半場細/角球"
+    elif home_exp > away_exp * 2: live_strat = "🏰 主隊領先後控場"
     
     return {
         'btts': round(btts*100, 1), 
@@ -164,9 +174,9 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
         'prob_o35': round(prob_o35*100, 1),
         'ou_conf': round(total_conf, 1),
         'h2h_avg_goals': h2h_avg_goals,
-        'fair_odd_o25': round(fair_odd_o25, 2), # 新增
-        'fair_odd_u25': round(fair_odd_u25, 2), # 新增
-        'live_strat': live_strat # 新增
+        'fair_odd_o25': round(fair_odd_o25, 2),
+        'fair_odd_u25': round(fair_odd_u25, 2), 
+        'live_strat': live_strat
     }
 
 def calculate_correct_score_probs(home_exp, away_exp):
@@ -246,7 +256,7 @@ def get_all_standings_with_stats():
             league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
     return standings_map, league_stats
 
-# ================= 預測模型 (V10.0) =================
+# ================= 預測模型 (V10.1) =================
 def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_rate, h2h_avg_goals, league_avg, lg_code):
     lg_h = league_avg.get('avg_home', 1.6)
     lg_a = league_avg.get('avg_away', 1.3)
@@ -352,7 +362,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V10.0 AI 操盤手 (Fair Odds) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V10.1 修復版 (Smart Odds) 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -399,7 +409,7 @@ def get_real_data(market_value_map):
             if score_h is None: score_h = ''
             if score_a is None: score_a = ''
 
-            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | O2.5 Odds:{adv_stats['fair_odd_o25']}")
+            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | 合理大賠: {adv_stats['fair_odd_o25']}")
 
             cleaned.append({
                 '時間': time_str, '聯賽': lg_name,
@@ -423,9 +433,9 @@ def get_real_data(market_value_map):
                 '大球率2.5': adv_stats['prob_o25'],
                 '大球率3.5': adv_stats['prob_o35'], 
                 'OU信心': adv_stats['ou_conf'],
-                '合理大賠': adv_stats['fair_odd_o25'], # 新增
-                '合理細賠': adv_stats['fair_odd_u25'], # 新增
-                '走地策略': adv_stats['live_strat'] # 新增
+                '合理大賠': adv_stats['fair_odd_o25'], 
+                '合理細賠': adv_stats['fair_odd_u25'], 
+                '走地策略': adv_stats['live_strat'] 
             })
         return cleaned
     except Exception as e:
@@ -437,6 +447,7 @@ def main():
     real_data = get_real_data(market_value_map)
     if real_data:
         df = pd.DataFrame(real_data)
+        # 確保列名順序與正確性
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測',
                 '總球數','主攻(H)','客攻(A)','狀態','主分','客分','H2H','大小球統計','H2H平均球',
                 '主隊身價','客隊身價','賽事風格','主動量','客動量','波膽預測',
@@ -448,7 +459,8 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 清空舊資料...")
                 upload_sheet.clear() 
-                print(f"📝 寫入新數據 (V10.0)... 共 {len(df)} 筆")
+                print(f"📝 寫入新數據 (V10.1)... 共 {len(df)} 筆")
+                # 強制更新第一行標頭，解決欄位錯位問題
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
