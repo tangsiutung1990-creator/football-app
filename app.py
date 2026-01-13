@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V9)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V10)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -41,19 +41,21 @@ st.markdown("""
     .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
     .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
     
-    /* V9 新增樣式 */
+    /* V10 新增樣式: 合理賠率與策略 */
     .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .odds-tag { background-color: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #555; margin-right: 4px; color: #ddd; }
+    .fair-odds-tag { background-color: #2c3e50; padding: 2px 8px; border-radius: 4px; border: 1px solid #34495e; color: #fff; font-weight: bold; display: inline-block; margin-right:5px;}
     .confidence-bar-bg { background-color: #444; height: 6px; border-radius: 3px; margin-top: 4px; width: 100%; }
     .confidence-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #ffc107, #28a745); }
     .analysis-text { color: #e0e0e0; margin-top: 5px; line-height: 1.4; font-size: 0.8rem; }
+    .strategy-text { color: #ff9800; font-weight: bold; margin-top: 4px; font-size: 0.75rem; border: 1px dashed #555; padding: 4px; border-radius: 4px; }
     
     .goal-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin: 8px 0; text-align: center; }
     .goal-item { background: #333; padding: 4px; border-radius: 4px; border: 1px solid #444; }
     .goal-title { font-size: 0.7rem; color: #aaa; }
     .goal-val { font-size: 0.9rem; font-weight: bold; color: #fff; }
-    .highlight-goal { border: 1px solid #28a745 !important; background: rgba(40, 167, 69, 0.2) !important; box-shadow: 0 0 5px #28a745; }
-    .star-rating { color: #ffc107; font-weight: bold; margin-left: 5px; }
+    .highlight-goal { border: 1px solid #28a745 !important; background: rgba(40, 167, 69, 0.2) !important; box-shadow: 0 0 8px rgba(40,167,69,0.4); }
+    .star-rating { color: #ffc107; font-weight: bold; margin-left: 5px; font-size: 0.9rem; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -111,7 +113,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V9)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V10)")
     
     df = load_data()
     
@@ -137,7 +139,7 @@ def main():
         return
 
     # 確保數值型別正確
-    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心', 'H2H平均球']
+    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心', 'H2H平均球', '合理大賠', '合理細賠']
     for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -175,14 +177,16 @@ def main():
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
             
-            # V9 數據
+            # V10 數據
             prob_o15 = float(row.get('大球率1.5', 0))
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_o35 = float(row.get('大球率3.5', 0))
+            fair_o25 = float(row.get('合理大賠', 99))
             
             btts_prob = float(row.get('BTTS', 0))
             ou_conf = float(row.get('OU信心', 50))
             h2h_avg = float(row.get('H2H平均球', 0))
+            live_strat = row.get('走地策略', '中性觀望')
             
             cs_h_prob = float(row.get('主零封', 0))
             cs_a_prob = float(row.get('客零封', 0))
@@ -205,32 +209,31 @@ def main():
             correct_score = row.get('波膽預測', 'N/A')
             vol = float(row.get('賽事風格', 0))
 
-            # === AI 智能分析邏輯 (V9) ===
+            # === AI 智能分析邏輯 (V10) ===
             analysis_notes = []
             
-            # 星級評分
+            # 值博率星級 (Value Rating)
             star_rating = ""
             if ou_conf >= 80 and (prob_o25 > 65 or prob_o25 < 35): star_rating = "⭐⭐⭐⭐⭐"
-            elif ou_conf >= 60: star_rating = "⭐⭐⭐⭐"
+            elif ou_conf >= 60 and (prob_o25 > 60 or prob_o25 < 40): star_rating = "⭐⭐⭐⭐"
             elif ou_conf >= 50: star_rating = "⭐⭐⭐"
+            elif ou_conf >= 30: star_rating = "⭐⭐"
             else: star_rating = "⭐"
             
-            # 1. 盤口智能建議
+            # 1. 盤口智能建議 & 合理賠率
             if prob_o25 > 65:
                 if prob_o35 > 50:
-                    analysis_notes.append(f"🔥 <b>入球盛宴</b>: [3.5大] 機率極高，歷史平均 {h2h_avg} 球。")
+                    analysis_notes.append(f"🔥 <b>入球盛宴</b>: 機率極高。若莊家開大於 {fair_o25}，建議 [重注]。")
                 else:
-                    analysis_notes.append(f"✅ <b>大球格局</b>: 穩健首選 [2.5大]，值博率高。")
+                    analysis_notes.append(f"✅ <b>大球格局</b>: AI合理價 {fair_o25}。高於此價位即有值博率。")
             elif prob_o25 < 35:
-                analysis_notes.append(f"🛡️ <b>防守格局</b>: 預計入球極少，建議 [細球] 或半場和。")
+                analysis_notes.append(f"🛡️ <b>防守格局</b>: 預計悶戰。合理細賠 {1/(1-prob_o25/100):.2f}。")
             else:
-                 analysis_notes.append(f"⚖️ <b>中性格局</b>: 建議觀望走地，待水位調整。")
+                 analysis_notes.append(f"⚖️ <b>中性格局</b>: 無明顯傾向，建議觀望走地。")
             
             # 2. 信心指數解讀
             if ou_conf < 40:
                 analysis_notes.append(f"⚠️ <b>數據衝突</b>: 風格與往績不符，信心不足，避戰為上。")
-            elif ou_conf > 85:
-                analysis_notes.append(f"🌟 <b>AI 鐵膽</b>: 數學、往績、風格完全一致 (信心 {ou_conf:.0f}%)。")
             
             # 3. H2H 特別提示
             if h2h_avg > 3.2: analysis_notes.append(f"⚔️ <b>對攻慣性</b>: 雙方見面即開火，對賽平均 {h2h_avg} 球。")
@@ -246,7 +249,7 @@ def main():
             html_parts.append(f"<span>🎲 波膽: <span style='color:#00ff00'>{correct_score}</span></span>")
             html_parts.append(f"</div>")
             
-            # [V9] 大小球矩陣
+            # [V10] 大小球矩陣
             c15 = "highlight-goal" if prob_o15 > 75 else ""
             c25 = "highlight-goal" if prob_o25 > 60 else ""
             c35 = "highlight-goal" if prob_o35 > 45 else "" 
@@ -255,6 +258,11 @@ def main():
             html_parts.append(f"<div class='goal-item {c15}'><div class='goal-title'>1.5 球</div><div class='goal-val'>{prob_o15}%</div></div>")
             html_parts.append(f"<div class='goal-item {c25}'><div class='goal-title'>2.5 球</div><div class='goal-val'>{prob_o25}%</div></div>")
             html_parts.append(f"<div class='goal-item {c35}'><div class='goal-title'>3.5 球</div><div class='goal-val'>{prob_o35}%</div></div>")
+            html_parts.append(f"</div>")
+            
+            # 合理賠率
+            html_parts.append(f"<div style='margin-bottom:6px;'>")
+            html_parts.append(f"<span class='fair-odds-tag'>AI合理大賠: {fair_o25}</span>")
             html_parts.append(f"</div>")
             
             # 信心條與星級
@@ -267,7 +275,9 @@ def main():
             html_parts.append(f"<div class='confidence-bar-bg'><div class='confidence-bar-fill' style='width:{min(ou_conf, 100)}%; background:{conf_color};'></div></div>")
             html_parts.append(f"</div>")
             
-            html_parts.append(f"<div>⚖️ <span class='odds-tag'>主 {odds_h}</span> <span class='odds-tag'>和 {odds_d}</span> <span class='odds-tag'>客 {odds_a}</span></div>")
+            # 走地策略
+            html_parts.append(f"<div class='strategy-text'>{live_strat}</div>")
+            
             html_parts.append(f"<hr style='margin:6px 0; border-top: 1px solid #444;'>")
             html_parts.append(f"<div class='analysis-text'>{combined_analysis}</div>")
             html_parts.append(f"</div>")
