@@ -14,19 +14,30 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [全局變數] API 請求計數器
+# [V8.0 全局參數] 市場入球通膨係數 (解決預測過於保守的問題)
+# 強制將模型預測的入球數拉升，以匹配 3.5 球的盤口
+MARKET_GOAL_INFLATION = 1.28 
+
+# 請求計數器
 REQUEST_COUNT = 0
 
 # 聯賽列表
 COMPETITIONS = ['PL','PD','CL','SA','BL1','FL1','DED','PPL','ELC','BSA','CLI','WC','EC']
 
-# [V7.0] 聯賽風格係數
+# [V8.0] 聯賽風格係數 (進一步區分大球聯賽)
 LEAGUE_GOAL_FACTOR = {
-    'BL1': 1.38, 'DED': 1.40, 'PL': 1.18, 'PD': 1.02,
-    'SA': 1.10, 'FL1': 1.05, 'PPL': 1.15, 'BSA': 1.00, 'ELC': 1.10
+    'BL1': 1.45, # 德甲 (大球)
+    'DED': 1.50, # 荷甲 (極大球)
+    'PL': 1.25,  # 英超
+    'PD': 1.05,  # 西甲 (稍細)
+    'SA': 1.15,  # 意甲 (近年轉大)
+    'FL1': 1.10, # 法甲
+    'PPL': 1.20, # 葡超
+    'BSA': 1.05, # 巴甲
+    'ELC': 1.15  # 英冠
 }
 
-# 絕對豪門名單
+# 豪門名單 (進攻加成)
 TITAN_TEAMS = [
     'Man City', 'Liverpool', 'Arsenal', 'Real Madrid', 'Barça', 'Barcelona', 
     'Atlético', 'Bayern', 'Leverkusen', 'Dortmund', 'PSG', 'Inter', 'Juventus', 
@@ -93,16 +104,14 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= [數學核心] V7.0 進階機率矩陣 =================
-def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate):
+# ================= [數學核心] V8.0 共識信心算法 =================
+def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
     h_win=0; draw=0; a_win=0
-    prob_o15 = 0
-    prob_o25 = 0
-    prob_o35 = 0
+    prob_o15 = 0; prob_o25 = 0; prob_o35 = 0
     
-    # 擴大計算範圍以提高精度
+    # 計算範圍擴大到 12 球以涵蓋極端大球
     for h in range(12):
         for a in range(12):
             p = poisson(h, home_exp) * poisson(a, away_exp)
@@ -110,10 +119,10 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate):
             elif h == a: draw += p
             else: a_win += p
             
-            total_goals = h + a
-            if total_goals > 1.5: prob_o15 += p
-            if total_goals > 2.5: prob_o25 += p
-            if total_goals > 3.5: prob_o35 += p
+            total = h + a
+            if total > 1.5: prob_o15 += p
+            if total > 2.5: prob_o25 += p
+            if total > 3.5: prob_o35 += p
             
     p_h_score = 1 - poisson(0, home_exp)
     p_a_score = 1 - poisson(0, away_exp)
@@ -123,26 +132,30 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate):
     odds_d = 1/draw if draw > 0.01 else 99.0
     odds_a = 1/a_win if a_win > 0.01 else 99.0
 
-    # ================= [V7.0] 信心指數共識算法 =================
-    # 邏輯：檢查數學機率與歷史數據是否衝突
-    # 1. 基礎信心：機率越偏離 50% 越高
-    base_conf = abs(prob_o25 - 0.5) * 200 # Scale 0-100
+    # ================= [V8.0] 三方共識信心指數 (Tri-Factor Consensus) =================
+    # 因素 1: 數學機率強弱 (0-40分)
+    # 越偏離 0.5 (即極大球或極細球)，信心越高
+    math_conf = abs(prob_o25 - 0.5) * 2 * 40
     
-    # 2. H2H 共識修正
-    consensus_bonus = 0
+    # 因素 2: H2H 歷史印證 (0-30分)
+    h2h_conf = 0
     if h2h_o25_rate != -1:
-        # 如果數學預測大球 (>55%) 且 H2H 大球率高 (>60%) -> 信心大增
-        if prob_o25 > 0.55 and h2h_o25_rate > 0.6:
-            consensus_bonus = 20
-        # 如果數學預測細球 (<45%) 且 H2H 大球率低 (<40%) -> 信心大增
-        elif prob_o25 < 0.45 and h2h_o25_rate < 0.4:
-            consensus_bonus = 20
-        # 如果衝突 (例如數學說大球，H2H 全部細球) -> 信心大減
-        elif (prob_o25 > 0.6 and h2h_o25_rate < 0.3) or (prob_o25 < 0.4 and h2h_o25_rate > 0.7):
-            consensus_bonus = -25
-
-    final_conf = base_conf + consensus_bonus
-    final_conf = max(min(final_conf, 99), 10) # 限制在 10-99 之間
+        if (prob_o25 > 0.5 and h2h_o25_rate > 0.6): h2h_conf = 30 # 方向一致(大)
+        elif (prob_o25 < 0.5 and h2h_o25_rate < 0.4): h2h_conf = 30 # 方向一致(細)
+        elif (prob_o25 > 0.6 and h2h_o25_rate < 0.3): h2h_conf = -20 # 衝突扣分
+        elif (prob_o25 < 0.4 and h2h_o25_rate > 0.7): h2h_conf = -20 # 衝突扣分
+    else:
+        h2h_conf = 10 # 無歷史數據，給個中間值
+        
+    # 因素 3: 風格波動性 (Volatility) (0-30分)
+    # 如果預測大球且雙方都是神經刀(Vol > 3.0)，信心大增
+    vol_conf = 0
+    if prob_o25 > 0.5 and match_vol > 3.0: vol_conf = 30
+    elif prob_o25 < 0.5 and match_vol < 2.2: vol_conf = 30
+    elif prob_o25 > 0.5 and match_vol < 2.0: vol_conf = -20 # 數據說大但球隊死守
+    
+    total_conf = math_conf + h2h_conf + vol_conf
+    total_conf = max(min(total_conf, 99), 20) # 鎖定在 20-99 之間
     
     return {
         'btts': round(btts*100, 1), 
@@ -151,10 +164,10 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate):
         'odds_h': round(odds_h, 2), 
         'odds_d': round(odds_d, 2), 
         'odds_a': round(odds_a, 2),
-        'prob_o15': round(prob_o15*100, 1), # 新增
+        'prob_o15': round(prob_o15*100, 1),
         'prob_o25': round(prob_o25*100, 1),
-        'prob_o35': round(prob_o35*100, 1), # 新增
-        'ou_conf': round(final_conf, 1)
+        'prob_o35': round(prob_o35*100, 1),
+        'ou_conf': round(total_conf, 1)
     }
 
 def calculate_correct_score_probs(home_exp, away_exp):
@@ -206,6 +219,7 @@ def get_all_standings_with_stats():
                     points = entry['points']
                     gf = entry['goalsFor']; ga = entry['goalsAgainst']
                     
+                    # 基礎平均值計算
                     avg_gf = gf/played if played>0 else 1.35
                     avg_ga = ga/played if played>0 else 1.35
 
@@ -213,6 +227,7 @@ def get_all_standings_with_stats():
                         standings_map[tid]['rank'] = entry['position']
                         standings_map[tid]['form'] = entry.get('form', 'N/A')
                         standings_map[tid]['season_ppg'] = points/played if played>0 else 1.3
+                        # [重要] 波動性: (入球+失球)/場次
                         if played > 0: 
                             standings_map[tid]['volatility'] = (gf+ga)/played
                     elif t_type == 'HOME':
@@ -226,19 +241,22 @@ def get_all_standings_with_stats():
                         total_a += gf
             
             if total_m > 10:
-                avg_h = max(total_h/total_m, 1.55) 
-                avg_a = max(total_a/total_m, 1.25)
+                # 這裡也要加上基礎通膨，避免基數過低
+                avg_h = max(total_h/total_m, 1.55) * 1.05 
+                avg_a = max(total_a/total_m, 1.25) * 1.05
             else:
                 avg_h = 1.6; avg_a = 1.3
             
             league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
     return standings_map, league_stats
 
-# ================= 預測模型 (V7.0) =================
+# ================= 預測模型 (V8.0) =================
 def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_rate, league_avg, lg_code):
     lg_h = league_avg.get('avg_home', 1.6)
     lg_a = league_avg.get('avg_away', 1.3)
-    factor = LEAGUE_GOAL_FACTOR.get(lg_code, 1.1)
+    
+    # 1. 聯賽風格 + 市場通膨 (關鍵修正)
+    factor = LEAGUE_GOAL_FACTOR.get(lg_code, 1.1) * MARKET_GOAL_INFLATION
     
     h_att_r = (h_info['home_att'] / lg_h) 
     a_def_r = (a_info['away_def'] / lg_h)
@@ -251,7 +269,7 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
     raw_h = h_strength * lg_h * factor
     raw_a = a_strength * lg_a * factor
     
-    # 身價與豪門邏輯
+    # 2. 身價與豪門邏輯
     h_v = parse_market_value(h_val_str); a_v = parse_market_value(a_val_str)
     is_titan = False
     for titan in TITAN_TEAMS:
@@ -265,23 +283,26 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
         raw_h *= (1 + val_factor); raw_a *= (1 - val_factor)
 
     if is_titan:
-        if raw_h < 1.6: raw_h = max(raw_h * 1.4, 1.85)
+        if raw_h < 1.7: raw_h = max(raw_h * 1.4, 1.95) # 豪門保底提升
         else: raw_h *= 1.15
 
-    # [V7.0] 波動性與大小球修正
+    # 3. [V8.0] 波動性暴力修正
+    # 如果兩隊平常都刷大球 (e.g. 3.2球/場)，預測值也要跟上
     h_vol = h_info.get('volatility', 2.5)
     a_vol = a_info.get('volatility', 2.5)
     match_vol = (h_vol + a_vol) / 2
     
-    if match_vol > 3.2: 
-        raw_h *= 1.15; raw_a *= 1.15 # 鼓勵大球
-    elif match_vol < 2.3: 
-        raw_h *= 0.85; raw_a *= 0.85 # 鼓勵細球
+    if match_vol > 3.4: 
+        raw_h *= 1.25; raw_a *= 1.25 # 極度開放
+    elif match_vol > 3.0: 
+        raw_h *= 1.15; raw_a *= 1.15 # 開放
+    elif match_vol < 2.2: 
+        raw_h *= 0.85; raw_a *= 0.85 # 死守
 
-    # [V7.0] H2H 歷史修正
+    # 4. H2H 修正
     if h2h_o25_rate != -1:
-        if h2h_o25_rate >= 0.7: raw_h *= 1.12; raw_a *= 1.12
-        elif h2h_o25_rate <= 0.3: raw_h *= 0.88; raw_a *= 0.88
+        if h2h_o25_rate >= 0.7: raw_h *= 1.15; raw_a *= 1.15
+        elif h2h_o25_rate <= 0.3: raw_h *= 0.85; raw_a *= 0.85
 
     h_mom = calculate_weighted_form_score(h_info['form']) - h_info['season_ppg']
     a_mom = calculate_weighted_form_score(a_info['form']) - a_info['season_ppg']
@@ -340,7 +361,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V7.0 多盤口矩陣版 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V8.0 市場搏殺版 (Goal Inflation) 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -380,15 +401,15 @@ def get_real_data(market_value_map):
             )
             
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
-            # 獲取多盤口機率
-            adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate)
+            # 傳入 vol (波動性) 進入機率計算，作為信心參數
+            adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate, vol)
 
             score_h = match['score']['fullTime']['home']
             score_a = match['score']['fullTime']['away']
             if score_h is None: score_h = ''
             if score_a is None: score_a = ''
 
-            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | O2.5:{adv_stats['prob_o25']}% | O3.5:{adv_stats['prob_o35']}%")
+            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | O2.5:{adv_stats['prob_o25']}% | Conf:{adv_stats['ou_conf']}")
 
             cleaned.append({
                 '時間': time_str, '聯賽': lg_name,
@@ -407,9 +428,9 @@ def get_real_data(market_value_map):
                 'BTTS': adv_stats['btts'],
                 '主零封': adv_stats['cs_h'], '客零封': adv_stats['cs_a'],
                 '主賠': adv_stats['odds_h'], '和賠': adv_stats['odds_d'], '客賠': adv_stats['odds_a'],
-                '大球率1.5': adv_stats['prob_o15'], # 新增
+                '大球率1.5': adv_stats['prob_o15'], 
                 '大球率2.5': adv_stats['prob_o25'],
-                '大球率3.5': adv_stats['prob_o35'], # 新增
+                '大球率3.5': adv_stats['prob_o35'], 
                 'OU信心': adv_stats['ou_conf']
             })
         return cleaned
@@ -433,7 +454,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 清空舊資料...")
                 upload_sheet.clear() 
-                print(f"📝 寫入新數據 (V7.0)... 共 {len(df)} 筆")
+                print(f"📝 寫入新數據 (V8.0)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
