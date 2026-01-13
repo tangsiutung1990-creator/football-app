@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro Black)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V6)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -41,10 +41,14 @@ st.markdown("""
     .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
     .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
     
-    /* 新增樣式 */
-    .adv-stats-box { background-color: #25262b; padding: 8px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
+    /* V6 新增樣式 */
+    .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .odds-tag { background-color: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #555; margin-right: 4px; color: #ddd; }
-    .value-bet { color: #28a745; font-weight: bold; }
+    .ou-tag-high { color: #00ff00; font-weight: bold; border: 1px solid #00ff00; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; }
+    .ou-tag-low { color: #ff4b4b; font-weight: bold; border: 1px solid #ff4b4b; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; }
+    .confidence-bar-bg { background-color: #444; height: 6px; border-radius: 3px; margin-top: 4px; width: 100%; }
+    .confidence-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #ffc107, #28a745); }
+    .analysis-text { color: #e0e0e0; margin-top: 5px; line-height: 1.4; font-size: 0.8rem; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -58,15 +62,6 @@ def get_form_html(form_str):
         elif char.upper() == 'D': html += f'<span class="form-circle form-d">D</span>'
         elif char.upper() == 'L': html += f'<span class="form-circle form-l">L</span>'
     return html if html else "<span style='color:#555; font-size:0.7rem;'>---</span>"
-
-def calculate_form_points(form_str):
-    if pd.isna(form_str): return 0
-    points = 0; count = 0
-    for char in str(form_str).strip()[-5:]:
-        if char.upper() == 'W': points += 3
-        elif char.upper() == 'D': points += 1
-        count += 1
-    return points / count if count > 0 else 0
 
 def format_market_value(val):
     try:
@@ -111,7 +106,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro Black)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V6)")
     
     df = load_data()
     
@@ -137,7 +132,7 @@ def main():
         return
 
     # 確保數值型別正確
-    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封']
+    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率', 'OU信心']
     for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -178,6 +173,9 @@ def main():
             
             # 讀取進階數據
             btts_prob = float(row.get('BTTS', 0))
+            prob_o25 = float(row.get('大球率', probs['over'])) # 優先用新版數據
+            ou_conf = float(row.get('OU信心', 50))
+            
             cs_h_prob = float(row.get('主零封', 0))
             cs_a_prob = float(row.get('客零封', 0))
             odds_h = row.get('主賠', '-'); odds_d = row.get('和賠', '-'); odds_a = row.get('客賠', '-')
@@ -197,43 +195,71 @@ def main():
             else: status_icon = '⚪'; status_class = 'sub-text'
             
             correct_score = row.get('波膽預測', 'N/A')
+            vol = float(row.get('賽事風格', 0))
 
-            # 智能分析邏輯
+            # === AI 智能分析邏輯 (V6) ===
             analysis_notes = []
             
-            # BTTS 分析
-            if btts_prob > 60: analysis_notes.append(f"🔥 <b>互攻局</b>: 雙方入球機率高達 {btts_prob}%，可關注大球。")
+            # 1. 大小球評語
+            if prob_o25 > 65:
+                tag = "🔥 <b>極大球訊號</b>"
+                reason = "雙方攻防節奏快，進球期望值極高。"
+                if vol > 3.2: reason += " (歷史數據顯示經常刷出大比分)"
+                analysis_notes.append(f"{tag}: {reason}")
+            elif prob_o25 < 35:
+                tag = "🛡️ <b>悶戰警報</b>"
+                reason = "預計為防守大戰，入球機會不多。"
+                analysis_notes.append(f"{tag}: {reason}")
             
-            # 防守分析
-            if cs_h_prob > 35: analysis_notes.append(f"🛡️ <b>主隊防守強</b>: 零封對手機率 {cs_h_prob}%，客隊得分難度大。")
-            if cs_a_prob > 35: analysis_notes.append(f"🛡️ <b>客隊防守強</b>: 零封對手機率 {cs_a_prob}%，主隊得分難度大。")
+            # 2. BTTS 評語
+            if btts_prob > 62: analysis_notes.append(f"🤝 <b>互攻局</b>: BTTS 機率 {btts_prob}%，雙方皆有破門能力。")
             
-            # 身價/動量
+            # 3. 強弱/冷門評語
             try:
                 cv_h = float(str(row.get('主隊身價','')).replace('€','').replace('M','').replace(',',''))
                 cv_a = float(str(row.get('客隊身價','')).replace('€','').replace('M','').replace(',',''))
-                if cv_h > cv_a * 2.5: analysis_notes.append(f"💰 <b>實力懸殊</b>: 主隊身價是客隊的 {cv_h/cv_a:.1f} 倍。")
+                if cv_h > cv_a * 4: analysis_notes.append(f"💰 <b>實力懸殊</b>: 主隊身價碾壓，需防客隊死守少失球。")
             except: pass
-            
-            vol = float(row.get('賽事風格', 0))
-            style_tag = ""
-            if vol > 3.0: style_tag = "<br><span style='color:#ffc107; font-weight:bold;'>⚡ 風格: 大開大合 (波動大)</span>"
-            
-            rec_text = '推薦主勝' if probs['home_win'] > 45 else '推薦客勝' if probs['away_win'] > 45 else '勢均力敵'
-            rec_color = '#28a745' if '主勝' in rec_text else '#dc3545' if '客勝' in rec_text else '#ffc107'
 
-            combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "數據顯示雙方勢均力敵，建議參考賠率變化。"
+            if cs_h_prob > 40: analysis_notes.append("🚫 <b>主隊防守嚴密</b>: 高機率零封對手。")
+            
+            combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "數據顯示雙方勢均力敵，建議參考即時賠率變化。"
 
             # HTML 構建
             html_parts = []
             html_parts.append(f"<div class='adv-stats-box'>")
-            html_parts.append(f"🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b>")
-            html_parts.append(f"<br>🎲 首選波膽: <span style='color:#00ff00'>{correct_score}</span>") 
-            html_parts.append(f"<hr style='margin:4px 0; border-top:1px dashed #444;'>")
-            html_parts.append(f"📊 <b>進階數據:</b> BTTS {btts_prob}% | 主零封 {cs_h_prob}% | 客零封 {cs_a_prob}%")
-            html_parts.append(f"<br>⚖️ <b>AI 合理賠率:</b> <span class='odds-tag'>主 {odds_h}</span> <span class='odds-tag'>和 {odds_d}</span> <span class='odds-tag'>客 {odds_a}</span>")
-            html_parts.append(style_tag)
-            html_parts.append(f"<hr style='margin:4px 0; border-top: 1px solid #444;'><span style='color:#ffa500;'>{combined_analysis}</span></div>")
+            
+            # 預期入球與波膽
+            html_parts.append(f"<div style='display:flex; justify-content:space-between;'>")
+            html_parts.append(f"<span>🎯 預期入球: <b style='color:#fff'>{exp_h} : {exp_a}</b></span>")
+            html_parts.append(f"<span>🎲 首選波膽: <span style='color:#00ff00'>{correct_score}</span></span>")
+            html_parts.append(f"</div>")
+            
+            html_parts.append(f"<hr style='margin:6px 0; border-top:1px dashed #444;'>")
+            
+            # 大小球信心條
+            conf_color = "#28a745" if prob_o25 > 50 else "#dc3545" # 綠色大球 紅色細球
+            conf_text = "大球傾向" if prob_o25 > 50 else "細球傾向"
+            html_parts.append(f"<div style='margin-bottom:6px;'>")
+            html_parts.append(f"<div style='display:flex; justify-content:space-between; font-size:0.75rem; color:#ccc;'>")
+            html_parts.append(f"<span>📊 大小球機率 (>2.5): <b style='color:{conf_color}'>{prob_o25}%</b></span>")
+            html_parts.append(f"<span>AI 信心: {ou_conf:.0f}%</span>")
+            html_parts.append(f"</div>")
+            html_parts.append(f"<div class='confidence-bar-bg'><div class='confidence-bar-fill' style='width:{min(ou_conf, 100)}%; background:{conf_color};'></div></div>")
+            html_parts.append(f"</div>")
+
+            # 進階數據 & 賠率
+            html_parts.append(f"<div style='font-size:0.7rem; color:#aaa; margin-bottom:4px;'>")
+            html_parts.append(f"BTTS: {btts_prob}% | 主零封: {cs_h_prob}% | 客零封: {cs_a_prob}%")
+            html_parts.append(f"</div>")
+            
+            html_parts.append(f"<div>⚖️ <span class='odds-tag'>主 {odds_h}</span> <span class='odds-tag'>和 {odds_d}</span> <span class='odds-tag'>客 {odds_a}</span></div>")
+            
+            # 分析結論區
+            html_parts.append(f"<hr style='margin:6px 0; border-top: 1px solid #444;'>")
+            html_parts.append(f"<div class='analysis-text'>{combined_analysis}</div>")
+            html_parts.append(f"</div>")
+            
             final_html = "".join(html_parts)
 
             with st.container():
@@ -268,9 +294,7 @@ def main():
                     st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
                     st.markdown(f"<div class='h2h-text'>⚔️ {row.get('H2H','N/A')}</div>", unsafe_allow_html=True)
                     if row.get('大小球統計') != 'N/A': st.markdown(f"<div class='ou-stats-text'>📊 {row['大小球統計']}</div>", unsafe_allow_html=True)
-                    st.markdown("<div style='font-size:0.8rem; color:#007bff!important; font-weight:bold; margin-bottom:5px;'>🤖 AI 實時大數據分析</div>", unsafe_allow_html=True)
-                    st.progress(probs['home_win']/100, text=f"主 {probs['home_win']:.0f}% | 和 {probs['draw']:.0f}% | 客 {probs['away_win']:.0f}%")
-                    st.progress(probs['over']/100, text=f"大 {probs['over']:.0f}% | 細 {probs['under']:.0f}%")
+                    
                     st.markdown(final_html, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True) 
                 st.markdown('</div>', unsafe_allow_html=True)
