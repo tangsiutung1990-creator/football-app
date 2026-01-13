@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V14)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V14.1)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -116,7 +116,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V14)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V14.1)")
     
     df = load_data()
     
@@ -240,6 +240,7 @@ def main():
             html_parts.append(f"<div class='goal-item {c35}'><div class='goal-title'>3.5大 ({prob_o35:.0f}%)</div><div class='goal-val-high'>{fmt_odd(fair_o35)}</div></div>")
             html_parts.append(f"</div>")
             
+            # 策略
             html_parts.append(f"<div class='strategy-text'>{live_strat}</div>")
             
             html_parts.append(f"</div>")
