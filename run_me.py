@@ -122,7 +122,8 @@ def calculate_advanced_probs(home_exp, away_exp):
     
     # 計算信心指數 (Confidence Score)
     # 如果大球機率 > 65% 或 < 35%，信心較高；接近 50% 則信心低
-    ou_conf = abs(prob_over_25 - 0.5) * 200 # Scale mapping 0.5->0, 1.0->100
+    # 公式：與 50% 的距離 * 2。例如 0.75 -> (0.25)*2*100 = 50分 -> 再拉伸顯示
+    ou_conf = abs(prob_over_25 - 0.5) * 200 
     if ou_conf > 99: ou_conf = 99
     
     return {
