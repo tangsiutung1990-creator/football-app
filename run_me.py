@@ -27,7 +27,7 @@ LEAGUE_GOAL_FACTOR = {
     'SA': 1.10, 'FL1': 1.05, 'PPL': 1.15, 'BSA': 1.00, 'ELC': 1.10
 }
 
-# 絕對豪門名單
+# 絕對豪門名單 (Titan Force)
 TITAN_TEAMS = [
     'Man City', 'Liverpool', 'Arsenal', 'Real Madrid', 'Barça', 'Barcelona', 
     'Atlético', 'Bayern', 'Leverkusen', 'Dortmund', 'PSG', 'Inter', 'Juventus', 
@@ -120,9 +120,10 @@ def calculate_advanced_probs(home_exp, away_exp):
     odds_d = 1/draw if draw > 0.01 else 99.0
     odds_a = 1/a_win if a_win > 0.01 else 99.0
     
-    # 計算信心指數 (Confidence)
-    # 如果大球機率 > 65% 或 < 35%，信心較高
-    ou_conf = abs(prob_over_25 - 0.5) * 200 # 0-100 scale
+    # 計算信心指數 (Confidence Score)
+    # 如果大球機率 > 65% 或 < 35%，信心較高；接近 50% 則信心低
+    ou_conf = abs(prob_over_25 - 0.5) * 200 # Scale mapping 0.5->0, 1.0->100
+    if ou_conf > 99: ou_conf = 99
     
     return {
         'btts': round(btts*100, 1), 
@@ -193,6 +194,7 @@ def get_all_standings_with_stats():
                         standings_map[tid]['form'] = entry.get('form', 'N/A')
                         standings_map[tid]['season_ppg'] = points/played if played>0 else 1.3
                         # [V6.0] 波動性計算：(總入球+總失球) / 場次
+                        # 這數值越高，代表該隊參與的比賽越容易出現入球
                         if played > 0: 
                             standings_map[tid]['volatility'] = (gf+ga)/played
                     elif t_type == 'HOME':
@@ -236,7 +238,7 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
     raw_h = h_strength * lg_h * factor
     raw_a = a_strength * lg_a * factor
     
-    # 5. 身價與豪門邏輯
+    # 5. 身價與豪門邏輯 (Titan Force)
     h_v = parse_market_value(h_val_str); a_v = parse_market_value(a_val_str)
     is_titan = False
     for titan in TITAN_TEAMS:
@@ -258,18 +260,18 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
     a_vol = a_info.get('volatility', 2.5)
     match_vol = (h_vol + a_vol) / 2
     
-    # 如果兩隊都屬於大開大合型 (平均總球數 > 3.0)
+    # 如果兩隊都屬於大開大合型 (平均總球數 > 3.2)
     if match_vol > 3.2: 
         raw_h *= 1.15
         raw_a *= 1.15
-    elif match_vol < 2.3: # 死守型
+    elif match_vol < 2.3: # 雙方都是死守型
         raw_h *= 0.85
         raw_a *= 0.85
 
-    # 7. [V6.0] H2H 歷史修正
-    # 如果歷史對賽大球率極高，強制推高預測
+    # 7. [V6.0] H2H 歷史修正 (如果對賽往績有明顯傾向)
     if h2h_o25_rate != -1: # -1 代表無數據
         if h2h_o25_rate >= 0.7: # 70% 以上是大球
+            # 歷史證明這兩隊一打就大，提高預期入球
             raw_h *= 1.12
             raw_a *= 1.12
         elif h2h_o25_rate <= 0.3: # 30% 以下是大球 (即多細球)
