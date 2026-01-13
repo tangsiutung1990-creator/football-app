@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V14.2)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V14.3)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -115,7 +115,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V14.2)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V14.3)")
     
     df = load_data()
     
@@ -141,7 +141,7 @@ def main():
         return
 
     # 確保數值型別正確
-    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心', 'H2H平均球', '合理主賠', '合理和賠', '合理客賠', '合理大賠2.5', '合理大賠3.5']
+    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心', 'H2H平均球', '合理主賠', '合理和賠', '合理客賠', '合理大賠2.5', '合理大賠3.5', '上半大0.5']
     for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -182,6 +182,8 @@ def main():
             prob_o15 = float(row.get('大球率1.5', 0))
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_o35 = float(row.get('大球率3.5', 0))
+            prob_ht_o05 = float(row.get('上半大0.5', 0))
+            
             fair_h = float(row.get('合理主賠', 99)); fair_d = float(row.get('合理和賠', 99)); fair_a = float(row.get('合理客賠', 99))
             fair_o25 = float(row.get('合理大賠2.5', 99))
             fair_o35 = float(row.get('合理大賠3.5', 99))
@@ -237,8 +239,7 @@ def main():
             html_parts.append(f"<div class='goal-item {c35}'><div class='goal-title'>3.5大 ({prob_o35:.0f}%)</div><div class='goal-val-high'>{fmt_odd(fair_o35)}</div></div>")
             html_parts.append(f"</div>")
             
-            # 策略 (含角球)
-            html_parts.append(f"<div class='strategy-text'>策略: {live_strat} | 角球: {corner_trend}</div>")
+            html_parts.append(f"<div class='strategy-text'>策略: {live_strat} | 角球: {corner_trend} | 上半>0.5: {prob_ht_o05:.0f}%</div>")
             
             html_parts.append(f"</div>")
             
