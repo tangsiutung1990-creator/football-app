@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V7)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V8)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -41,7 +41,7 @@ st.markdown("""
     .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
     .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
     
-    /* V7 新增樣式: 盤口矩陣 */
+    /* V8 新增樣式: 盤口矩陣與信心條 */
     .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .odds-tag { background-color: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #555; margin-right: 4px; color: #ddd; }
     .confidence-bar-bg { background-color: #444; height: 6px; border-radius: 3px; margin-top: 4px; width: 100%; }
@@ -110,7 +110,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V7)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V8)")
     
     df = load_data()
     
@@ -173,9 +173,8 @@ def main():
                 st.divider()
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
-            probs = calculate_probabilities(exp_h, exp_a)
             
-            # 讀取 V7 盤口數據
+            # 讀取 V8 盤口數據
             prob_o15 = float(row.get('大球率1.5', 0))
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_o35 = float(row.get('大球率3.5', 0))
@@ -204,21 +203,25 @@ def main():
             correct_score = row.get('波膽預測', 'N/A')
             vol = float(row.get('賽事風格', 0))
 
-            # === AI 智能分析邏輯 (V7) ===
+            # === AI 智能分析邏輯 (V8) ===
             analysis_notes = []
             
             # 1. 盤口智能建議
             if prob_o25 > 65:
-                if prob_o35 > 45:
-                    analysis_notes.append(f"🔥 <b>進球盛宴</b>: 2.5球極穩，可博高賠 [3.5大]。")
+                if prob_o35 > 50:
+                    analysis_notes.append(f"🔥 <b>入球盛宴</b>: 極大機會開出 [3.5大]，強烈推薦。")
                 else:
-                    analysis_notes.append(f"✅ <b>大球首選</b>: 數據支持 [2.5大]，3.5風險較高。")
+                    analysis_notes.append(f"✅ <b>大球格局</b>: 數據支持 [2.5大]，3.5大需謹慎。")
             elif prob_o25 < 35:
-                analysis_notes.append(f"🛡️ <b>防守格局</b>: 建議關注 [細球] 或半場和。")
+                analysis_notes.append(f"🛡️ <b>防守格局</b>: 預期入球少，建議關注 [細球] 或半場和。")
+            else:
+                 analysis_notes.append(f"⚖️ <b>中性格局</b>: 數據無明顯傾向，建議走地觀察。")
             
             # 2. 信心指數解讀
             if ou_conf < 40:
-                analysis_notes.append(f"⚠️ <b>數據衝突</b>: H2H與近況數據不一致，信心度低，建議避開。")
+                analysis_notes.append(f"⚠️ <b>數據衝突</b>: H2H與近況不一致，AI信心不足，建議避開。")
+            elif ou_conf > 80:
+                analysis_notes.append(f"🌟 <b>數據共識</b>: 數學模型、H2H與風格完全吻合，信心極高。")
             
             if btts_prob > 62: analysis_notes.append(f"🤝 <b>BTTS</b>: 雙方互攻機率 {btts_prob}%。")
 
@@ -233,7 +236,7 @@ def main():
             html_parts.append(f"<span>🎲 波膽: <span style='color:#00ff00'>{correct_score}</span></span>")
             html_parts.append(f"</div>")
             
-            # [V7] 大小球矩陣
+            # [V8] 大小球矩陣
             c15 = "highlight-goal" if prob_o15 > 75 else ""
             c25 = "highlight-goal" if prob_o25 > 60 else ""
             c35 = "highlight-goal" if prob_o35 > 45 else "" # 3.5 的標準較低
@@ -245,7 +248,7 @@ def main():
             html_parts.append(f"</div>")
             
             # 信心條
-            conf_color = "#28a745" if prob_o25 > 50 else "#dc3545"
+            conf_color = "#28a745" if ou_conf > 60 else "#ffc107" if ou_conf > 40 else "#dc3545"
             html_parts.append(f"<div style='margin-bottom:6px;'>")
             html_parts.append(f"<div style='display:flex; justify-content:space-between; font-size:0.75rem; color:#ccc;'>")
             html_parts.append(f"<span>📊 數據共識信心:</span><span>{ou_conf:.0f}%</span>")
