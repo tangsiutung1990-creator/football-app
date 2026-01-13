@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V8)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V9)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -41,7 +41,7 @@ st.markdown("""
     .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
     .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
     
-    /* V8 新增樣式: 盤口矩陣與信心條 */
+    /* V9 新增樣式 */
     .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .odds-tag { background-color: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #555; margin-right: 4px; color: #ddd; }
     .confidence-bar-bg { background-color: #444; height: 6px; border-radius: 3px; margin-top: 4px; width: 100%; }
@@ -52,7 +52,8 @@ st.markdown("""
     .goal-item { background: #333; padding: 4px; border-radius: 4px; border: 1px solid #444; }
     .goal-title { font-size: 0.7rem; color: #aaa; }
     .goal-val { font-size: 0.9rem; font-weight: bold; color: #fff; }
-    .highlight-goal { border: 1px solid #28a745 !important; background: rgba(40, 167, 69, 0.15) !important; }
+    .highlight-goal { border: 1px solid #28a745 !important; background: rgba(40, 167, 69, 0.2) !important; box-shadow: 0 0 5px #28a745; }
+    .star-rating { color: #ffc107; font-weight: bold; margin-left: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -110,7 +111,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V8)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V9)")
     
     df = load_data()
     
@@ -136,7 +137,7 @@ def main():
         return
 
     # 確保數值型別正確
-    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心']
+    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心', 'H2H平均球']
     for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -174,13 +175,14 @@ def main():
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
             
-            # 讀取 V8 盤口數據
+            # V9 數據
             prob_o15 = float(row.get('大球率1.5', 0))
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_o35 = float(row.get('大球率3.5', 0))
             
             btts_prob = float(row.get('BTTS', 0))
             ou_conf = float(row.get('OU信心', 50))
+            h2h_avg = float(row.get('H2H平均球', 0))
             
             cs_h_prob = float(row.get('主零封', 0))
             cs_a_prob = float(row.get('客零封', 0))
@@ -203,27 +205,35 @@ def main():
             correct_score = row.get('波膽預測', 'N/A')
             vol = float(row.get('賽事風格', 0))
 
-            # === AI 智能分析邏輯 (V8) ===
+            # === AI 智能分析邏輯 (V9) ===
             analysis_notes = []
+            
+            # 星級評分
+            star_rating = ""
+            if ou_conf >= 80 and (prob_o25 > 65 or prob_o25 < 35): star_rating = "⭐⭐⭐⭐⭐"
+            elif ou_conf >= 60: star_rating = "⭐⭐⭐⭐"
+            elif ou_conf >= 50: star_rating = "⭐⭐⭐"
+            else: star_rating = "⭐"
             
             # 1. 盤口智能建議
             if prob_o25 > 65:
                 if prob_o35 > 50:
-                    analysis_notes.append(f"🔥 <b>入球盛宴</b>: 極大機會開出 [3.5大]，強烈推薦。")
+                    analysis_notes.append(f"🔥 <b>入球盛宴</b>: [3.5大] 機率極高，歷史平均 {h2h_avg} 球。")
                 else:
-                    analysis_notes.append(f"✅ <b>大球格局</b>: 數據支持 [2.5大]，3.5大需謹慎。")
+                    analysis_notes.append(f"✅ <b>大球格局</b>: 穩健首選 [2.5大]，值博率高。")
             elif prob_o25 < 35:
-                analysis_notes.append(f"🛡️ <b>防守格局</b>: 預期入球少，建議關注 [細球] 或半場和。")
+                analysis_notes.append(f"🛡️ <b>防守格局</b>: 預計入球極少，建議 [細球] 或半場和。")
             else:
-                 analysis_notes.append(f"⚖️ <b>中性格局</b>: 數據無明顯傾向，建議走地觀察。")
+                 analysis_notes.append(f"⚖️ <b>中性格局</b>: 建議觀望走地，待水位調整。")
             
             # 2. 信心指數解讀
             if ou_conf < 40:
-                analysis_notes.append(f"⚠️ <b>數據衝突</b>: H2H與近況不一致，AI信心不足，建議避開。")
-            elif ou_conf > 80:
-                analysis_notes.append(f"🌟 <b>數據共識</b>: 數學模型、H2H與風格完全吻合，信心極高。")
+                analysis_notes.append(f"⚠️ <b>數據衝突</b>: 風格與往績不符，信心不足，避戰為上。")
+            elif ou_conf > 85:
+                analysis_notes.append(f"🌟 <b>AI 鐵膽</b>: 數學、往績、風格完全一致 (信心 {ou_conf:.0f}%)。")
             
-            if btts_prob > 62: analysis_notes.append(f"🤝 <b>BTTS</b>: 雙方互攻機率 {btts_prob}%。")
+            # 3. H2H 特別提示
+            if h2h_avg > 3.2: analysis_notes.append(f"⚔️ <b>對攻慣性</b>: 雙方見面即開火，對賽平均 {h2h_avg} 球。")
 
             combined_analysis = "<br>".join(analysis_notes) if analysis_notes else "數據中立，建議參考即時賠率。"
 
@@ -236,10 +246,10 @@ def main():
             html_parts.append(f"<span>🎲 波膽: <span style='color:#00ff00'>{correct_score}</span></span>")
             html_parts.append(f"</div>")
             
-            # [V8] 大小球矩陣
+            # [V9] 大小球矩陣
             c15 = "highlight-goal" if prob_o15 > 75 else ""
             c25 = "highlight-goal" if prob_o25 > 60 else ""
-            c35 = "highlight-goal" if prob_o35 > 45 else "" # 3.5 的標準較低
+            c35 = "highlight-goal" if prob_o35 > 45 else "" 
             
             html_parts.append(f"<div class='goal-grid'>")
             html_parts.append(f"<div class='goal-item {c15}'><div class='goal-title'>1.5 球</div><div class='goal-val'>{prob_o15}%</div></div>")
@@ -247,11 +257,12 @@ def main():
             html_parts.append(f"<div class='goal-item {c35}'><div class='goal-title'>3.5 球</div><div class='goal-val'>{prob_o35}%</div></div>")
             html_parts.append(f"</div>")
             
-            # 信心條
+            # 信心條與星級
             conf_color = "#28a745" if ou_conf > 60 else "#ffc107" if ou_conf > 40 else "#dc3545"
             html_parts.append(f"<div style='margin-bottom:6px;'>")
             html_parts.append(f"<div style='display:flex; justify-content:space-between; font-size:0.75rem; color:#ccc;'>")
-            html_parts.append(f"<span>📊 數據共識信心:</span><span>{ou_conf:.0f}%</span>")
+            html_parts.append(f"<span>📊 值博率: <span class='star-rating'>{star_rating}</span></span>")
+            html_parts.append(f"<span>信心: {ou_conf:.0f}%</span>")
             html_parts.append(f"</div>")
             html_parts.append(f"<div class='confidence-bar-bg'><div class='confidence-bar-fill' style='width:{min(ou_conf, 100)}%; background:{conf_color};'></div></div>")
             html_parts.append(f"</div>")
