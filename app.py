@@ -173,7 +173,7 @@ def main():
             
             # 讀取進階數據
             btts_prob = float(row.get('BTTS', 0))
-            prob_o25 = float(row.get('大球率', probs['over'])) # 優先用新版數據
+            prob_o25 = float(row.get('大球率', probs['over'])) # 優先用 V6 數據
             ou_conf = float(row.get('OU信心', 50))
             
             cs_h_prob = float(row.get('主零封', 0))
@@ -237,9 +237,8 @@ def main():
             
             html_parts.append(f"<hr style='margin:6px 0; border-top:1px dashed #444;'>")
             
-            # 大小球信心條
+            # 大小球信心條 (Visual Confidence Bar)
             conf_color = "#28a745" if prob_o25 > 50 else "#dc3545" # 綠色大球 紅色細球
-            conf_text = "大球傾向" if prob_o25 > 50 else "細球傾向"
             html_parts.append(f"<div style='margin-bottom:6px;'>")
             html_parts.append(f"<div style='display:flex; justify-content:space-between; font-size:0.75rem; color:#ccc;'>")
             html_parts.append(f"<span>📊 大小球機率 (>2.5): <b style='color:{conf_color}'>{prob_o25}%</b></span>")
