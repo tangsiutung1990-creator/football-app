@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V10)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V10.1)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -41,7 +41,7 @@ st.markdown("""
     .team-name { font-size: 1.2rem; font-weight: bold; margin: 1px 0; white-space: nowrap; }
     .score-text { font-size: 1.8rem; font-weight: bold; line-height: 1; }
     
-    /* V10 新增樣式: 合理賠率與策略 */
+    /* V10.1 修復版樣式 */
     .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .odds-tag { background-color: #333; padding: 2px 6px; border-radius: 4px; border: 1px solid #555; margin-right: 4px; color: #ddd; }
     .fair-odds-tag { background-color: #2c3e50; padding: 2px 8px; border-radius: 4px; border: 1px solid #34495e; color: #fff; font-weight: bold; display: inline-block; margin-right:5px;}
@@ -113,7 +113,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V10)")
+    st.title("⚽ 足球AI全能預測 (Ultimate Pro V10.1)")
     
     df = load_data()
     
@@ -177,11 +177,14 @@ def main():
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
             
-            # V10 數據
+            # V10.1 數據讀取
             prob_o15 = float(row.get('大球率1.5', 0))
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_o35 = float(row.get('大球率3.5', 0))
+            
+            # 防呆處理：如果數據未同步，避免顯示 99.0
             fair_o25 = float(row.get('合理大賠', 99))
+            fair_o25_disp = f"{fair_o25:.2f}" if fair_o25 < 50 else "---"
             
             btts_prob = float(row.get('BTTS', 0))
             ou_conf = float(row.get('OU信心', 50))
@@ -209,7 +212,7 @@ def main():
             correct_score = row.get('波膽預測', 'N/A')
             vol = float(row.get('賽事風格', 0))
 
-            # === AI 智能分析邏輯 (V10) ===
+            # === AI 智能分析邏輯 (V10.1) ===
             analysis_notes = []
             
             # 值博率星級 (Value Rating)
@@ -223,11 +226,11 @@ def main():
             # 1. 盤口智能建議 & 合理賠率
             if prob_o25 > 65:
                 if prob_o35 > 50:
-                    analysis_notes.append(f"🔥 <b>入球盛宴</b>: 機率極高。若莊家開大於 {fair_o25}，建議 [重注]。")
+                    analysis_notes.append(f"🔥 <b>入球盛宴</b>: 機率極高。若莊家開大於 {fair_o25_disp}，建議 [重注]。")
                 else:
-                    analysis_notes.append(f"✅ <b>大球格局</b>: AI合理價 {fair_o25}。高於此價位即有值博率。")
+                    analysis_notes.append(f"✅ <b>大球格局</b>: AI合理價 {fair_o25_disp}。高於此價位即有值博率。")
             elif prob_o25 < 35:
-                analysis_notes.append(f"🛡️ <b>防守格局</b>: 預計悶戰。合理細賠 {1/(1-prob_o25/100):.2f}。")
+                analysis_notes.append(f"🛡️ <b>防守格局</b>: 預計悶戰，建議關注細球。")
             else:
                  analysis_notes.append(f"⚖️ <b>中性格局</b>: 無明顯傾向，建議觀望走地。")
             
@@ -262,7 +265,7 @@ def main():
             
             # 合理賠率
             html_parts.append(f"<div style='margin-bottom:6px;'>")
-            html_parts.append(f"<span class='fair-odds-tag'>AI合理大賠: {fair_o25}</span>")
+            html_parts.append(f"<span class='fair-odds-tag'>AI合理大賠: {fair_o25_disp}</span>")
             html_parts.append(f"</div>")
             
             # 信心條與星級
