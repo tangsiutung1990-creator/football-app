@@ -14,7 +14,7 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [V12.0] 市場入球通膨係數
+# [V13.0] 市場入球通膨係數
 MARKET_GOAL_INFLATION = 1.28 
 
 REQUEST_COUNT = 0
@@ -95,64 +95,79 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= [V12.0] 智能標籤與風險分析 =================
+# ================= [V13.0] 狙擊手決策邏輯 (Aggressive Picker) =================
 def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals):
     tags = []
-    
-    # 1. 主客場特性
     if h_info['home_att'] > 2.2: tags.append("🏠主場龍")
     if a_info['away_def'] > 2.0: tags.append("🚌客場蟲")
     if a_info['away_att'] > 2.0: tags.append("⚔️客場殺手")
     if h_info['home_def'] < 0.8: tags.append("🛡️主場鐵壁")
-
-    # 2. 進球特性
     if match_vol > 3.5: tags.append("🎆入球機器")
     elif match_vol < 2.0: tags.append("💤悶戰專家")
-    
-    # 3. 近況 (Form)
     if 'WWWW' in h_info['form']: tags.append("🔥主連勝")
-    if 'WWWW' in a_info['form']: tags.append("🔥客連勝")
     if 'LLLL' in h_info['form']: tags.append("📉主頹勢")
-    if 'LLLL' in a_info['form']: tags.append("📉客頹勢")
-
-    # 4. 對賽
     if h2h_avg_goals > 3.5: tags.append("💣宿敵對攻")
-    
     return " ".join(tags) if tags else "⚖️ 數據平衡"
 
-def calculate_risk_level(ou_conf, match_vol, h2h_avg_goals):
-    # 基礎風險分 (越低越安全)
-    risk_score = 50 
+def calculate_risk_level(ou_conf, match_vol, h2h_avg_goals, prob_o25):
+    # V13 改良：不只看信心，更看「極端值」
+    # 如果機率極高 (>70%) 或極低 (<30%)，風險自動降低
+    adjusted_risk = 50 - (ou_conf - 50)
     
-    # 信心越高，風險越低
-    risk_score -= (ou_conf - 50) 
+    if prob_o25 > 0.70 or prob_o25 < 0.30: adjusted_risk -= 20
     
-    # 波動性過大或過小增加風險
-    if match_vol > 3.8 or match_vol < 1.8: risk_score += 15
+    if h2h_avg_goals == -1: adjusted_risk += 15 # 無歷史數據風險加成
     
-    # H2H 數據缺乏或衝突
-    if h2h_avg_goals == -1: risk_score += 20
-    
-    if risk_score < 30: return "🟢 低風險 (穩)"
-    elif risk_score < 60: return "🟡 中風險"
-    else: return "🔴 高風險 (博)"
+    if adjusted_risk < 25: return "🟢 極穩 (重注)"
+    elif adjusted_risk < 45: return "🔵 穩健 (中注)"
+    elif adjusted_risk < 65: return "🟡 值博 (輕注)"
+    else: return "🔴 搏冷 (小注)"
 
-def identify_top_pick(fair_1x2_h, fair_1x2_a, fair_o25, fair_u25, prob_o25, h_win, a_win):
-    # 簡單的決策樹
+def identify_top_pick(fair_1x2_h, fair_1x2_a, fair_o25, fair_u25, prob_o25, h_win, a_win, btts_prob, h2h_avg_goals):
+    # V13 狙擊邏輯：強制找出方向，不再觀望
+    
     picks = []
     
-    # 大小球首選
-    if prob_o25 > 65: picks.append("2.5大")
-    elif prob_o25 < 35: picks.append("2.5細")
+    # 1. 大小球優先判斷 (門檻微降，加入 H2H 權重)
+    o25_threshold = 60 # 從 65 降到 60
+    if h2h_avg_goals > 3.0: o25_threshold = 55 # 有歷史支持，再降
     
-    # 主客和首選 (機率 > 55% 且 賠率合理)
-    if h_win > 0.55: picks.append("主勝")
-    elif a_win > 0.55: picks.append("客勝")
-    
-    if not picks: return "觀望/走地"
-    return " + ".join(picks)
+    if prob_o25 > o25_threshold: 
+        if prob_o25 > 70: picks.append("2.5大 (鐵膽)")
+        else: picks.append("2.5大")
+        
+    elif prob_o25 < 40:
+        picks.append("2.5細")
 
-# ================= [數學核心] V12.0 =================
+    # 2. BTTS 判斷 (如果大小球難選，看互攻)
+    if btts_prob > 63:
+        picks.append("BTTS-是")
+    
+    # 3. 主客和判斷 (加入 DNB 與 雙重機會)
+    # 主勝
+    if h_win > 0.50:
+        picks.append("主勝")
+    elif h_win > 0.40 and a_win < 0.30:
+        picks.append("主(平手盤)") # DNB
+    elif h_win > 0.35 and a_win < 0.35 and btts_prob < 50:
+        picks.append("主(+0.5)/下盤") # 受讓/雙重機會
+        
+    # 客勝
+    if a_win > 0.50:
+        picks.append("客勝")
+    elif a_win > 0.40 and h_win < 0.30:
+        picks.append("客(平手盤)") # DNB
+        
+    # 4. 最終決策
+    if not picks:
+        # 如果真的什麼都沒中，看入球數強制選
+        if h2h_avg_goals > 2.5: return "入球大 (博)"
+        return "半場和 (博)"
+        
+    # 選出最優的一個 (優先順序: 大小 > 主客 > BTTS)
+    return picks[0]
+
+# ================= [數學核心] V13.0 =================
 def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
@@ -179,7 +194,6 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     odds_d = 1/draw if draw > 0.01 else 99.0
     odds_a = 1/a_win if a_win > 0.01 else 99.0
 
-    # 合理賠率 (5% Margin + Max Limit)
     margin = 1.05; limit = 50.0
     
     fair_1x2_h = min((1 / max(h_win, 0.01)) * margin, limit)
@@ -191,7 +205,6 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     fair_o35 = min((1 / max(prob_o35, 0.01)) * margin, limit)
     fair_u35 = min((1 / max(1-prob_o35, 0.01)) * margin, limit)
 
-    # 信心指數
     math_conf = abs(prob_o25 - 0.5) * 2 * 40
     h2h_conf = 0
     if h2h_avg_goals != -1:
@@ -207,17 +220,17 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     
     total_conf = max(min(math_conf + h2h_conf + vol_conf, 99), 25) 
     
-    # 走地策略
     live_strat = "中性觀望"
     if match_vol > 3.1: live_strat = "🔥 適合追大/絕殺"
     elif match_vol < 2.3: live_strat = "🛡️ 適合半場細/角球"
     elif home_exp > away_exp * 2: live_strat = "🏰 主隊領先後控場"
+    elif abs(home_exp - away_exp) < 0.2: live_strat = "⚖️ 膠著局 (下半場決勝)" # 新增
     
     return {
         'btts': round(btts*100, 1), 
         'cs_h': round(poisson(0, away_exp)*100, 1), 
         'cs_a': round(poisson(0, home_exp)*100, 1), 
-        'h_win': h_win, 'a_win': a_win, # 供 Top Pick 使用
+        'h_win': h_win, 'a_win': a_win,
         'odds_h': round(odds_h, 2), 
         'odds_d': round(odds_d, 2), 
         'odds_a': round(odds_a, 2),
@@ -313,7 +326,7 @@ def get_all_standings_with_stats():
             league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
     return standings_map, league_stats
 
-# ================= 預測模型 (V12.0) =================
+# ================= 預測模型 (V13.0) =================
 def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_rate, h2h_avg_goals, league_avg, lg_code):
     lg_h = league_avg.get('avg_home', 1.6)
     lg_a = league_avg.get('avg_away', 1.3)
@@ -419,7 +432,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V12.0 全能狙擊版 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V13.0 狙擊手決策版 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -461,13 +474,16 @@ def get_real_data(market_value_map):
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
             adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate, vol, h2h_avg)
             
-            # [V12] 新增標籤與風險運算
+            # [V13] 新增標籤與風險運算
             smart_tags = analyze_team_tags(h_info, a_info, vol, h2h_avg)
-            risk_level = calculate_risk_level(adv_stats['ou_conf'], vol, h2h_avg)
+            risk_level = calculate_risk_level(adv_stats['ou_conf'], vol, h2h_avg, adv_stats['prob_o25'])
+            
+            # [V13] 強制決策
             top_pick = identify_top_pick(
                 adv_stats['fair_1x2_h'], adv_stats['fair_1x2_a'], 
                 adv_stats['fair_o25'], adv_stats['fair_u25'], 
-                adv_stats['prob_o25'], adv_stats['h_win'], adv_stats['a_win']
+                adv_stats['prob_o25'], adv_stats['h_win'], adv_stats['a_win'],
+                adv_stats['btts'], h2h_avg
             )
 
             score_h = match['score']['fullTime']['home']
@@ -475,7 +491,7 @@ def get_real_data(market_value_map):
             if score_h is None: score_h = ''
             if score_a is None: score_a = ''
 
-            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | {risk_level} | 首選:{top_pick}")
+            print(f"   ✅ 分析 [{index+1}/{len(matches)}]: {h_name} vs {a_name} | 首選:{top_pick} ({risk_level})")
 
             cleaned.append({
                 '時間': time_str, '聯賽': lg_name,
@@ -509,7 +525,6 @@ def get_real_data(market_value_map):
                 '合理細賠3.5': adv_stats['fair_u35'], 
                 
                 '走地策略': adv_stats['live_strat'],
-                # 新增欄位
                 '智能標籤': smart_tags,
                 '風險評級': risk_level,
                 '首選推介': top_pick
@@ -536,7 +551,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 print(f"🚀 清空舊資料...")
                 upload_sheet.clear() 
-                print(f"📝 寫入新數據 (V12.0)... 共 {len(df)} 筆")
+                print(f"📝 寫入新數據 (V13.0)... 共 {len(df)} 筆")
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print(f"✅ 完成！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
