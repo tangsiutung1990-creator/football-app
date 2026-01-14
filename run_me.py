@@ -15,7 +15,7 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [V15.4] 參數微調
+# [V15.5] 參數微調
 MARKET_GOAL_INFLATION = 1.25 
 DIXON_COLES_RHO = -0.13 
 CONFIDENCE_INTERVAL_SIGMA = 1.2
@@ -98,7 +98,7 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= [V15.4] 核心計算與邏輯 =================
+# ================= [V15.5] 核心計算 =================
 def calculate_synthetic_xg(home_exp, away_exp):
     return round(home_exp, 2), round(away_exp, 2)
 
@@ -115,9 +115,31 @@ def calculate_dominance_index(h_info, a_info):
     dom_idx = h_force - a_force
     return round(dom_idx, 2)
 
-# [V15.4 新增] 亞盤與角球計算
-def calculate_handicap_and_corners(h_win, a_win, match_vol, dom_idx):
-    # 亞盤估算
+# [V15.5] 角球機率計算 (Poisson)
+def calculate_corner_probs(match_vol, dom_idx):
+    # 基礎角球數
+    lambda_corners = 9.5
+    if match_vol > 3.0: lambda_corners += 1.5
+    elif match_vol < 2.2: lambda_corners -= 1.0
+    
+    # 強弱懸殊通常刷角球
+    if abs(dom_idx) > 1.2: lambda_corners += 1.2
+    
+    def poisson_cdf(k, lam):
+        sum_p = 0
+        for i in range(k + 1):
+            sum_p += (lam**i * math.exp(-lam)) / math.factorial(i)
+        return sum_p
+
+    # P(X > k) = 1 - P(X <= k)
+    p75 = 1 - poisson_cdf(7, lambda_corners)
+    p85 = 1 - poisson_cdf(8, lambda_corners)
+    p95 = 1 - poisson_cdf(9, lambda_corners)
+    
+    return round(p75*100), round(p85*100), round(p95*100), round(lambda_corners, 1)
+
+def calculate_handicap_and_corners_text(h_win, a_win, match_vol, dom_idx, c75, c85, c95, c_exp):
+    # 亞盤建議文字
     handicap = "0"
     if h_win > 0.6: handicap = "-1.0"
     elif h_win > 0.5: handicap = "-0.5/1"
@@ -128,14 +150,10 @@ def calculate_handicap_and_corners(h_win, a_win, match_vol, dom_idx):
     elif a_win > 0.45: handicap = "客 -0.5"
     elif a_win > 0.4: handicap = "客 -0/0.5"
     
-    # 角球估算
-    corner_proj = 9.5
-    if match_vol > 3.0: corner_proj += 1.5
-    if abs(dom_idx) > 1.0: corner_proj += 1.0 
-    
+    # 角球建議
     corner_txt = "9.5細"
-    if corner_proj > 11: corner_txt = "11.5大"
-    elif corner_proj > 10: corner_txt = "10.5大"
+    if c_exp > 10.5: corner_txt = "10.5大"
+    elif c_exp > 9.5: corner_txt = "9.5大"
     
     return handicap, corner_txt
 
@@ -143,76 +161,57 @@ def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a
     tags = []
     h_form = str(h_info.get('form', 'N/A'))
     
-    if dom_idx > 1.2: tags.append("👑主宰級")
-    elif dom_idx < -1.2: tags.append("👑客宰級")
+    if dom_idx > 1.2: tags.append("👑主宰")
+    elif dom_idx < -1.2: tags.append("👑客宰")
     
-    if h_info['home_att'] > 2.2: tags.append("🏠主場龍")
-    if a_info['away_def'] > 2.0: tags.append("🚌客場蟲")
+    if h_info['home_att'] > 2.2: tags.append("🏠龍")
+    if a_info['away_def'] > 2.0: tags.append("🚌蟲")
     
-    if match_vol > 3.5 and prob_o25 > 0.60: tags.append("🎆入球機器")
-    elif match_vol < 2.0 and prob_o25 < 0.40: tags.append("💤悶戰專家")
+    if match_vol > 3.5 and prob_o25 > 0.60: tags.append("🎆大")
+    elif match_vol < 2.0 and prob_o25 < 0.40: tags.append("💤細")
     
-    if 'WWWW' in h_form: tags.append("🔥主連勝")
+    if 'WWWW' in h_form: tags.append("🔥連勝")
     
-    if kelly_h > 10: tags.append("💎主EV+")
-    if kelly_a > 10: tags.append("💎客EV+")
+    if kelly_h > 10: tags.append("💎主EV")
+    if kelly_a > 10: tags.append("💎客EV")
 
-    return " ".join(tags) if tags else "⚖️ 均勢"
+    return " ".join(tags) if tags else "⚖️均"
 
 def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol, kelly_h, kelly_a, dom_idx):
     scores = {}
     
-    # 1. 大小球評分 (嚴格門檻)
+    # 門檻鎖死
     if prob_o25 > 0.50: 
-        scores['2.5大'] = prob_o25 * 100
-        if h2h_avg > 3.0: scores['2.5大'] += 15
-        if match_vol > 3.2: scores['2.5大'] += 10
-    else:
-        scores['2.5大'] = -999 
+        scores['2.5大'] = prob_o25 * 100 + (10 if h2h_avg > 3.0 else 0)
+    else: scores['2.5大'] = -999 
 
     if (1 - prob_o25) > 0.50:
-        scores['2.5細'] = (1 - prob_o25) * 100
-        if match_vol < 2.2: scores['2.5細'] += 15
-        if h2h_avg < 2.0: scores['2.5細'] += 10
-    else:
-        scores['2.5細'] = -999
+        scores['2.5細'] = (1 - prob_o25) * 100 + (10 if match_vol < 2.2 else 0)
+    else: scores['2.5細'] = -999
 
-    # 2. 主客和評分
     if h_win > 0.40:
-        scores['主勝'] = h_win * 100 + (kelly_h * 2) 
-        if dom_idx > 0.8: scores['主勝'] += 15
-    else:
-        scores['主勝'] = -999
+        scores['主勝'] = h_win * 100 + kelly_h
+    else: scores['主勝'] = -999
 
     if a_win > 0.40: 
-        scores['客勝'] = a_win * 100 + (kelly_a * 2)
-        if dom_idx < -0.8: scores['客勝'] += 15
-    else:
-        scores['客勝'] = -999
+        scores['客勝'] = a_win * 100 + kelly_a
+    else: scores['客勝'] = -999
     
-    # 3. BTTS
-    if prob_btts > 0.55:
-        scores['BTTS-是'] = prob_btts * 100
-    else:
-        scores['BTTS-是'] = -999
+    if prob_btts > 0.55: scores['BTTS'] = prob_btts * 100
+    else: scores['BTTS'] = -999
     
     valid_scores = {k: v for k, v in scores.items() if v > 0}
-    
     if not valid_scores: 
-        # 如果所有都未達標，返回最可能的結果但標示為觀望
-        raw_probs = {'主勝': h_win, '客勝': a_win, '2.5大': prob_o25, '2.5細': 1-prob_o25}
-        best_raw = max(raw_probs, key=raw_probs.get)
-        return f"{best_raw} (⚠️觀望)", 0
+        return "觀望", 0
     
     best_pick = max(valid_scores, key=valid_scores.get)
     best_score = valid_scores[best_pick]
     
     rating = ""
-    # 嚴格評級
-    if best_score > 90: rating = "(🌟鐵膽)"
-    elif best_score > 75: rating = "(🔥重心)"
-    elif best_score > 60: rating = "(✅值博)"
-    else: rating = "(🤔博冷)" 
+    if best_score > 90: rating = "🌟"
+    elif best_score > 75: rating = "🔥"
+    elif best_score > 60: rating = "✅"
+    else: rating = "🤔" 
     
     return f"{best_pick} {rating}", best_score
 
@@ -223,11 +222,11 @@ def calculate_risk_level(ou_conf, match_vol, prob_o25, kelly_sum, range_spread):
     if prob_o25 > 0.7 or prob_o25 < 0.3: score -= 20
     if kelly_sum > 20: score -= 15 
     
-    if score < 30: return "🟢 極穩"
-    elif score < 55: return "🔵 穩健"
-    else: return "🔴 高險"
+    if score < 30: return "🟢極穩"
+    elif score < 55: return "🔵穩健"
+    else: return "🔴高險"
 
-# ================= [V15.4 數學核心] =================
+# ================= [V15.5 數學核心 - 詳細機率] =================
 def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
@@ -241,6 +240,11 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     h_win=0; draw=0; a_win=0
     prob_o15 = 0; prob_o25 = 0; prob_o35 = 0
     
+    # [V15.5] 新增：亞盤詳細機率
+    ah_minus_05 = 0 # 主勝
+    ah_minus_1 = 0  # 淨勝 > 1
+    ah_minus_2 = 0  # 淨勝 > 2
+    
     total_exp = home_exp + away_exp
     std_dev = math.sqrt(total_exp)
     lower_bound = max(0, total_exp - CONFIDENCE_INTERVAL_SIGMA * std_dev)
@@ -252,9 +256,14 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
             adj = adjustment(h, a, home_exp, away_exp, DIXON_COLES_RHO)
             final_prob = max(0, base_prob * adj)
             
-            if h > a: h_win += final_prob
+            if h > a: 
+                h_win += final_prob
+                ah_minus_05 += final_prob
             elif h == a: draw += final_prob
             else: a_win += final_prob
+            
+            if (h - a) > 1: ah_minus_1 += final_prob
+            if (h - a) > 2: ah_minus_2 += final_prob
             
             total = h + a
             if total > 1.5: prob_o15 += final_prob
@@ -265,6 +274,9 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     if total_prob > 0:
         h_win /= total_prob; draw /= total_prob; a_win /= total_prob
         prob_o15 /= total_prob; prob_o25 /= total_prob; prob_o35 /= total_prob
+        ah_minus_05 /= total_prob
+        ah_minus_1 /= total_prob
+        ah_minus_2 /= total_prob
 
     ht_lambda_h = home_exp * 0.42
     ht_lambda_a = away_exp * 0.42
@@ -276,17 +288,13 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     fair_1x2_d = min((1 / max(draw, 0.01)), limit)
     fair_1x2_a = min((1 / max(a_win, 0.01)), limit)
     
-    fair_o15 = min((1 / max(prob_o15, 0.01)), limit)
     fair_o25 = min((1 / max(prob_o25, 0.01)), limit)
-    fair_o35 = min((1 / max(prob_o35, 0.01)), limit)
+    fair_u25 = min((1 / max(1-prob_o25, 0.01)), limit)
 
     safety_margin = 1.05
     min_odds_h = round(fair_1x2_h * safety_margin, 2)
     min_odds_a = round(fair_1x2_a * safety_margin, 2)
-    
-    min_odds_o15 = round(fair_o15 * safety_margin, 2)
     min_odds_o25 = round(fair_o25 * safety_margin, 2)
-    min_odds_o35 = round(fair_o35 * safety_margin, 2)
 
     market_sim_h = fair_1x2_h * 0.95 
     kelly_h = calculate_kelly_stake(h_win, market_sim_h * 1.15) 
@@ -296,15 +304,18 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     vol_conf = 25 if (prob_o25 > 0.5 and match_vol > 3.2) or (prob_o25 < 0.5 and match_vol < 2.2) else 0
     total_conf = max(min(math_conf + vol_conf, 99), 25) 
     
-    live_strat = "中性觀望"
-    if match_vol > 3.1: live_strat = "🔥 追大/絕殺"
-    elif match_vol < 2.3: live_strat = "🛡️ 半場細/角球"
-    elif home_exp > away_exp * 2: live_strat = "🏰 主隊控場"
-    if prob_ht_o05 > 0.72: live_strat += " | 上半有機"
+    live_strat = "中性"
+    if match_vol > 3.1: live_strat = "🔥追大"
+    elif match_vol < 2.3: live_strat = "🛡️細/角"
+    elif home_exp > away_exp * 2: live_strat = "🏰主控"
+    if prob_ht_o05 > 0.72: live_strat += "|HT大"
     
     return {
         'btts': round(btts*100, 1), 
-        'h_win': h_win, 'a_win': a_win,
+        'h_win': h_win, 'draw': draw, 'a_win': a_win,
+        'ah_minus_05': round(ah_minus_05*100, 1),
+        'ah_minus_1': round(ah_minus_1*100, 1),
+        'ah_minus_2': round(ah_minus_2*100, 1),
         'prob_o15': round(prob_o15*100, 1), 
         'prob_o25': round(prob_o25*100, 1),
         'prob_o35': round(prob_o35*100, 1), 
@@ -315,10 +326,9 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
         'fair_1x2_a': round(fair_1x2_a, 2),
         'min_odds_h': min_odds_h, 
         'min_odds_a': min_odds_a,
-        'min_odds_o15': min_odds_o15, 
         'min_odds_o25': min_odds_o25,
-        'min_odds_o35': min_odds_o35, 
         'fair_o25': round(fair_o25, 2),
+        'fair_u25': round(fair_u25, 2), 
         'live_strat': live_strat,
         'kelly_h': round(kelly_h, 1),
         'kelly_a': round(kelly_a, 1),
@@ -353,7 +363,6 @@ def calculate_weighted_form_score(form_str):
         total_weight += w
     return score / total_weight if total_weight > 0 else 1.5
 
-# ================= 補回：獲取聯賽數據 =================
 def get_all_standings_with_stats():
     print("📊 計算聯賽基數...")
     standings_map = {}
@@ -406,7 +415,6 @@ def get_all_standings_with_stats():
             league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
     return standings_map, league_stats
 
-# ================= 補回：預測模型 =================
 def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_rate, h2h_avg_goals, league_avg, lg_code):
     lg_h = league_avg.get('avg_home', 1.6)
     lg_a = league_avg.get('avg_away', 1.3)
@@ -463,7 +471,6 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
 
     return round(raw_h, 2), round(raw_a, 2), round(match_vol, 2), round(h_mom, 2), round(a_mom, 2)
 
-# ================= H2H 函式 =================
 def get_h2h_and_ou_stats(match_id, h_id, a_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
@@ -509,7 +516,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V15.4 Alpha Real-Time Logic 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V15.5 Compact Pro 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -546,11 +553,14 @@ def get_real_data(market_value_map):
             )
             
             xg_h, xg_a = calculate_synthetic_xg(pred_h, pred_a)
-            
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
             adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate, vol, h2h_avg)
             dom_idx = calculate_dominance_index(h_info, a_info)
-            handicap, corners = calculate_handicap_and_corners(adv_stats['h_win'], adv_stats['a_win'], vol, dom_idx)
+            
+            # [V15.5] 角球計算
+            c75, c85, c95, c_exp = calculate_corner_probs(vol, dom_idx)
+            
+            handicap, corners = calculate_handicap_and_corners_text(adv_stats['h_win'], adv_stats['a_win'], vol, dom_idx, c75, c85, c95, c_exp)
             
             kelly_sum = adv_stats['kelly_h'] + adv_stats['kelly_a']
             range_spread = adv_stats['goal_range_high'] - adv_stats['goal_range_low']
@@ -584,6 +594,16 @@ def get_real_data(market_value_map):
                 '波膽預測': correct_score_str,
                 'BTTS': adv_stats['btts'],
                 
+                # 詳細機率
+                '主勝率': round(adv_stats['h_win']*100),
+                '和局率': round(adv_stats['draw']*100),
+                '客勝率': round(adv_stats['a_win']*100),
+                'AH-0.5': adv_stats['ah_minus_05'],
+                'AH-1.0': adv_stats['ah_minus_1'],
+                'AH-2.0': adv_stats['ah_minus_2'],
+                
+                'C75': c75, 'C85': c85, 'C95': c95,
+                
                 '大球率1.5': adv_stats['prob_o15'],
                 '大球率2.5': adv_stats['prob_o25'],
                 '大球率3.5': adv_stats['prob_o35'],
@@ -592,19 +612,13 @@ def get_real_data(market_value_map):
                 '合理主賠': adv_stats['fair_1x2_h'],
                 '合理和賠': adv_stats['fair_1x2_d'],
                 '合理客賠': adv_stats['fair_1x2_a'],
-                
                 '最低賠率主': adv_stats['min_odds_h'], 
                 '最低賠率客': adv_stats['min_odds_a'], 
                 
-                '最低賠率大1.5': adv_stats['min_odds_o15'],
                 '最低賠率大2.5': adv_stats['min_odds_o25'], 
-                '最低賠率大3.5': adv_stats['min_odds_o35'],
-                
                 '合理大賠2.5': adv_stats['fair_o25'], 
                 '凱利主(%)': adv_stats['kelly_h'],
                 '凱利客(%)': adv_stats['kelly_a'],
-                '入球區間低': adv_stats['goal_range_low'],
-                '入球區間高': adv_stats['goal_range_high'],
                 
                 '亞盤建議': handicap, 
                 '角球預測': corners, 
@@ -625,13 +639,14 @@ def main():
     if real_data:
         df = pd.DataFrame(real_data)
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測',
-                'xG主','xG客','總球數','狀態','主分','客分','H2H','H2H平均球',
+                'xG主','xG客','主勝率','和局率','客勝率','AH-0.5','AH-1.0','AH-2.0',
+                'C75','C85','C95',
+                '總球數','狀態','主分','客分','H2H','H2H平均球',
                 '主隊身價','客隊身價','主導指數','波膽預測',
                 'BTTS','大球率1.5','大球率2.5','大球率3.5','上半大0.5',
                 '合理主賠','合理和賠','合理客賠','最低賠率主','最低賠率客',
-                '最低賠率大1.5','最低賠率大2.5','最低賠率大3.5',
-                '合理大賠2.5','亞盤建議','角球預測',
-                '凱利主(%)','凱利客(%)','入球區間低','入球區間高',
+                '最低賠率大2.5','合理大賠2.5','亞盤建議','角球預測',
+                '凱利主(%)','凱利客(%)',
                 '走地策略','智能標籤','風險評級','首選推介']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
@@ -639,7 +654,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 upload_sheet.clear() 
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print(f"✅ 上傳完成！(V15.4)")
+                print(f"✅ 上傳完成！(V15.5)")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
     else: print("⚠️ 無數據產生。")
 
