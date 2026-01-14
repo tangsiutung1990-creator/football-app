@@ -182,12 +182,14 @@ def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a
     
     if 'WWWW' in h_form: tags.append("🔥連勝")
     if kelly_h > 10: tags.append("💎主EV")
+    if kelly_a > 10: tags.append("💎客EV")
     
     return " ".join(tags) if tags else "⚖️均"
 
 def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol, kelly_h, kelly_a, dom_idx):
     scores = {}
     
+    # 門檻鎖死機制
     if prob_o25 > 0.50: 
         scores['2.5大'] = prob_o25 * 100 + (10 if h2h_avg > 3.0 else 0)
     else: scores['2.5大'] = -999 
@@ -247,9 +249,9 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     prob_o15 = 0; prob_o25 = 0; prob_o35 = 0
     ah_minus_05 = 0; ah_minus_1 = 0; ah_minus_2 = 0
     
-    # [V15.7] 新增：半場機率計算
-    ht_lambda_h = home_exp * 0.42 # 假設半場佔總入球 42%
-    ht_lambda_a = away_exp * 0.42
+    # [V15.7] 半場 Lambda
+    ht_lambda_h = home_exp * 0.45 # 提升半場權重
+    ht_lambda_a = away_exp * 0.45
     ht_h_win = 0; ht_draw = 0; ht_a_win = 0
     
     # 計算全場 (擴大範圍至 15 避免 0%)
@@ -320,7 +322,7 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     return {
         'btts': round(btts*100, 1), 
         'h_win': h_win, 'draw': draw, 'a_win': a_win,
-        'ht_h_win': ht_h_win, 'ht_draw': ht_draw, 'ht_a_win': ht_a_win, # V15.7 NEW
+        'ht_h_win': ht_h_win, 'ht_draw': ht_draw, 'ht_a_win': ht_a_win, # V15.7 New
         'ah_minus_05': round(ah_minus_05*100, 1),
         'ah_minus_1': round(ah_minus_1*100, 1),
         'ah_minus_2': round(ah_minus_2*100, 1),
@@ -449,10 +451,6 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
         val_factor = max(min(math.log(ratio) * 0.2, 0.5), -0.5)
         raw_h *= (1 + val_factor); raw_a *= (1 - val_factor)
 
-    if is_titan:
-        if raw_h < 1.7: raw_h = max(raw_h * 1.4, 1.95)
-        else: raw_h *= 1.15
-
     h_vol = h_info.get('volatility', 2.5)
     a_vol = a_info.get('volatility', 2.5)
     match_vol = (h_vol + a_vol) / 2
@@ -566,7 +564,7 @@ def get_real_data(market_value_map):
             handicap_txt = calculate_handicap_with_prob(adv_stats['h_win'], adv_stats['a_win'], adv_stats['ah_minus_05'], adv_stats['ah_minus_1'], adv_stats['ah_minus_2'])
             
             kelly_sum = adv_stats['kelly_h'] + adv_stats['kelly_a']
-            range_spread = 0 # 簡化
+            range_spread = adv_stats['goal_range_high'] - adv_stats['goal_range_low']
             
             smart_tags = analyze_team_tags(h_info, a_info, vol, h2h_avg, adv_stats['kelly_h'], adv_stats['kelly_a'], dom_idx, adv_stats['prob_o25'])
             risk_level = calculate_risk_level(adv_stats['ou_conf'], vol, adv_stats['prob_o25'], kelly_sum, range_spread)
@@ -597,12 +595,12 @@ def get_real_data(market_value_map):
                 '波膽預測': correct_score_str,
                 'BTTS': adv_stats['btts'],
                 
-                # V15.7 全面數據矩陣
+                # 詳細機率矩陣
                 '主勝率': round(adv_stats['h_win']*100),
                 '和局率': round(adv_stats['draw']*100),
                 '客勝率': round(adv_stats['a_win']*100),
                 
-                # 半場機率
+                # V15.7 New: 半場
                 'HT主': round(adv_stats['ht_h_win']*100),
                 'HT和': round(adv_stats['ht_draw']*100),
                 'HT客': round(adv_stats['ht_a_win']*100),
@@ -646,7 +644,7 @@ def main():
     if real_data:
         df = pd.DataFrame(real_data)
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測',
-                'xG主','xG客','主勝率','和局率','客勝率','HT主','HT和','HT客', # New HT cols
+                'xG主','xG客','主勝率','和局率','客勝率','HT主','HT和','HT客',
                 'AH-0.5','AH-1.0','AH-2.0','C75','C85','C95',
                 '總球數','狀態','主分','客分','H2H','H2H平均球',
                 '主隊身價','客隊身價','主導指數','波膽預測',
