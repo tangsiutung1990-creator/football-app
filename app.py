@@ -9,7 +9,7 @@ from datetime import datetime
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Alpha Pro Max (V15.1)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Beta Ultimate (V15.2)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -31,7 +31,7 @@ st.markdown("""
     .live-status { color: #ff4b4b !important; font-weight: bold; animation: blinker 1.5s linear infinite; }
     @keyframes blinker { 50% { opacity: 0; } }
     
-    /* V15.1 Pro Max 樣式 */
+    /* V15.2 UI */
     .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .section-title { font-size: 0.8rem; font-weight: bold; color: #ff9800; border-bottom: 1px solid #444; padding-bottom: 2px; margin-bottom: 5px; margin-top: 5px; }
     .odds-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 0.75rem; }
@@ -57,6 +57,8 @@ st.markdown("""
     .dom-bar-bg { width: 100%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; display: flex; margin-top: 5px; }
     .dom-bar-home { height: 100%; background: #ff4b4b; }
     .dom-bar-away { height: 100%; background: #00bfff; }
+    
+    .xg-text { font-size: 0.75rem; color: #00ffea; margin-bottom: 2px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -101,7 +103,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Alpha Pro Max (V15.1)")
+    st.title("⚽ 足球AI Beta Ultimate (V15.2)")
     
     df = load_data()
     
@@ -126,7 +128,7 @@ def main():
         st.warning("⚠️ 目前無數據，請確認 run_me.py 是否執行成功。")
         return
 
-    num_cols = ['主預測', '客預測', 'BTTS', '大球率2.5', '上半大0.5', '合理主賠', '合理和賠', '合理客賠', '最低賠率主', '最低賠率客', '最低賠率大2.5', '合理大賠2.5', '主導指數', '入球區間低', '入球區間高', '凱利主(%)', '凱利客(%)']
+    num_cols = ['主預測', '客預測', 'xG主', 'xG客', 'BTTS', '大球率2.5', '上半大0.5', '合理主賠', '合理和賠', '合理客賠', '最低賠率主', '最低賠率客', '最低賠率大2.5', '合理大賠2.5', '主導指數', '入球區間低', '入球區間高', '凱利主(%)', '凱利客(%)']
     for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -163,6 +165,7 @@ def main():
                 st.divider()
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
+            xg_h = float(row.get('xG主', 0)); xg_a = float(row.get('xG客', 0)) # New
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_ht_o05 = float(row.get('上半大0.5', 0))
             
@@ -195,31 +198,33 @@ def main():
 
             html_parts = []
             html_parts.append(f"<div class='adv-stats-box'>")
-            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha Pro Max 絕殺</div><div class='top-pick-val'>{top_pick}</div></div>")
+            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha Ultimate 絕殺</div><div class='top-pick-val'>{top_pick}</div></div>")
             
             risk_class = "risk-low" if "極穩" in risk_level else "risk-high" if "高險" in risk_level else "risk-med"
             tags_html = "".join([f"<span class='smart-tag'>{t}</span>" for t in smart_tags.split(' ') if t])
             html_parts.append(f"<div style='margin-bottom:8px;'><span class='risk-badge {risk_class}'>{risk_level}</span> {tags_html}</div>")
             
             html_parts.append(f"<div class='section-title'>⚔️ 戰局主導 (Dominance)</div>")
-            # 主導條
-            dom_pct = 50 + (dom_idx * 15) # 轉換為百分比
+            dom_pct = 50 + (dom_idx * 15)
             dom_pct = max(10, min(90, dom_pct))
             html_parts.append(f"<div class='dom-bar-bg'><div class='dom-bar-home' style='width:{dom_pct}%'></div><div class='dom-bar-away' style='width:{100-dom_pct}%'></div></div>")
             html_parts.append(f"<div style='display:flex; justify-content:space-between; font-size:0.7rem; color:#aaa;'><span>主強</span><span>Idx: {dom_idx}</span><span>客強</span></div>")
             
-            html_parts.append(f"<div class='section-title'>💰 價值模型 (Value Model)</div>")
+            html_parts.append(f"<div class='section-title'>💰 價值模型 (只買高於此賠率)</div>")
             html_parts.append(f"<div class='odds-row'><span>Fair主: <span class='odds-val'>{fmt_odd(fair_h)}</span></span> <span>Fair和: <span class='odds-val'>{fmt_odd(fair_d)}</span></span> <span>Fair客: <span class='odds-val'>{fmt_odd(fair_a)}</span></span></div>")
-            html_parts.append(f"<div style='margin-top:4px; font-size:0.75rem; color:#00bfff;'>🔥 最低值博率 (Min Odds):</div>")
+            html_parts.append(f"<div style='margin-top:4px; font-size:0.75rem; color:#00bfff;'>🔥 需高於 (Min Odds):</div>")
             html_parts.append(f"<div class='odds-row'><span>主 > <span class='min-odds-val'>{fmt_odd(min_h)}</span></span> <span>客 > <span class='min-odds-val'>{fmt_odd(min_a)}</span></span></div>")
             
             html_parts.append(f"<div class='section-title'>⚽ 入球分析 (Confidence: {range_l}-{range_h})</div>")
             c25 = "highlight-goal" if prob_o25 > 60 else ""
             html_parts.append(f"<div class='goal-grid'>")
-            html_parts.append(f"<div class='goal-item'><div class='goal-title'>對賽平均</div><div class='goal-val'>{h2h_avg}球</div></div>")
+            html_parts.append(f"<div class='goal-item'><div class='goal-title'>合成xG主</div><div class='goal-val'>{xg_h}</div></div>")
             html_parts.append(f"<div class='goal-item {c25}'><div class='goal-title'>2.5大 ({prob_o25:.0f}%)</div><div class='goal-val'>{fmt_odd(fair_o25)}</div></div>")
-            html_parts.append(f"<div class='goal-item'><div class='goal-title'>大球值博</div><div class='goal-val' style='color:#00ff00'>{fmt_odd(min_o25)}</div></div>")
+            html_parts.append(f"<div class='goal-item'><div class='goal-title'>合成xG客</div><div class='goal-val'>{xg_a}</div></div>")
             html_parts.append(f"</div>")
+            
+            # 這裡顯示大球的值博賠率
+            html_parts.append(f"<div style='text-align:center; margin-top:4px; font-size:0.75rem;'>🔥 大球賠率需 > <b style='color:#00ff00; border-bottom:1px dashed #00ff00;'>{fmt_odd(min_o25)}</b> 才可買</div>")
             
             html_parts.append(f"<div style='margin-top:5px; font-size:0.75rem; text-align:center; color:#888;'>策略: <span style='color:#fff'>{live_strat}</span></div>")
             html_parts.append(f"</div>")
