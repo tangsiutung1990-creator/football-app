@@ -9,15 +9,16 @@ from datetime import datetime
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Stability Ultimate (V15.7)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Render Fix (V15.8)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; }
     
-    /* V15.7 Style */
+    /* V15.8 Compact Card */
     .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 8px; font-size: 0.8rem; }
+    
     .match-header { display: flex; justify-content: space-between; color: #aaa; font-size: 0.75rem; margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 2px; }
     
     .team-row { display: grid; grid-template-columns: 3fr 1fr 3fr; align-items: center; margin-bottom: 8px; }
@@ -36,8 +37,6 @@ st.markdown("""
     
     .rec-box { background: linear-gradient(90deg, #1cb5e0, #000046); padding: 5px; border-radius: 4px; text-align: center; margin-top: 5px; font-weight: bold; color: #fff; border: 1px solid #555; display: flex; justify-content: space-between; align-items: center; }
     .ah-sugg { color: #00ff00; font-size: 0.75rem; margin-top: 4px; text-align: center; border: 1px dashed #444; border-radius: 4px; }
-    
-    .conf-range { font-size: 0.65rem; color: #aaa; margin-top: 2px; text-align: right; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -67,7 +66,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Stability Ultimate (V15.7)")
+    st.title("⚽ 足球AI Render Fix (V15.8)")
     
     try:
         df = load_data()
@@ -79,14 +78,14 @@ def main():
             st.warning("⚠️ 無法讀取數據，請檢查 run_me.py 是否執行成功。")
             return
 
-        # 數據整理 (Error Handling: 缺少欄位自動補 0)
+        # 數據整理 (Error Handling)
         req_cols = ['xG主','xG客','主勝率','和局率','客勝率','HT主','HT和','HT客','AH-0.5','AH-1.0','AH-2.0',
                     'C75','C85','C95','大球率1.5','大球率2.5','大球率3.5','最低賠率主','最低賠率客',
-                    '入球區間低', '入球區間高'] # [V15.7 Hotfix] 加入區間欄位
+                    '入球區間低','入球區間高']
         
-        # 檢查是否為舊版數據
-        if 'HT主' not in df.columns:
-            st.error("🚨 檢測到舊版數據結構！請務必重新執行一次 `run_me.py` (V15.7) 以更新資料庫。")
+        # 檢查欄位是否存在 (V15.8 check)
+        if '入球區間高' not in df.columns:
+            st.error("🚨 檢測到舊版數據！請先執行 `run_me.py` (V15.8) 更新資料庫。")
             return
 
         for col in req_cols: 
@@ -106,8 +105,10 @@ def main():
         # === 渲染 Compact Matrix ===
         for index, row in df.iterrows():
             time_part = str(row['時間']).split(' ')[1]
-            range_l = row.get('入球區間低', 0)
-            range_h = row.get('入球區間高', 0)
+            
+            # 預處理顏色邏輯，避免 f-string 嵌套錯誤
+            c_h = '#00ff00' if row.get('主勝率') > 50 else '#fff'
+            c_a = '#00ff00' if row.get('客勝率') > 50 else '#fff'
             
             html = f"""
             <div class='compact-card'>
@@ -130,15 +131,15 @@ def main():
                 
                 <div style='display:flex; justify-content:space-between; align-items:center; font-size:0.7rem; color:#aaa; margin-bottom:5px;'>
                     <span>對賽: {row.get('H2H', '')}</span>
-                    <span>信心區間: {range_l}-{range_h} 球</span>
+                    <span>信心區間: {row.get('入球區間低')}-{row.get('入球區間高')} 球</span>
                 </div>
                 
                 <div class='grid-matrix'>
                     <div class='matrix-col'>
                         <div class='matrix-header'>全場</div>
-                        <div class='matrix-cell'><span class='cell-label'>主</span><span class='cell-val'>{row.get('主勝率')}%</span></div>
+                        <div class='matrix-cell'><span class='cell-label'>主</span><span class='cell-val' style='color:{c_h}'>{row.get('主勝率')}%</span></div>
                         <div class='matrix-cell'><span class='cell-label'>和</span><span class='cell-val'>{row.get('和局率')}%</span></div>
-                        <div class='matrix-cell'><span class='cell-label'>客</span><span class='cell-val'>{row.get('客勝率')}%</span></div>
+                        <div class='matrix-cell'><span class='cell-label'>客</span><span class='cell-val' style='color:{c_a}'>{row.get('客勝率')}%</span></div>
                     </div>
                     <div class='matrix-col'>
                         <div class='matrix-header'>半場</div>
