@@ -9,7 +9,7 @@ from datetime import datetime
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Beta Ultimate (V15.2)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Alpha Ultra (V15.3)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -21,7 +21,7 @@ st.markdown("""
     .css-card-container { background-color: #1a1c24; border: 1px solid #333; border-radius: 12px; padding: 15px; margin-bottom: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
     h1, h2, h3, h4, span, div, b, p { color: #ffffff !important; font-family: "Source Sans Pro", sans-serif; }
     .sub-text { color: #cccccc !important; font-size: 0.8rem; }
-    .h2h-text { color: #ffd700 !important; font-size: 0.8rem; margin-bottom: 3px; font-weight: bold; }
+    .h2h-text { color: #ffd700 !important; font-size: 0.8rem; margin-bottom: 3px; font-weight: bold; letter-spacing: 1px; }
     .market-value-text { color: #28a745 !important; font-size: 0.85rem; font-weight: bold; margin-top: 2px; }
     .rank-badge { background-color: #444; color: #fff !important; padding: 1px 5px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; border: 1px solid #666; margin: 0 4px; }
     .form-circle { display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 50%; font-size: 0.65rem; margin: 0 1px; color: white !important; font-weight: bold; border: 1px solid rgba(255,255,255,0.2); }
@@ -31,34 +31,36 @@ st.markdown("""
     .live-status { color: #ff4b4b !important; font-weight: bold; animation: blinker 1.5s linear infinite; }
     @keyframes blinker { 50% { opacity: 0; } }
     
-    /* V15.2 UI */
-    .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
-    .section-title { font-size: 0.8rem; font-weight: bold; color: #ff9800; border-bottom: 1px solid #444; padding-bottom: 2px; margin-bottom: 5px; margin-top: 5px; }
-    .odds-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 0.75rem; }
+    /* V15.3 UI - Wider & Richer */
+    .adv-stats-box { background-color: #25262b; padding: 12px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.8rem; }
+    .section-title { font-size: 0.85rem; font-weight: bold; color: #ff9800; border-bottom: 1px solid #444; padding-bottom: 3px; margin-bottom: 6px; margin-top: 6px; }
+    .odds-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 0.8rem; }
     .odds-val { color: #fff; font-weight: bold; }
     .min-odds-val { color: #00bfff; font-weight: bold; border-bottom: 1px dashed #00bfff; }
     
-    .goal-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin: 8px 0; text-align: center; }
-    .goal-item { background: #333; padding: 4px; border-radius: 4px; border: 1px solid #444; }
-    .goal-title { font-size: 0.7rem; color: #aaa; }
-    .goal-val { font-size: 0.9rem; font-weight: bold; color: #fff; }
-    .highlight-goal { border: 1px solid #28a745 !important; background: rgba(40, 167, 69, 0.2) !important; box-shadow: 0 0 8px rgba(40,167,69,0.4); }
+    /* 機率矩陣 Grid */
+    .prob-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 8px 0; text-align: center; }
+    .prob-item { background: #333; padding: 5px; border-radius: 4px; border: 1px solid #444; }
+    .prob-title { font-size: 0.7rem; color: #aaa; margin-bottom: 2px; }
+    .prob-val { font-size: 0.9rem; font-weight: bold; color: #fff; }
+    .prob-sub { font-size: 0.7rem; color: #00ffea; }
+    .highlight-prob { border: 1px solid #28a745 !important; background: rgba(40, 167, 69, 0.15) !important; }
     
-    .smart-tag { display: inline-block; background: #444; border-radius: 3px; padding: 1px 5px; font-size: 0.7rem; margin-right: 3px; color: #fff; border: 1px solid #555; }
+    .smart-tag { display: inline-block; background: #444; border-radius: 3px; padding: 1px 6px; font-size: 0.75rem; margin-right: 4px; color: #fff; border: 1px solid #555; }
     .risk-badge { font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color:#fff; }
     .risk-low { background-color: #28a745; border: 1px solid #1e7e34; }
     .risk-med { background-color: #17a2b8; border: 1px solid #117a8b; }
     .risk-high { background-color: #dc3545; border: 1px solid #bd2130; }
     
-    .top-pick-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 8px; border: 1px solid #8e44ad; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-    .top-pick-title { font-size: 0.75rem; color: #eee; font-weight:bold; letter-spacing: 1px; }
-    .top-pick-val { font-size: 1.3rem; font-weight: 900; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.5); margin-top: 2px; }
+    .top-pick-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 12px; border-radius: 6px; text-align: center; margin-bottom: 10px; border: 1px solid #8e44ad; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    .top-pick-title { font-size: 0.8rem; color: #eee; font-weight:bold; letter-spacing: 1px; }
+    .top-pick-val { font-size: 1.4rem; font-weight: 900; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.5); margin-top: 2px; }
     
-    .dom-bar-bg { width: 100%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; display: flex; margin-top: 5px; }
+    .dom-bar-bg { width: 100%; height: 8px; background: #333; border-radius: 4px; overflow: hidden; display: flex; margin-top: 5px; }
     .dom-bar-home { height: 100%; background: #ff4b4b; }
     .dom-bar-away { height: 100%; background: #00bfff; }
     
-    .xg-text { font-size: 0.75rem; color: #00ffea; margin-bottom: 2px; }
+    .xg-box { display: flex; justify-content: space-between; align-items: center; background: #222; padding: 4px 8px; border-radius: 4px; margin-bottom: 5px; border: 1px solid #444; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -103,7 +105,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Beta Ultimate (V15.2)")
+    st.title("⚽ 足球AI Alpha Ultra (V15.3)")
     
     df = load_data()
     
@@ -128,7 +130,7 @@ def main():
         st.warning("⚠️ 目前無數據，請確認 run_me.py 是否執行成功。")
         return
 
-    num_cols = ['主預測', '客預測', 'xG主', 'xG客', 'BTTS', '大球率2.5', '上半大0.5', '合理主賠', '合理和賠', '合理客賠', '最低賠率主', '最低賠率客', '最低賠率大2.5', '合理大賠2.5', '主導指數', '入球區間低', '入球區間高', '凱利主(%)', '凱利客(%)']
+    num_cols = ['主預測', '客預測', 'xG主', 'xG客', 'BTTS', '大球率1.5', '大球率2.5', '大球率3.5', '上半大0.5', '合理主賠', '合理和賠', '合理客賠', '最低賠率主', '最低賠率客', '最低賠率大1.5', '最低賠率大2.5', '最低賠率大3.5', '主導指數', '入球區間低', '入球區間高', '凱利主(%)', '凱利客(%)']
     for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -164,22 +166,21 @@ def main():
                 st.markdown(f"#### 🗓️ {current_date_header} ({weekday_str})")
                 st.divider()
 
-            exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
-            xg_h = float(row.get('xG主', 0)); xg_a = float(row.get('xG客', 0)) # New
-            prob_o25 = float(row.get('大球率2.5', 0))
-            prob_ht_o05 = float(row.get('上半大0.5', 0))
+            xg_h = float(row.get('xG主', 0)); xg_a = float(row.get('xG客', 0))
             
-            fair_h = float(row.get('合理主賠', 99)); fair_d = float(row.get('合理和賠', 99)); fair_a = float(row.get('合理客賠', 99))
+            # 機率
+            p15 = float(row.get('大球率1.5', 0)); p25 = float(row.get('大球率2.5', 0)); p35 = float(row.get('大球率3.5', 0))
+            
+            # 最低賠率 (值博線)
             min_h = float(row.get('最低賠率主', 99)); min_a = float(row.get('最低賠率客', 99))
-            min_o25 = float(row.get('最低賠率大2.5', 99))
-            fair_o25 = float(row.get('合理大賠2.5', 99))
+            min_o15 = float(row.get('最低賠率大1.5', 99)); min_o25 = float(row.get('最低賠率大2.5', 99)); min_o35 = float(row.get('最低賠率大3.5', 99))
             
             dom_idx = float(row.get('主導指數', 0))
             range_l = float(row.get('入球區間低', 0)); range_h = float(row.get('入球區間高', 0))
             
             def fmt_odd(val): return f"{val:.2f}" if val < 50 else "---"
             
-            h2h_avg = float(row.get('H2H平均球', 0))
+            h2h_text = row.get('H2H', 'N/A')
             live_strat = row.get('走地策略', '中性觀望')
             smart_tags = row.get('智能標籤', '')
             risk_level = row.get('風險評級', '值博')
@@ -198,41 +199,54 @@ def main():
 
             html_parts = []
             html_parts.append(f"<div class='adv-stats-box'>")
-            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha Ultimate 絕殺</div><div class='top-pick-val'>{top_pick}</div></div>")
             
+            # 1. Top Pick
+            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha Ultra 絕殺</div><div class='top-pick-val'>{top_pick}</div></div>")
+            
+            # 2. Risk & Tags
             risk_class = "risk-low" if "極穩" in risk_level else "risk-high" if "高險" in risk_level else "risk-med"
             tags_html = "".join([f"<span class='smart-tag'>{t}</span>" for t in smart_tags.split(' ') if t])
-            html_parts.append(f"<div style='margin-bottom:8px;'><span class='risk-badge {risk_class}'>{risk_level}</span> {tags_html}</div>")
+            html_parts.append(f"<div style='margin-bottom:10px;'><span class='risk-badge {risk_class}'>{risk_level}</span> {tags_html}</div>")
             
-            html_parts.append(f"<div class='section-title'>⚔️ 戰局主導 (Dominance)</div>")
+            # 3. xG & Dominance (移動到最上方)
+            html_parts.append(f"<div class='xg-box'><div><b>{row['主隊']}</b> <span style='color:#ff4b4b'>xG: {xg_h}</span></div><div><span style='color:#00bfff'>xG: {xg_a}</span> <b>{row['客隊']}</b></div></div>")
+            
             dom_pct = 50 + (dom_idx * 15)
             dom_pct = max(10, min(90, dom_pct))
             html_parts.append(f"<div class='dom-bar-bg'><div class='dom-bar-home' style='width:{dom_pct}%'></div><div class='dom-bar-away' style='width:{100-dom_pct}%'></div></div>")
-            html_parts.append(f"<div style='display:flex; justify-content:space-between; font-size:0.7rem; color:#aaa;'><span>主強</span><span>Idx: {dom_idx}</span><span>客強</span></div>")
+            html_parts.append(f"<div style='display:flex; justify-content:space-between; font-size:0.7rem; color:#aaa; margin-bottom:8px;'><span>主強</span><span>Idx: {dom_idx}</span><span>客強</span></div>")
             
-            html_parts.append(f"<div class='section-title'>💰 價值模型 (只買高於此賠率)</div>")
-            html_parts.append(f"<div class='odds-row'><span>Fair主: <span class='odds-val'>{fmt_odd(fair_h)}</span></span> <span>Fair和: <span class='odds-val'>{fmt_odd(fair_d)}</span></span> <span>Fair客: <span class='odds-val'>{fmt_odd(fair_a)}</span></span></div>")
-            html_parts.append(f"<div style='margin-top:4px; font-size:0.75rem; color:#00bfff;'>🔥 需高於 (Min Odds):</div>")
+            # 4. 入球矩陣 (1.5 / 2.5 / 3.5) - 重點加強
+            html_parts.append(f"<div class='section-title'>⚽ 入球概率矩陣 (Confidence: {range_l}-{range_h})</div>")
+            html_parts.append(f"<div class='prob-grid'>")
+            
+            # 1.5 球
+            c15 = "highlight-prob" if p15 > 75 else ""
+            html_parts.append(f"<div class='prob-item {c15}'><div class='prob-title'>1.5大 ({p15:.0f}%)</div><div class='prob-val'>{fmt_odd(100/p15) if p15>0 else '---'}</div><div class='prob-sub'>需 > {fmt_odd(min_o15)}</div></div>")
+            
+            # 2.5 球
+            c25 = "highlight-prob" if p25 > 55 else ""
+            html_parts.append(f"<div class='prob-item {c25}'><div class='prob-title'>2.5大 ({p25:.0f}%)</div><div class='prob-val'>{fmt_odd(100/p25) if p25>0 else '---'}</div><div class='prob-sub'>需 > {fmt_odd(min_o25)}</div></div>")
+            
+            # 3.5 球
+            c35 = "highlight-prob" if p35 > 40 else ""
+            html_parts.append(f"<div class='prob-item {c35}'><div class='prob-title'>3.5大 ({p35:.0f}%)</div><div class='prob-val'>{fmt_odd(100/p35) if p35>0 else '---'}</div><div class='prob-sub'>需 > {fmt_odd(min_o35)}</div></div>")
+            
+            html_parts.append(f"</div>")
+
+            # 5. 價值模型 (1x2)
+            html_parts.append(f"<div class='section-title'>💰 獨贏價值 (需高於 Min Odds)</div>")
             html_parts.append(f"<div class='odds-row'><span>主 > <span class='min-odds-val'>{fmt_odd(min_h)}</span></span> <span>客 > <span class='min-odds-val'>{fmt_odd(min_a)}</span></span></div>")
             
-            html_parts.append(f"<div class='section-title'>⚽ 入球分析 (Confidence: {range_l}-{range_h})</div>")
-            c25 = "highlight-goal" if prob_o25 > 60 else ""
-            html_parts.append(f"<div class='goal-grid'>")
-            html_parts.append(f"<div class='goal-item'><div class='goal-title'>合成xG主</div><div class='goal-val'>{xg_h}</div></div>")
-            html_parts.append(f"<div class='goal-item {c25}'><div class='goal-title'>2.5大 ({prob_o25:.0f}%)</div><div class='goal-val'>{fmt_odd(fair_o25)}</div></div>")
-            html_parts.append(f"<div class='goal-item'><div class='goal-title'>合成xG客</div><div class='goal-val'>{xg_a}</div></div>")
-            html_parts.append(f"</div>")
-            
-            # 這裡顯示大球的值博賠率
-            html_parts.append(f"<div style='text-align:center; margin-top:4px; font-size:0.75rem;'>🔥 大球賠率需 > <b style='color:#00ff00; border-bottom:1px dashed #00ff00;'>{fmt_odd(min_o25)}</b> 才可買</div>")
-            
-            html_parts.append(f"<div style='margin-top:5px; font-size:0.75rem; text-align:center; color:#888;'>策略: <span style='color:#fff'>{live_strat}</span></div>")
+            html_parts.append(f"<div style='margin-top:8px; font-size:0.75rem; text-align:center; color:#888;'>策略: <span style='color:#fff'>{live_strat}</span></div>")
             html_parts.append(f"</div>")
             final_html = "".join(html_parts)
 
             with st.container():
                 st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
-                col_match, col_ai = st.columns([1.5, 1])
+                # [V15.3] 調整比例：左邊資訊 4，右邊分析 6 (更寬)
+                col_match, col_ai = st.columns([4, 6])
+                
                 with col_match:
                     st.markdown(f"<div class='sub-text'>🕒 {time_part} | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
                     st.write("") 
@@ -254,10 +268,14 @@ def main():
                     m_parts.append(f"<div class='team-name'>{row['客隊']}</div>")
                     m_parts.append(f"<div class='market-value-text'>{a_val_disp}</div>")
                     m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('客近況', ''))}</div></div></div>")
+                    
+                    # [V15.3] H2H 歸位
                     st.markdown("".join(m_parts), unsafe_allow_html=True)
+                    st.markdown(f"<div style='margin-top:10px; text-align:center;'><div class='h2h-text'>歷史對賽: {h2h_text}</div></div>", unsafe_allow_html=True)
 
                 with col_ai:
-                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444;'>", unsafe_allow_html=True)
+                    # 去掉左邊框線，讓空間感更好
+                    st.markdown("<div style='padding-left: 5px;'>", unsafe_allow_html=True)
                     st.markdown(final_html, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True) 
                 st.markdown('</div>', unsafe_allow_html=True)
