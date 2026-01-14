@@ -138,4 +138,147 @@ def main():
     
     df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
     available_dates = ["全部"] + sorted(list(set(df['日期'])))
-    selected_date = st.sidebar.selectbox("📅 選擇日期:", available_dates
+    selected_date = st.sidebar.selectbox("📅 選擇日期:", available_dates)
+
+    filtered_df = df.copy()
+    if selected_league != "全部": filtered_df = filtered_df[filtered_df['聯賽'] == selected_league]
+    if selected_date != "全部": filtered_df = filtered_df[filtered_df['日期'] == selected_date]
+
+    tab1, tab2 = st.tabs(["📅 未開賽 / 進行中", "✅ 已完場 (核對賽果)"])
+
+    def render_matches(target_df):
+        if target_df.empty: 
+            st.info("在此篩選條件下暫無賽事。")
+            return
+            
+        target_df = target_df.sort_values(by='時間', ascending=True)
+        current_date_header = None
+        
+        for index, row in target_df.iterrows():
+            date_part = row['日期']
+            time_part = str(row['時間']).split(' ')[1] if ' ' in str(row['時間']) else row['時間']
+            
+            if date_part != current_date_header:
+                current_date_header = date_part
+                weekday_str = get_weekday_str(date_part)
+                st.markdown(f"#### 🗓️ {current_date_header} ({weekday_str})")
+                st.divider()
+
+            exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
+            prob_o25 = float(row.get('大球率2.5', 0))
+            prob_o35 = float(row.get('大球率3.5', 0))
+            prob_ht_o05 = float(row.get('上半大0.5', 0))
+            
+            fair_h = float(row.get('合理主賠', 99)); fair_d = float(row.get('合理和賠', 99)); fair_a = float(row.get('合理客賠', 99))
+            min_h = float(row.get('最低賠率主', 99)); min_a = float(row.get('最低賠率客', 99))
+            fair_o25 = float(row.get('合理大賠2.5', 99))
+            fair_o35 = float(row.get('合理大賠3.5', 99))
+            
+            kelly_h = float(row.get('凱利主(%)', 0))
+            
+            def fmt_odd(val): return f"{val:.2f}" if val < 50 else "---"
+            
+            h2h_avg = float(row.get('H2H平均球', 0))
+            live_strat = row.get('走地策略', '中性觀望')
+            corner_trend = row.get('角球傾向', '中')
+            smart_tags = row.get('智能標籤', '')
+            risk_level = row.get('風險評級', '值博')
+            top_pick = row.get('首選推介', '數據分析中')
+            
+            h_rank = row.get('主排名', '-'); a_rank = row.get('客排名', '-')
+            h_val_disp = format_market_value(row.get('主隊身價', ''))
+            a_val_disp = format_market_value(row.get('客隊身價', ''))
+            h_mom = float(row.get('主動量', 0)); a_mom = float(row.get('客動量', 0))
+            h_trend = "📈" if h_mom > 0.3 else "📉" if h_mom < -0.3 else ""
+            a_trend = "📈" if a_mom > 0.3 else "📉" if a_mom < -0.3 else ""
+            
+            status_str = str(row['狀態'])
+            if '進行中' in status_str: status_icon = '🔴'; status_class = 'live-status'
+            elif '完場' in status_str: status_icon = '🟢'; status_class = 'sub-text'
+            else: status_icon = '⚪'; status_class = 'sub-text'
+            
+            correct_score = row.get('波膽預測', 'N/A')
+
+            # === HTML 構建 ===
+            html_parts = []
+            html_parts.append(f"<div class='adv-stats-box'>")
+            
+            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha Pro 獵殺首選</div><div class='top-pick-val'>{top_pick}</div></div>")
+            
+            risk_class = "risk-low" if "極穩" in risk_level else "risk-high" if "高險" in risk_level else "risk-med"
+            tags_html = "".join([f"<span class='smart-tag'>{t}</span>" for t in smart_tags.split(' ') if t])
+            html_parts.append(f"<div style='margin-bottom:8px;'><span class='risk-badge {risk_class}'>{risk_level}</span> {tags_html}</div>")
+            
+            html_parts.append(f"<div style='display:flex; justify-content:space-between; margin-bottom:5px;'>")
+            html_parts.append(f"<span>🎯 預期: <b style='color:#fff'>{exp_h} : {exp_a}</b></span>")
+            html_parts.append(f"<span>🎲 波膽: <span style='color:#00ff00'>{correct_score}</span></span>")
+            html_parts.append(f"</div>")
+            
+            html_parts.append(f"<div class='section-title'>💰 價值模型 (Value Model)</div>")
+            
+            # 實用化顯示：告訴使用者幾倍以上可以買
+            html_parts.append(f"<div class='odds-row'><span>主合理: <span class='odds-val'>{fmt_odd(fair_h)}</span></span> <span>和: <span class='odds-val'>{fmt_odd(fair_d)}</span></span> <span>客合理: <span class='odds-val'>{fmt_odd(fair_a)}</span></span></div>")
+            
+            html_parts.append(f"<div style='display:flex; justify-content:space-between; margin-top:4px;'>")
+            html_parts.append(f"<div class='min-odds-box'>👉 主勝賠率 > {fmt_odd(min_h)} 可博</div>")
+            html_parts.append(f"<div class='min-odds-box'>👉 客勝賠率 > {fmt_odd(min_a)} 可博</div>")
+            html_parts.append(f"</div>")
+            
+            html_parts.append(f"<div class='section-title'>⚽ 合理價位 (O/U)</div>")
+            c25 = "highlight-goal" if prob_o25 > 60 else ""
+            c35 = "highlight-goal" if prob_o35 > 45 else "" 
+            
+            html_parts.append(f"<div class='goal-grid'>")
+            html_parts.append(f"<div class='goal-item'><div class='goal-title'>對賽平均</div><div class='goal-val'>{h2h_avg}球</div></div>")
+            html_parts.append(f"<div class='goal-item {c25}'><div class='goal-title'>2.5大 ({prob_o25:.0f}%)</div><div class='goal-val'>{fmt_odd(fair_o25)}</div></div>")
+            html_parts.append(f"<div class='goal-item {c35}'><div class='goal-title'>3.5大 ({prob_o35:.0f}%)</div><div class='goal-val-high'>{fmt_odd(fair_o35)}</div></div>")
+            html_parts.append(f"</div>")
+            
+            html_parts.append(f"<div class='strategy-text'>策略: {live_strat} | 角球: {corner_trend} | 上半>0.5: {prob_ht_o05:.0f}%</div>")
+            
+            html_parts.append(f"</div>")
+            
+            final_html = "".join(html_parts)
+
+            with st.container():
+                st.markdown('<div class="css-card-container">', unsafe_allow_html=True)
+                col_match, col_ai = st.columns([1.5, 1])
+                with col_match:
+                    st.markdown(f"<div class='sub-text'>🕒 {time_part} (HKT) | 🏆 {row['聯賽']}</div>", unsafe_allow_html=True)
+                    st.write("") 
+                    
+                    m_parts = ["<div class='match-row'>", "<div class='team-col-home'>"]
+                    m_parts.append(f"<div><span class='rank-badge'>#{h_rank}</span> {h_trend}</div>")
+                    m_parts.append(f"<div class='team-name'>{row['主隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{h_val_disp}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('主近況', ''))}</div></div>")
+                    
+                    m_parts.append("<div class='score-col'><div class='score-text'>")
+                    s_h = row.get('主分', ''); s_a = row.get('客分', '')
+                    display_score = f"{s_h} - {s_a}" if str(s_h) != '' else "VS"
+                    m_parts.append(f"{display_score}</div>")
+                    
+                    m_parts.append(f"<div class='{status_class}' style='margin-top:2px; font-size:0.75rem;'>{status_icon} {status_str}</div></div>")
+                    
+                    m_parts.append("<div class='team-col-away'>")
+                    m_parts.append(f"<div><span class='rank-badge'>#{a_rank}</span> {a_trend}</div>")
+                    m_parts.append(f"<div class='team-name'>{row['客隊']}</div>")
+                    m_parts.append(f"<div class='market-value-text'>{a_val_disp}</div>")
+                    m_parts.append(f"<div style='margin-top:2px;'>{get_form_html(row.get('客近況', ''))}</div></div></div>")
+                    
+                    st.markdown("".join(m_parts), unsafe_allow_html=True)
+
+                with col_ai:
+                    st.markdown("<div style='padding-left: 15px; border-left: 1px solid #444; height: 100%; display:flex; flex-direction:column; justify-content:center;'>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='h2h-text'>⚔️ {row.get('H2H','N/A')}</div>", unsafe_allow_html=True)
+                    if row.get('大小球統計') != 'N/A': st.markdown(f"<div class='ou-stats-text'>📊 {row['大小球統計']}</div>", unsafe_allow_html=True)
+                    
+                    st.markdown(final_html, unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True) 
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    with tab1: render_matches(filtered_df[filtered_df['狀態'] != '完場'])
+    with tab2: render_matches(filtered_df[filtered_df['狀態'] == '完場'])
+
+if __name__ == "__main__":
+    main()
