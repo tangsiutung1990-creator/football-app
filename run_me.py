@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import random
-import numpy as np # 需要 numpy 進行標準差計算
+import numpy as np 
 
 # ================= 設定區 =================
 API_KEY = '531bb40a089446bdae76a019f2af3beb' 
@@ -15,10 +15,10 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [V15.1] 市場與數學係數
+# [V15.2] 參數微調
 MARKET_GOAL_INFLATION = 1.28 
-DIXON_COLES_RHO = -0.13 # 低比分修正
-CONFIDENCE_INTERVAL_SIGMA = 1.2 # 信心區間標準差係數
+DIXON_COLES_RHO = -0.13 
+CONFIDENCE_INTERVAL_SIGMA = 1.2
 
 REQUEST_COUNT = 0
 
@@ -98,7 +98,11 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= [V15.1] 凱利公式、Alpha 獵殺與主導指數 =================
+# ================= [V15.2] 核心計算與邏輯修復 =================
+def calculate_synthetic_xg(home_exp, away_exp):
+    # 計算合成 xG (基於預期入球率)
+    return round(home_exp, 2), round(away_exp, 2)
+
 def calculate_kelly_stake(prob, odds):
     if odds <= 1: return 0
     b = odds - 1
@@ -107,14 +111,12 @@ def calculate_kelly_stake(prob, odds):
     return max(0, f * 100) 
 
 def calculate_dominance_index(h_info, a_info):
-    # 計算主導指數：(主攻/客防) - (客攻/主防)
-    # 正數越大代表主隊越強勢，負數越大代表客隊越強勢
     h_force = (h_info['home_att'] * 1.1) / max(a_info['away_def'], 0.5)
     a_force = (a_info['away_att'] * 1.1) / max(h_info['home_def'], 0.5)
     dom_idx = h_force - a_force
     return round(dom_idx, 2)
 
-def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a, dom_idx):
+def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a, dom_idx, prob_o25):
     tags = []
     h_form = str(h_info.get('form', 'N/A'))
     
@@ -123,11 +125,13 @@ def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a
     
     if h_info['home_att'] > 2.2: tags.append("🏠主場龍")
     if a_info['away_def'] > 2.0: tags.append("🚌客場蟲")
-    if match_vol > 3.5: tags.append("🎆入球機器")
-    elif match_vol < 2.0: tags.append("💤悶戰專家")
+    
+    # 修正：只有機率支持時才給入球標籤
+    if match_vol > 3.5 and prob_o25 > 0.55: tags.append("🎆入球機器")
+    elif match_vol < 2.0 and prob_o25 < 0.45: tags.append("💤悶戰專家")
+    
     if 'WWWW' in h_form: tags.append("🔥主連勝")
     
-    # [V15.1] EV+ 標籤
     if kelly_h > 8: tags.append("💎主EV+")
     if kelly_a > 8: tags.append("💎客EV+")
 
@@ -136,43 +140,71 @@ def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a
 def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol, kelly_h, kelly_a, dom_idx):
     scores = {}
     
-    # 大小球
-    scores['2.5大'] = prob_o25 * 100
-    if h2h_avg > 3.0: scores['2.5大'] += 15
-    if match_vol > 3.2: scores['2.5大'] += 10
+    # === [V15.2] 邏輯修復：門檻鎖死 (Hard Gate) ===
+    # 只有當機率 > 45% 時，才允許進入評分池，否則直接給負分
     
-    scores['2.5細'] = (1 - prob_o25) * 100
-    if match_vol < 2.2: scores['2.5細'] += 15
+    # 1. 大小球評分
+    if prob_o25 > 0.45:
+        scores['2.5大'] = prob_o25 * 100
+        if h2h_avg > 3.0: scores['2.5大'] += 15
+        if match_vol > 3.2: scores['2.5大'] += 10
+    else:
+        scores['2.5大'] = -100 # 強制排除
+
+    if (1 - prob_o25) > 0.45:
+        scores['2.5細'] = (1 - prob_o25) * 100
+        if match_vol < 2.2: scores['2.5細'] += 15
+        if h2h_avg < 2.0: scores['2.5細'] += 10
+    else:
+        scores['2.5細'] = -100
+
+    # 2. 主客和評分
+    if h_win > 0.35: # 主勝門檻
+        scores['主勝'] = h_win * 100 + (kelly_h * 1.5)
+        if dom_idx > 0.8: scores['主勝'] += 10
+    else:
+        scores['主勝'] = -100
+
+    if a_win > 0.35: # 客勝門檻
+        scores['客勝'] = a_win * 100 + (kelly_a * 1.5)
+        if dom_idx < -0.8: scores['客勝'] += 10
+    else:
+        scores['客勝'] = -100
     
-    # 主客和 (加入主導指數權重)
-    scores['主勝'] = h_win * 100 + (kelly_h * 1.5)
-    if dom_idx > 0.8: scores['主勝'] += 10
+    # 3. BTTS
+    if prob_btts > 0.55:
+        scores['BTTS-是'] = prob_btts * 100
+    else:
+        scores['BTTS-是'] = -100
     
-    scores['客勝'] = a_win * 100 + (kelly_a * 1.5)
-    if dom_idx < -0.8: scores['客勝'] += 10
+    # 強制決策：過濾掉負分選項
+    valid_scores = {k: v for k, v in scores.items() if v > 0}
     
-    # BTTS
-    scores['BTTS-是'] = prob_btts * 100
-    
-    # 強制決策
-    valid_scores = {k: v for k, v in scores.items()}
-    if not valid_scores: return "數據混亂 (避)", 0
+    if not valid_scores: 
+        # 如果所有選項都不及格，選機率最高的那個並標示為風險
+        fallback_scores = {'主勝': h_win, '客勝': a_win, '2.5細': 1-prob_o25}
+        best = max(fallback_scores, key=fallback_scores.get)
+        return f"{best} (⚠️觀望)", 0
     
     best_pick = max(valid_scores, key=valid_scores.get)
     best_score = valid_scores[best_pick]
     
     rating = ""
-    if best_score > 85: rating = "(🌟鐵膽)"
+    # 提高鐵膽門檻
+    if best_score > 90: rating = "(🌟鐵膽)"
     elif best_score > 75: rating = "(🔥重心)"
-    elif best_score > 65: rating = "(✅值博)"
+    elif best_score > 60: rating = "(✅值博)"
     else: rating = "(🤔博冷)" 
     
     return f"{best_pick} {rating}", best_score
 
 def calculate_risk_level(ou_conf, match_vol, prob_o25, kelly_sum, range_spread):
-    # Range spread 是信心區間的寬度，越寬代表越不確定
     score = 50 - (ou_conf - 50)
-    if range_spread > 1.5: score += 20 # 區間太寬，風險高
+    if range_spread > 1.5: score += 20 
+    
+    # 如果預測大球但機率低，風險極高
+    if prob_o25 < 0.45: score += 30 
+    
     if prob_o25 > 0.7 or prob_o25 < 0.3: score -= 20
     if kelly_sum > 20: score -= 10 
     
@@ -180,11 +212,10 @@ def calculate_risk_level(ou_conf, match_vol, prob_o25, kelly_sum, range_spread):
     elif score < 55: return "🔵 穩健"
     else: return "🔴 高險"
 
-# ================= [V15.1 數學核心] =================
+# ================= [V15.2 數學核心] =================
 def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
-    # Dixon-Coles 調整
     def adjustment(x, y, lam, mu, rho):
         if x == 0 and y == 0: return 1 - (lam * mu * rho)
         if x == 0 and y == 1: return 1 + (lam * rho)
@@ -195,8 +226,6 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     h_win=0; draw=0; a_win=0
     prob_o15 = 0; prob_o25 = 0; prob_o35 = 0
     
-    # [V15.1] 信心區間計算 - 使用標準差
-    # Poisson 分佈的標準差是 sqrt(lambda)
     total_exp = home_exp + away_exp
     std_dev = math.sqrt(total_exp)
     lower_bound = max(0, total_exp - CONFIDENCE_INTERVAL_SIGMA * std_dev)
@@ -217,19 +246,16 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
             if total > 2.5: prob_o25 += final_prob
             if total > 3.5: prob_o35 += final_prob
     
-    # 歸一化
     total_prob = h_win + draw + a_win
     if total_prob > 0:
         h_win /= total_prob; draw /= total_prob; a_win /= total_prob
         prob_o15 /= total_prob; prob_o25 /= total_prob; prob_o35 /= total_prob
 
-    # 上半場估算
     ht_lambda_h = home_exp * 0.42
     ht_lambda_a = away_exp * 0.42
     prob_ht_o05 = 1 - (poisson(0, ht_lambda_h) * poisson(0, ht_lambda_a))
     btts = (1 - poisson(0, home_exp)) * (1 - poisson(0, away_exp))
     
-    # 合理賠率
     limit = 50.0
     fair_1x2_h = min((1 / max(h_win, 0.01)), limit)
     fair_1x2_d = min((1 / max(draw, 0.01)), limit)
@@ -237,13 +263,11 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     fair_o25 = min((1 / max(prob_o25, 0.01)), limit)
     fair_u25 = min((1 / max(1-prob_o25, 0.01)), limit)
 
-    # 最低值博賠率 (EV+ Threshold) - 加入 5% 安全邊際
     safety_margin = 1.05
     min_odds_h = round(fair_1x2_h * safety_margin, 2)
     min_odds_a = round(fair_1x2_a * safety_margin, 2)
     min_odds_o25 = round(fair_o25 * safety_margin, 2)
 
-    # 模擬 Kelly (假設市場賠率為 Fair Odds + 5% 水位)
     market_sim_h = fair_1x2_h * 0.95 
     kelly_h = calculate_kelly_stake(h_win, market_sim_h * 1.15) 
     kelly_a = calculate_kelly_stake(a_win, fair_1x2_a * 1.05) 
@@ -426,7 +450,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V15.1 Alpha Pro Max 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V15.2 Beta Ultimate 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -462,6 +486,9 @@ def get_real_data(market_value_map):
                 h_name, h_info, a_info, h_val, a_val, h2h_o25_rate, h2h_avg, lg_avg, lg_code
             )
             
+            # [V15.2] 合成 xG
+            xg_h, xg_a = calculate_synthetic_xg(pred_h, pred_a)
+            
             correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
             adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate, vol, h2h_avg)
             dom_idx = calculate_dominance_index(h_info, a_info)
@@ -469,7 +496,7 @@ def get_real_data(market_value_map):
             kelly_sum = adv_stats['kelly_h'] + adv_stats['kelly_a']
             range_spread = adv_stats['goal_range_high'] - adv_stats['goal_range_low']
             
-            smart_tags = analyze_team_tags(h_info, a_info, vol, h2h_avg, adv_stats['kelly_h'], adv_stats['kelly_a'], dom_idx)
+            smart_tags = analyze_team_tags(h_info, a_info, vol, h2h_avg, adv_stats['kelly_h'], adv_stats['kelly_a'], dom_idx, adv_stats['prob_o25'])
             risk_level = calculate_risk_level(adv_stats['ou_conf'], vol, adv_stats['prob_o25'], kelly_sum, range_spread)
             
             top_pick, pick_score = calculate_alpha_pick(
@@ -489,11 +516,12 @@ def get_real_data(market_value_map):
                 '主排名': h_info['rank'], '客排名': a_info['rank'],
                 '主近況': h_info['form'], '客近況': a_info['form'],
                 '主預測': pred_h, '客預測': pred_a,
+                'xG主': xg_h, 'xG客': xg_a, # New
                 '總球數': round(pred_h + pred_a, 1),
                 '狀態': status, '主分': score_h, '客分': score_a,
                 'H2H': h2h_str, 'H2H平均球': h2h_avg,
                 '主隊身價': h_val, '客隊身價': a_val,
-                '主導指數': dom_idx, # New
+                '主導指數': dom_idx,
                 '波膽預測': correct_score_str,
                 'BTTS': adv_stats['btts'],
                 
@@ -503,9 +531,9 @@ def get_real_data(market_value_map):
                 '合理主賠': adv_stats['fair_1x2_h'],
                 '合理和賠': adv_stats['fair_1x2_d'],
                 '合理客賠': adv_stats['fair_1x2_a'],
-                '最低賠率主': adv_stats['min_odds_h'], # Value
-                '最低賠率客': adv_stats['min_odds_a'], # Value
-                '最低賠率大2.5': adv_stats['min_odds_o25'], # Value
+                '最低賠率主': adv_stats['min_odds_h'], 
+                '最低賠率客': adv_stats['min_odds_a'], 
+                '最低賠率大2.5': adv_stats['min_odds_o25'], 
                 
                 '合理大賠2.5': adv_stats['fair_o25'], 
                 '合理細賠2.5': adv_stats['fair_u25'], 
@@ -531,6 +559,7 @@ def main():
     if real_data:
         df = pd.DataFrame(real_data)
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主近況','客近況','主預測','客預測',
+                'xG主','xG客', # New
                 '總球數','狀態','主分','客分','H2H','H2H平均球',
                 '主隊身價','客隊身價','主導指數','波膽預測',
                 'BTTS','大球率2.5','上半大0.5',
@@ -544,7 +573,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 upload_sheet.clear() 
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print(f"✅ 上傳完成！(V15.1)")
+                print(f"✅ 上傳完成！(V15.2)")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
     else: print("⚠️ 無數據產生。")
 
