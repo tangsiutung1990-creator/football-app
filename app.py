@@ -19,6 +19,7 @@ st.markdown("""
     /* V15.7 Style */
     .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 8px; font-size: 0.8rem; }
     .match-header { display: flex; justify-content: space-between; color: #aaa; font-size: 0.75rem; margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+    
     .team-row { display: grid; grid-template-columns: 3fr 1fr 3fr; align-items: center; margin-bottom: 8px; }
     .team-name { font-weight: bold; font-size: 1rem; color: #fff; }
     .team-score { font-size: 1.2rem; font-weight: bold; color: #00ffea; text-align: center; }
@@ -35,6 +36,8 @@ st.markdown("""
     
     .rec-box { background: linear-gradient(90deg, #1cb5e0, #000046); padding: 5px; border-radius: 4px; text-align: center; margin-top: 5px; font-weight: bold; color: #fff; border: 1px solid #555; display: flex; justify-content: space-between; align-items: center; }
     .ah-sugg { color: #00ff00; font-size: 0.75rem; margin-top: 4px; text-align: center; border: 1px dashed #444; border-radius: 4px; }
+    
+    .conf-range { font-size: 0.65rem; color: #aaa; margin-top: 2px; text-align: right; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -78,7 +81,8 @@ def main():
 
         # 數據整理 (Error Handling: 缺少欄位自動補 0)
         req_cols = ['xG主','xG客','主勝率','和局率','客勝率','HT主','HT和','HT客','AH-0.5','AH-1.0','AH-2.0',
-                    'C75','C85','C95','大球率1.5','大球率2.5','大球率3.5','最低賠率主','最低賠率客']
+                    'C75','C85','C95','大球率1.5','大球率2.5','大球率3.5','最低賠率主','最低賠率客',
+                    '入球區間低', '入球區間高'] # [V15.7 Hotfix] 加入區間欄位
         
         # 檢查是否為舊版數據
         if 'HT主' not in df.columns:
@@ -102,6 +106,8 @@ def main():
         # === 渲染 Compact Matrix ===
         for index, row in df.iterrows():
             time_part = str(row['時間']).split(' ')[1]
+            range_l = row.get('入球區間低', 0)
+            range_h = row.get('入球區間高', 0)
             
             html = f"""
             <div class='compact-card'>
@@ -122,7 +128,10 @@ def main():
                     </div>
                 </div>
                 
-                <div style='text-align:center; font-size:0.7rem; color:#aaa; margin-bottom:5px;'>對賽: {row.get('H2H', '')}</div>
+                <div style='display:flex; justify-content:space-between; align-items:center; font-size:0.7rem; color:#aaa; margin-bottom:5px;'>
+                    <span>對賽: {row.get('H2H', '')}</span>
+                    <span>信心區間: {range_l}-{range_h} 球</span>
+                </div>
                 
                 <div class='grid-matrix'>
                     <div class='matrix-col'>
