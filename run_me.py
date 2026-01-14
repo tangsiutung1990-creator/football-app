@@ -15,10 +15,10 @@ BASE_URL = 'https://api.football-data.org/v4'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# [V15.7 Hotfix] 參數微調
+# [V15.8] 參數優化：縮窄信心區間
 MARKET_GOAL_INFLATION = 1.25 
 DIXON_COLES_RHO = -0.13 
-CONFIDENCE_INTERVAL_SIGMA = 1.2
+CONFIDENCE_INTERVAL_SIGMA = 0.95 # 從 1.2 調降，讓區間更精確
 
 REQUEST_COUNT = 0
 
@@ -38,11 +38,11 @@ TITAN_TEAMS = [
     'Milan', 'Napoli', 'Sporting CP', 'Benfica', 'Porto', 'PSV', 'Feyenoord', 'Ajax'
 ]
 
-# ================= 智能 API 請求函式 (Hotfix: 更嚴格限流) =================
+# ================= 智能 API 請求函式 =================
 def check_rate_limit():
     global REQUEST_COUNT
     REQUEST_COUNT += 1
-    # 免費版限制約 10次/分鐘。改為每 5 次請求就強制休息，確保不撞牆。
+    # 嚴格限流：每 5 次請求休息 65 秒
     if REQUEST_COUNT % 5 == 0:
         print(f"⏳ [智能限流] 已發送 {REQUEST_COUNT} 次請求，強制休息 65 秒以防 429...")
         time.sleep(65)
@@ -53,7 +53,7 @@ def call_api_with_retry(url, params=None, headers=None, retries=3):
         try:
             response = requests.get(url, headers=headers, params=params)
             if response.status_code == 200:
-                time.sleep(1.5) # 每次成功後小睡，平滑請求
+                time.sleep(1.5) # 請求間隔
                 return response.json()
             elif response.status_code == 429:
                 wait_time = 70 
@@ -235,7 +235,7 @@ def calculate_risk_level(ou_conf, match_vol, prob_o25, kelly_sum, range_spread):
     elif score < 55: return "🔵穩健"
     else: return "🔴高險"
 
-# ================= [數學核心 - 修復版] =================
+# ================= [數學核心 - 全面機率] =================
 def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     
@@ -255,7 +255,7 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     ht_lambda_a = away_exp * 0.45
     ht_h_win = 0; ht_draw = 0; ht_a_win = 0
     
-    # 信心區間計算
+    # 信心區間計算 (縮窄版)
     total_exp = home_exp + away_exp
     std_dev = math.sqrt(total_exp)
     lower_bound = max(0, total_exp - CONFIDENCE_INTERVAL_SIGMA * std_dev)
@@ -348,9 +348,8 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
         'live_strat': live_strat,
         'kelly_h': round(kelly_h, 1),
         'kelly_a': round(kelly_a, 1),
-        # [V15.7 Hotfix] 補回遺漏的鍵值，防止 KeyError
-        'goal_range_low': round(lower_bound, 1),
-        'goal_range_high': round(upper_bound, 1)
+        'goal_range_low': round(lower_bound, 1), # 確保不遺漏
+        'goal_range_high': round(upper_bound, 1) # 確保不遺漏
     }
 
 def calculate_correct_score_probs(home_exp, away_exp):
@@ -533,7 +532,7 @@ def get_h2h_and_ou_stats(match_id, h_id, a_id):
 def get_real_data(market_value_map):
     standings, league_stats = get_all_standings_with_stats()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V15.7 Hotfix 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V15.8 Render Fix Ultimate 啟動...")
     headers = {'X-Auth-Token': API_KEY}
     utc_now = datetime.now(pytz.utc)
     start_date = (utc_now - timedelta(days=2)).strftime('%Y-%m-%d') 
@@ -638,11 +637,12 @@ def get_real_data(market_value_map):
                 '合理大賠2.5': adv_stats['fair_o25'], 
                 '凱利主(%)': adv_stats['kelly_h'],
                 '凱利客(%)': adv_stats['kelly_a'],
-                '入球區間低': adv_stats['goal_range_low'],
-                '入球區間高': adv_stats['goal_range_high'],
                 
                 '亞盤建議': handicap_txt, 
                 '角球預測': f"{c_exp}", 
+                
+                '入球區間低': adv_stats['goal_range_low'],
+                '入球區間高': adv_stats['goal_range_high'],
                 
                 '走地策略': adv_stats['live_strat'],
                 '智能標籤': smart_tags,
@@ -675,7 +675,7 @@ def main():
                 upload_sheet = spreadsheet.sheet1 
                 upload_sheet.clear() 
                 upload_sheet.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print(f"✅ 上傳完成！(V15.7 Hotfix)")
+                print(f"✅ 上傳完成！(V15.8 Render Fix)")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
     else: print("⚠️ 無數據產生。")
 
