@@ -10,7 +10,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI全能預測 (Ultimate Pro V14.3)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Alpha Pro (V15.0)", page_icon="⚽", layout="wide")
 
 # ================= CSS =================
 st.markdown("""
@@ -32,9 +32,8 @@ st.markdown("""
     .form-l { background-color: #dc3545 !important; }
     .live-status { color: #ff4b4b !important; font-weight: bold; animation: blinker 1.5s linear infinite; }
     @keyframes blinker { 50% { opacity: 0; } }
-    .postponed-status { color: #888888 !important; font-style: italic; border: 1px dashed #555; padding: 2px 5px; border-radius: 4px; }
     
-    /* V14 Alpha 樣式 */
+    /* V15 Pro 樣式 */
     .adv-stats-box { background-color: #25262b; padding: 10px; border-radius: 6px; border: 1px solid #444; margin-top: 8px; font-size: 0.75rem; }
     .section-title { font-size: 0.8rem; font-weight: bold; color: #ff9800; border-bottom: 1px solid #444; padding-bottom: 2px; margin-bottom: 5px; margin-top: 5px; }
     .odds-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 0.75rem; }
@@ -58,6 +57,10 @@ st.markdown("""
     .top-pick-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 8px; border: 1px solid #8e44ad; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     .top-pick-title { font-size: 0.75rem; color: #eee; font-weight:bold; letter-spacing: 1px; }
     .top-pick-val { font-size: 1.3rem; font-weight: 900; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.5); margin-top: 2px; }
+    
+    /* 凱利條 */
+    .kelly-bar-container { width: 100%; background: #333; height: 6px; border-radius: 3px; margin-top: 2px; overflow: hidden; }
+    .kelly-bar-fill { height: 100%; background: #00ff00; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -77,19 +80,6 @@ def format_market_value(val):
         clean_val = str(val).replace('€','').replace('M','').replace(',','').strip()
         return f"€{int(float(clean_val))}M"
     except: return str(val) if not pd.isna(val) else ""
-
-def calculate_probabilities(home_exp, away_exp):
-    def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
-    home_win=0; draw=0; away_win=0; over=0; under=0
-    for h in range(8): 
-        for a in range(8): 
-            prob = poisson(h, home_exp) * poisson(a, away_exp)
-            if h > a: home_win += prob
-            elif h == a: draw += prob
-            else: away_win += prob
-            if h + a > 2.5: over += prob
-            else: under += prob
-    return {"home_win": home_win*100, "draw": draw*100, "away_win": away_win*100, "over": over*100, "under": under*100}
 
 WEEKDAY_MAP = { 0: '週一', 1: '週二', 2: '週三', 3: '週四', 4: '週五', 5: '週六', 6: '週日' }
 def get_weekday_str(date_str):
@@ -115,7 +105,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI全能預測 (Ultimate Pro V14.3)")
+    st.title("⚽ 足球AI Alpha Pro (V15.0)")
     
     df = load_data()
     
@@ -141,7 +131,7 @@ def main():
         return
 
     # 確保數值型別正確
-    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心', 'H2H平均球', '合理主賠', '合理和賠', '合理客賠', '合理大賠2.5', '合理大賠3.5', '上半大0.5']
+    num_cols = ['主預測', '客預測', '主攻(H)', '客攻(A)', '賽事風格', '主動量', '客動量', 'BTTS', '主零封', '客零封', '大球率1.5', '大球率2.5', '大球率3.5', 'OU信心', 'H2H平均球', '合理主賠', '合理和賠', '合理客賠', '合理大賠2.5', '合理細賠2.5', '上半大0.5', '凱利主(%)', '凱利客(%)']
     for col in num_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -178,8 +168,6 @@ def main():
                 st.divider()
 
             exp_h = float(row.get('主預測', 0)); exp_a = float(row.get('客預測', 0))
-            
-            prob_o15 = float(row.get('大球率1.5', 0))
             prob_o25 = float(row.get('大球率2.5', 0))
             prob_o35 = float(row.get('大球率3.5', 0))
             prob_ht_o05 = float(row.get('上半大0.5', 0))
@@ -187,6 +175,9 @@ def main():
             fair_h = float(row.get('合理主賠', 99)); fair_d = float(row.get('合理和賠', 99)); fair_a = float(row.get('合理客賠', 99))
             fair_o25 = float(row.get('合理大賠2.5', 99))
             fair_o35 = float(row.get('合理大賠3.5', 99))
+            
+            kelly_h = float(row.get('凱利主(%)', 0))
+            kelly_a = float(row.get('凱利客(%)', 0))
             
             def fmt_odd(val): return f"{val:.2f}" if val < 50 else "---"
             
@@ -215,7 +206,7 @@ def main():
             html_parts = []
             html_parts.append(f"<div class='adv-stats-box'>")
             
-            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha 獵殺首選</div><div class='top-pick-val'>{top_pick}</div></div>")
+            html_parts.append(f"<div class='top-pick-box'><div class='top-pick-title'>🎯 Alpha Pro 獵殺首選</div><div class='top-pick-val'>{top_pick}</div></div>")
             
             risk_class = "risk-low" if "極穩" in risk_level else "risk-high" if "高險" in risk_level else "risk-med"
             tags_html = "".join([f"<span class='smart-tag'>{t}</span>" for t in smart_tags.split(' ') if t])
@@ -226,8 +217,17 @@ def main():
             html_parts.append(f"<span>🎲 波膽: <span style='color:#00ff00'>{correct_score}</span></span>")
             html_parts.append(f"</div>")
             
-            html_parts.append(f"<div class='section-title'>💰 合理價位 (1x2)</div>")
-            html_parts.append(f"<div class='odds-row'><span>主: <span class='odds-val'>{fmt_odd(fair_h)}</span></span> <span>和: <span class='odds-val'>{fmt_odd(fair_d)}</span></span> <span>客: <span class='odds-val'>{fmt_odd(fair_a)}</span></span></div>")
+            html_parts.append(f"<div class='section-title'>💰 價值模型 (Kelly Edge)</div>")
+            
+            # 凱利顯示邏輯
+            k_h_style = f"width:{min(kelly_h*2, 100)}%;"
+            k_a_style = f"width:{min(kelly_a*2, 100)}%;"
+            if kelly_h > 0:
+                html_parts.append(f"<div style='font-size:0.75rem; color:#aaa;'>主勝價值 ({kelly_h}%):</div><div class='kelly-bar-container'><div class='kelly-bar-fill' style='{k_h_style}'></div></div>")
+            if kelly_a > 0:
+                html_parts.append(f"<div style='font-size:0.75rem; color:#aaa;'>客勝價值 ({kelly_a}%):</div><div class='kelly-bar-container'><div class='kelly-bar-fill' style='{k_a_style}'></div></div>")
+            
+            html_parts.append(f"<div class='odds-row' style='margin-top:5px;'><span>Fair主: <span class='odds-val'>{fmt_odd(fair_h)}</span></span> <span>Fair和: <span class='odds-val'>{fmt_odd(fair_d)}</span></span> <span>Fair客: <span class='odds-val'>{fmt_odd(fair_a)}</span></span></div>")
             
             html_parts.append(f"<div class='section-title'>⚽ 合理價位 (O/U)</div>")
             c25 = "highlight-goal" if prob_o25 > 60 else ""
