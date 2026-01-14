@@ -117,7 +117,7 @@ def calculate_dominance_index(h_info, a_info):
 
 # [V15.4 新增] 亞盤與角球計算
 def calculate_handicap_and_corners(h_win, a_win, match_vol, dom_idx):
-    # 亞盤估算 (簡單模型)
+    # 亞盤估算
     handicap = "0"
     if h_win > 0.6: handicap = "-1.0"
     elif h_win > 0.5: handicap = "-0.5/1"
@@ -128,10 +128,10 @@ def calculate_handicap_and_corners(h_win, a_win, match_vol, dom_idx):
     elif a_win > 0.45: handicap = "客 -0.5"
     elif a_win > 0.4: handicap = "客 -0/0.5"
     
-    # 角球估算 (基於波動率與主導指數)
+    # 角球估算
     corner_proj = 9.5
     if match_vol > 3.0: corner_proj += 1.5
-    if abs(dom_idx) > 1.0: corner_proj += 1.0 # 強弱懸殊通常刷角球
+    if abs(dom_idx) > 1.0: corner_proj += 1.0 
     
     corner_txt = "9.5細"
     if corner_proj > 11: corner_txt = "11.5大"
@@ -162,16 +162,13 @@ def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a
 def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol, kelly_h, kelly_a, dom_idx):
     scores = {}
     
-    # === [V15.4] 嚴格門檻 (Sanity Check) ===
-    # 解決 23% 機率出鐵膽的問題：必須先過門檻才能計分
-    
-    # 1. 大小球評分
-    if prob_o25 > 0.50: # 基礎門檻
+    # 1. 大小球評分 (嚴格門檻)
+    if prob_o25 > 0.50: 
         scores['2.5大'] = prob_o25 * 100
         if h2h_avg > 3.0: scores['2.5大'] += 15
         if match_vol > 3.2: scores['2.5大'] += 10
     else:
-        scores['2.5大'] = -999 # 強制淘汰
+        scores['2.5大'] = -999 
 
     if (1 - prob_o25) > 0.50:
         scores['2.5細'] = (1 - prob_o25) * 100
@@ -249,7 +246,6 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
     lower_bound = max(0, total_exp - CONFIDENCE_INTERVAL_SIGMA * std_dev)
     upper_bound = total_exp + CONFIDENCE_INTERVAL_SIGMA * std_dev
     
-    # [修復] 擴大計算範圍至 15，避免大比分機率被切斷導致 0%
     for h in range(15): 
         for a in range(15):
             base_prob = poisson(h, home_exp) * poisson(a, away_exp)
@@ -265,7 +261,6 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
             if total > 2.5: prob_o25 += final_prob
             if total > 3.5: prob_o35 += final_prob
     
-    # 歸一化
     total_prob = h_win + draw + a_win
     if total_prob > 0:
         h_win /= total_prob; draw /= total_prob; a_win /= total_prob
@@ -358,6 +353,117 @@ def calculate_weighted_form_score(form_str):
         total_weight += w
     return score / total_weight if total_weight > 0 else 1.5
 
+# ================= 補回：獲取聯賽數據 =================
+def get_all_standings_with_stats():
+    print("📊 計算聯賽基數...")
+    standings_map = {}
+    league_stats = {} 
+    headers = {'X-Auth-Token': API_KEY}
+    
+    for i, comp in enumerate(COMPETITIONS):
+        url = f"{BASE_URL}/competitions/{comp}/standings"
+        data = call_api_with_retry(url, headers=headers)
+        if data:
+            total_h=0; total_a=0; total_m=0
+            tables = data.get('standings', [])
+            for table in tables:
+                t_type = table['type']
+                for entry in table['table']:
+                    tid = entry['team']['id']
+                    if tid not in standings_map:
+                        standings_map[tid] = {'rank':0,'form':'N/A','home_att':1.3,'home_def':1.3,'away_att':1.0,'away_def':1.0,'volatility':2.5,'season_ppg':1.3}
+                    
+                    played = entry['playedGames']
+                    points = entry['points']
+                    gf = entry['goalsFor']; ga = entry['goalsAgainst']
+                    
+                    avg_gf = gf/played if played>0 else 1.35
+                    avg_ga = ga/played if played>0 else 1.35
+
+                    if t_type == 'TOTAL':
+                        standings_map[tid]['rank'] = entry['position']
+                        raw_form = entry.get('form')
+                        standings_map[tid]['form'] = str(raw_form) if raw_form else 'N/A'
+                        standings_map[tid]['season_ppg'] = points/played if played>0 else 1.3
+                        if played > 0: 
+                            standings_map[tid]['volatility'] = (gf+ga)/played
+                    elif t_type == 'HOME':
+                        standings_map[tid]['home_att'] = avg_gf
+                        standings_map[tid]['home_def'] = avg_ga
+                        total_h += gf; 
+                        if played>0: total_m += played
+                    elif t_type == 'AWAY':
+                        standings_map[tid]['away_att'] = avg_gf
+                        standings_map[tid]['away_def'] = avg_ga
+                        total_a += gf
+            
+            if total_m > 10:
+                avg_h = max(total_h/total_m, 1.55) * 1.05 
+                avg_a = max(total_a/total_m, 1.25) * 1.05
+            else:
+                avg_h = 1.6; avg_a = 1.3
+            
+            league_stats[data['competition']['code']] = {'avg_home': avg_h, 'avg_away': avg_a}
+    return standings_map, league_stats
+
+# ================= 補回：預測模型 =================
+def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_rate, h2h_avg_goals, league_avg, lg_code):
+    lg_h = league_avg.get('avg_home', 1.6)
+    lg_a = league_avg.get('avg_away', 1.3)
+    
+    factor = LEAGUE_GOAL_FACTOR.get(lg_code, 1.1) * MARKET_GOAL_INFLATION
+    
+    h_att_r = (h_info['home_att'] / lg_h) * 1.05
+    a_def_r = (a_info['away_def'] / lg_h) * 1.05
+    h_strength = (h_att_r * a_def_r) ** 1.3
+    
+    a_att_r = (a_info['away_att'] / lg_a) * 1.05
+    h_def_r = (h_info['home_def'] / lg_a) * 1.05
+    a_strength = (a_att_r * h_def_r) ** 1.3 
+
+    raw_h = h_strength * lg_h * factor
+    raw_a = a_strength * lg_a * factor
+    
+    h_v = parse_market_value(h_val_str); a_v = parse_market_value(a_val_str)
+    is_titan = False
+    for titan in TITAN_TEAMS:
+        if titan in h_name: is_titan = True; break
+            
+    if h_v > 0 and a_v > 0:
+        ratio = h_v / a_v
+        if ratio > 8.0: raw_h *= 1.45; raw_a *= 0.7
+        elif ratio > 4.0: raw_h *= 1.25; raw_a *= 0.85
+        val_factor = max(min(math.log(ratio) * 0.2, 0.5), -0.5)
+        raw_h *= (1 + val_factor); raw_a *= (1 - val_factor)
+
+    if is_titan:
+        if raw_h < 1.7: raw_h = max(raw_h * 1.4, 1.95)
+        else: raw_h *= 1.15
+
+    h_vol = h_info.get('volatility', 2.5)
+    a_vol = a_info.get('volatility', 2.5)
+    match_vol = (h_vol + a_vol) / 2
+    
+    if match_vol > 3.4: raw_h *= 1.25; raw_a *= 1.25
+    elif match_vol > 3.0: raw_h *= 1.15; raw_a *= 1.15
+    elif match_vol < 2.2: raw_h *= 0.85; raw_a *= 0.85
+
+    if h2h_avg_goals != -1:
+        if h2h_avg_goals >= 3.5: raw_h *= 1.2; raw_a *= 1.2
+        elif h2h_avg_goals >= 3.0: raw_h *= 1.1; raw_a *= 1.1
+        elif h2h_avg_goals <= 1.5: raw_h *= 0.85; raw_a *= 0.85
+
+    h_mom = calculate_weighted_form_score(h_info['form']) - h_info['season_ppg']
+    a_mom = calculate_weighted_form_score(a_info['form']) - a_info['season_ppg']
+    raw_h *= (1 + (h_mom * 0.15)) 
+    raw_a *= (1 + (a_mom * 0.15))
+    
+    if raw_h < 0.25: raw_h = 0.25
+    if raw_a < 0.25: raw_a = 0.25
+
+    return round(raw_h, 2), round(raw_a, 2), round(match_vol, 2), round(h_mom, 2), round(a_mom, 2)
+
+# ================= H2H 函式 =================
 def get_h2h_and_ou_stats(match_id, h_id, a_id):
     headers = {'X-Auth-Token': API_KEY}
     url = f"{BASE_URL}/matches/{match_id}/head2head"
@@ -500,8 +606,8 @@ def get_real_data(market_value_map):
                 '入球區間低': adv_stats['goal_range_low'],
                 '入球區間高': adv_stats['goal_range_high'],
                 
-                '亞盤建議': handicap, # New
-                '角球預測': corners, # New
+                '亞盤建議': handicap, 
+                '角球預測': corners, 
                 
                 '走地策略': adv_stats['live_strat'],
                 '智能標籤': smart_tags,
