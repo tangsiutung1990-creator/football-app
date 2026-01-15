@@ -8,7 +8,7 @@ import math
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Render Safe (V16.2 Pro)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Render Safe (V16.3 Pro)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 (6欄佈局 + 緊湊設計) =================
 st.markdown("""
@@ -120,7 +120,7 @@ def calculate_derived_stats(row):
         # +1.0 (主) 近似
         plus_1_h = min(100, plus_05_h + 15)
 
-        # === 亞盤(客) 運算 (新增) ===
+        # === 亞盤(客) 運算 ===
         # 平手盤 (客)
         level_a = a_win / (h_win + a_win + 0.0001) * 100
         # -0.5 (客) = 客勝率
@@ -142,7 +142,7 @@ def calculate_derived_stats(row):
             'ah_plus_05_h': plus_05_h,
             'ah_plus_1_h': plus_1_h,
             
-            # 客盤 (新增)
+            # 客盤
             'ah_level_a': level_a,
             'ah_minus_05_a': minus_05_a,
             'ah_plus_05_a': plus_05_a,
@@ -206,7 +206,7 @@ def load_data():
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Render Safe (V16.2 Pro)")
+    st.title("⚽ 足球AI Render Safe (V16.3 Pro)")
     
     df = load_data()
     if df is not None and not df.empty:
@@ -217,8 +217,10 @@ def main():
         st.warning("⚠️ 無法讀取數據。")
         return
 
+    # 加入 '大球率3.5' 到檢查列表
     req_cols = ['xG主','xG客','主勝率','和局率','客勝率','HT主','HT和','HT客',
-                'AH-0.5','AH-1.0','AH-2.0','C75','C85','C95','大球率1.5','大球率2.5','主導指數']
+                'AH-0.5','AH-1.0','AH-2.0','C75','C85','C95',
+                '大球率1.5','大球率2.5','大球率3.5','主導指數']
     for col in req_cols: 
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -284,7 +286,7 @@ def main():
         html += f"<div class='matrix-cell'><span class='cell-label'>-1.0</span><span class='cell-val'>{fmt_pct(row['AH-1.0'])}%</span></div>"
         html += f"<div class='matrix-cell'><span class='cell-label'>+1.0</span><span class='cell-val'>{fmt_pct(derived['ah_plus_1_h'])}%</span></div></div>"
         
-        # 3. 亞盤 (客) - NEW
+        # 3. 亞盤 (客)
         html += "<div class='matrix-col'><div class='matrix-header'>亞盤 (客)</div>"
         html += f"<div class='matrix-cell'><span class='cell-label'>平(0)</span><span class='cell-val'>{fmt_pct(derived['ah_level_a'])}%</span></div>"
         html += f"<div class='matrix-cell'><span class='cell-label'>-0.5</span><span class='cell-val'>{fmt_pct(derived['ah_minus_05_a'])}%</span></div>"
@@ -292,8 +294,9 @@ def main():
         html += f"<div class='matrix-cell'><span class='cell-label'>-1.0</span><span class='cell-val'>{fmt_pct(derived['ah_minus_1_a'])}%</span></div>"
         html += f"<div class='matrix-cell'><span class='cell-label'>+1.0</span><span class='cell-val'>{fmt_pct(derived['ah_plus_1_a'])}%</span></div></div>"
         
-        # 4. 大小球
+        # 4. 大小球 (新增 3.5大)
         html += "<div class='matrix-col'><div class='matrix-header'>大小球</div>"
+        html += f"<div class='matrix-cell'><span class='cell-label'>3.5大</span><span class='cell-val'>{fmt_pct(row['大球率3.5'])}%</span></div>"
         html += f"<div class='matrix-cell'><span class='cell-label'>2.5大</span><span class='{cls_o25}'>{fmt_pct(row['大球率2.5'])}%</span></div>"
         html += f"<div class='matrix-cell'><span class='cell-label'>1.5大</span><span class='cell-val'>{fmt_pct(row['大球率1.5'])}%</span></div>"
         html += f"<div class='matrix-cell'><span class='cell-label' style='color:#00ccff;'>H 0.5</span><span class='cell-val'>{fmt_pct(derived['ht_o05'])}%</span></div>"
