@@ -1,457 +1,176 @@
-import requests
+import streamlit as st
 import pandas as pd
-import math
 import gspread
-from datetime import datetime, timedelta
-import pytz
 from oauth2client.service_account import ServiceAccountCredentials
+import os
 
 # ================= 設定區 =================
-API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
-BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
-MANUAL_TAB_NAME = "球隊身價表" 
 
-# 參數設定
-MARKET_GOAL_INFLATION = 1.25 
-DIXON_COLES_RHO = -0.13 
-CONFIDENCE_INTERVAL_SIGMA = 0.95 
+st.set_page_config(page_title="足球AI Pro (V24.0)", page_icon="⚽", layout="wide")
 
-# 聯賽 ID 對照表 (擴充至 HKJC 常見聯賽)
-LEAGUE_ID_MAP = {
-    39: '英超',
-    40: '英冠',
-    41: '英甲',
-    42: '英乙',
-    140: '西甲',
-    141: '西乙',
-    135: '意甲',
-    78: '德甲',
-    61: '法甲',
-    88: '荷甲',
-    94: '葡超',
-    144: '比甲',
-    179: '蘇超',
-    # 亞洲/美洲/其他
-    98: '日職',
-    253: '美職',
-    188: '澳職',
-    262: '墨超',
-    235: '俄超',
-    119: '丹超',
-    203: '土超',
-    2: '歐聯',
-    3: '歐霸'
-}
+# ================= CSS 優化 (字大、緊湊) =================
+st.markdown("""
+<style>
+    .stApp { background-color: #0e1117; }
+    .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: 'Arial', sans-serif; }
+    
+    .match-header { display: flex; justify-content: space-between; color: #888; font-size: 0.85rem; margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 3px; }
+    
+    .team-row { display: grid; grid-template-columns: 4fr 1fr 4fr; align-items: center; margin-bottom: 8px; }
+    .team-name { font-weight: bold; font-size: 1.2rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } 
+    .score-box { font-size: 1.8rem; font-weight: bold; color: #00ffea; text-align: center; }
+    
+    /* 6欄緊湊網格 */
+    .grid-matrix { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 5px; text-align: center; }
+    .matrix-col { background: #222; padding: 2px; border-radius: 4px; border: 1px solid #333; display: flex; flex-direction: column; }
+    
+    /* 標題 */
+    .matrix-header { color: #ff9800; font-weight: bold; font-size: 0.75rem; margin-bottom: 2px; border-bottom: 1px solid #444; padding-bottom: 1px; }
+    
+    /* 數據單元格 */
+    .matrix-cell { display: flex; justify-content: space-between; padding: 0 4px; align-items: center; line-height: 1.4; }
+    .cell-label { color: #999; font-size: 0.75rem; }
+    .cell-val { color: #fff; font-weight: bold; font-size: 0.9rem; } /* 加大字體 */
+    .cell-val-high { color: #00ff00; font-weight: bold; font-size: 0.9rem; }
+    
+    .footer-box { display: flex; justify-content: space-between; margin-top: 6px; background: #16181d; padding: 4px 8px; border-radius: 4px; align-items: center; }
+    .tag-pick { background: #00b09b; color: #000; font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; }
+</style>
+""", unsafe_allow_html=True)
 
-LEAGUE_GOAL_FACTOR = {
-    '德甲': 1.45, '英超': 1.25, '西甲': 1.05, '意甲': 1.15, '法甲': 1.10,
-    '荷甲': 1.50, '澳職': 1.40, '美職': 1.40, '日職': 1.15, '墨超': 1.20
-}
-
-# ================= API 連接函式 =================
-def call_api(endpoint, params=None):
-    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-apisports-key': API_KEY}
-    url = f"{BASE_URL}/{endpoint}"
+# ================= 數據處理函式 =================
+def clean_pct(val):
+    if pd.isna(val) or val == '': return 0
     try:
-        response = requests.get(url, headers=headers, params=params)
-        if response.status_code == 200: return response.json()
-        else: print(f"⚠️ API Error: {response.status_code}"); return None
-    except Exception as e: print(f"❌ Connection Error: {e}"); return None
-
-# ================= Google Sheet 連接 =================
-def get_google_spreadsheet():
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        client = gspread.authorize(creds)
-        return client.open(GOOGLE_SHEET_NAME)
-    except: return None
-
-def load_manual_market_values(spreadsheet):
-    if not spreadsheet: return {}
-    market_value_map = {}
-    try:
-        worksheet = spreadsheet.worksheet(MANUAL_TAB_NAME)
-        records = worksheet.get_all_records()
-        for row in records:
-            team = str(row.get('球隊名稱', '')).strip()
-            val = str(row.get('身價', '')).strip()
-            if team and val: market_value_map[team] = val
-        return market_value_map
-    except: return {}
-
-def parse_market_value(val_str):
-    if not val_str or val_str == 'N/A': return 0
-    try: return float(str(val_str).replace('€', '').replace('M', '').replace(',', '').strip())
+        f = float(str(val).replace('%', ''))
+        # V24 後端已經確保是 0-100，這裡做個防呆
+        if f > 100: f = 100 
+        return int(f)
     except: return 0
 
-# ================= 核心計算 (數學模型) =================
-def calculate_kelly_stake(prob, odds):
-    if odds <= 1: return 0
-    b = odds - 1; q = 1 - prob; f = (b * prob - q) / b
-    return max(0, f * 100) 
-
-def calculate_dominance_index(h_info, a_info):
-    h_force = (h_info['home_att'] * 1.1) / max(a_info['away_def'], 0.5)
-    a_force = (a_info['away_att'] * 1.1) / max(h_info['home_def'], 0.5)
-    return round(h_force - a_force, 2)
-
-def calculate_handicap_with_prob(h_win, a_win, ah05, ah1, ah2):
-    if h_win > 0.65: return f"-1.5 ({int((ah1+ah2)/2*100)}%)"
-    elif h_win > 0.6: return f"-1.0 ({int(ah1*100)}%)"
-    elif h_win > 0.55: return f"-0.5/1 ({int((ah05+ah1)/2*100)}%)"
-    elif h_win > 0.45: return f"-0.5 ({int(ah05*100)}%)"
-    elif h_win > 0.4: return f"-0/0.5 ({int((h_win+0.1)*100)}%)"
-    elif a_win > 0.6: return f"客 -1.0 ({int(a_win*0.85*100)}%)"
-    elif a_win > 0.45: return f"客 -0.5 ({int(a_win*100)}%)"
-    elif a_win > 0.4: return f"客 -0/0.5 ({int((a_win+0.1)*100)}%)"
-    return "0"
-
-def analyze_team_tags(h_info, a_info, match_vol, kelly_h, kelly_a, dom_idx, prob_o25):
-    tags = []
-    if dom_idx > 1.2: tags.append("👑主宰")
-    elif dom_idx < -1.2: tags.append("👑客宰")
-    if h_info['home_att'] > 2.2: tags.append("🏠龍")
-    if a_info['away_def'] > 2.0: tags.append("🚌蟲")
-    if match_vol > 3.5 and prob_o25 > 0.60: tags.append("🎆大")
-    elif match_vol < 2.0 and prob_o25 < 0.40: tags.append("💤細")
-    if 'WWWW' in str(h_info.get('form')): tags.append("🔥連勝")
-    if kelly_h > 10: tags.append("💎主EV")
-    if kelly_a > 10: tags.append("💎客EV")
-    return " ".join(tags) if tags else "⚖️均"
-
-def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, match_vol, kelly_h, kelly_a):
-    scores = {}
-    scores['2.5大'] = prob_o25 * 100 if prob_o25 > 0.5 else -999
-    scores['2.5細'] = (1-prob_o25) * 100 + (10 if match_vol < 2.2 else 0) if (1-prob_o25) > 0.5 else -999
-    scores['主勝'] = h_win * 100 + kelly_h if h_win > 0.4 else -999
-    scores['客勝'] = a_win * 100 + kelly_a if a_win > 0.4 else -999
-    scores['BTTS'] = prob_btts * 100 if prob_btts > 0.55 else -999
-    
-    valid_scores = {k: v for k, v in scores.items() if v > 0}
-    if not valid_scores: return "觀望", 0
-    best = max(valid_scores, key=valid_scores.get)
-    sc = valid_scores[best]
-    return f"{best} {'🌟' if sc>90 else '🔥' if sc>75 else '✅'}", sc
-
-def calculate_risk_level(ou_conf, prob_o25, kelly_sum, range_spread):
-    score = 50 - (ou_conf - 50)
-    if range_spread > 1.5: score += 20 
-    if prob_o25 < 0.45 and prob_o25 > 0.35: score += 15 
-    if prob_o25 > 0.7 or prob_o25 < 0.3: score -= 20
-    if kelly_sum > 20: score -= 15 
-    if score < 30: return "🟢極穩"
-    elif score < 55: return "🔵穩健"
-    else: return "🔴高險"
-
-def calculate_advanced_probs(home_exp, away_exp, match_vol):
-    def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
-    def adjustment(x, y, lam, mu, rho):
-        if x == 0 and y == 0: return 1 - (lam * mu * rho)
-        if x == 0 and y == 1: return 1 + (lam * rho)
-        if x == 1 and y == 0: return 1 + (mu * rho)
-        if x == 1 and y == 1: return 1 - rho
-        return 1.0
-
-    # 全場變數
-    h_win=0; draw=0; a_win=0
-    prob_o05=0; prob_o15=0; prob_o25=0; prob_o35=0
-    
-    # 亞盤相關：輸贏一球/兩球
-    ah_minus_05=0; ah_minus_1=0; ah_minus_2=0
-    h_win_by_1 = 0; a_win_by_1 = 0 
-    h_win_by_2 = 0; a_win_by_2 = 0
-    
-    # 半場變數
-    ht_lambda_h = home_exp * 0.45
-    ht_lambda_a = away_exp * 0.45
-    ht_o05=0; ht_o15=0; ht_o25=0
-    ht_h_win=0; ht_draw=0; ht_a_win=0
-    
-    total_exp = home_exp + away_exp
-    std_dev = math.sqrt(total_exp)
-    lower_bound = max(0, total_exp - CONFIDENCE_INTERVAL_SIGMA * std_dev)
-    upper_bound = total_exp + CONFIDENCE_INTERVAL_SIGMA * std_dev
-    
-    # === 全場循環 ===
-    for h in range(10): 
-        for a in range(10):
-            base_prob = poisson(h, home_exp) * poisson(a, away_exp)
-            adj = adjustment(h, a, home_exp, away_exp, DIXON_COLES_RHO)
-            final_prob = max(0, base_prob * adj)
-            
-            if h > a: 
-                h_win += final_prob
-                ah_minus_05 += final_prob
-                if (h - a) == 1: h_win_by_1 += final_prob
-                if (h - a) == 2: h_win_by_2 += final_prob
-                if (h - a) >= 2: ah_minus_1 += final_prob
-                if (h - a) >= 3: ah_minus_2 += final_prob
-            elif h == a: 
-                draw += final_prob
-            else: 
-                a_win += final_prob
-                if (a - h) == 1: a_win_by_1 += final_prob
-                if (a - h) == 2: a_win_by_2 += final_prob
-            
-            if h+a > 0.5: prob_o05 += final_prob
-            if h+a > 1.5: prob_o15 += final_prob
-            if h+a > 2.5: prob_o25 += final_prob
-            if h+a > 3.5: prob_o35 += final_prob
-
-    # === 半場循環 ===
-    for h in range(6):
-        for a in range(6):
-            p = poisson(h, ht_lambda_h) * poisson(a, ht_lambda_a)
-            if h > a: ht_h_win += p
-            elif h == a: ht_draw += p
-            else: ht_a_win += p
-            
-            total_goals = h + a
-            if total_goals > 0.5: ht_o05 += p
-            if total_goals > 1.5: ht_o15 += p
-            if total_goals > 2.5: ht_o25 += p
-
-    total = h_win + draw + a_win
-    if total > 0:
-        h_win/=total; draw/=total; a_win/=total
-        prob_o05/=total; prob_o15/=total; prob_o25/=total; prob_o35/=total
-        # 正規化亞盤
-        h_win_by_1/=total; a_win_by_1/=total
-        h_win_by_2/=total; a_win_by_2/=total
-        ah_minus_05/=total; ah_minus_1/=total; ah_minus_2/=total
-
-    btts = (1 - poisson(0, home_exp)) * (1 - poisson(0, away_exp))
-    
-    limit = 50.0
-    fair_1x2_h = min((1/max(h_win,0.01)), limit)
-    fair_1x2_d = min((1/max(draw,0.01)), limit)
-    fair_1x2_a = min((1/max(a_win,0.01)), limit)
-    fair_o25 = min((1/max(prob_o25,0.01)), limit)
-    
-    kelly_h = calculate_kelly_stake(h_win, fair_1x2_h*1.05) 
-    kelly_a = calculate_kelly_stake(a_win, fair_1x2_a*1.05) 
-    
-    math_conf = abs(prob_o25 - 0.5) * 80
-    total_conf = max(min(math_conf, 99), 25) 
-    
-    live_strat = "🔥追大" if match_vol > 3.1 else "🛡️細/角" if match_vol < 2.3 else "🏰主控" if home_exp > away_exp*2 else "中性"
-    if ht_o05 > 0.72: live_strat += "|HT大"
-    
-    # 計算亞盤概率
-    # 平手盤 (Level)
-    ah_level_h = h_win / (h_win + a_win + 0.0001)
-    ah_level_a = a_win / (h_win + a_win + 0.0001)
-    
-    # +0.5 (雙勝)
-    ah_plus05_h = h_win + draw
-    ah_plus05_a = a_win + draw
-    
-    # +1.0 (不輸盤 = Win + Draw + LoseBy1)
-    ah_plus1_h = h_win + draw + a_win_by_1
-    ah_plus1_a = a_win + draw + h_win_by_1
-    
-    # -2.0 (Win by 3+) = ah_minus_2
-    # +2.0 (不輸2球 = Win + Draw + LoseBy1 + LoseBy2)
-    ah_plus2_h = h_win + draw + a_win_by_1 + a_win_by_2
-    ah_plus2_a = a_win + draw + h_win_by_1 + h_win_by_2
-    
-    return {
-        'btts': round(btts*100, 1), 
-        'h_win': h_win, 'draw': draw, 'a_win': a_win,
-        'ht_h_win': ht_h_win, 'ht_draw': ht_draw, 'ht_a_win': ht_a_win,
-        'prob_o05': round(prob_o05*100, 1), 'prob_o15': round(prob_o15*100, 1), 
-        'prob_o25': round(prob_o25*100, 1), 'prob_o35': round(prob_o35*100, 1), 
-        'ht_o05': round(ht_o05*100, 1), 'ht_o15': round(ht_o15*100, 1), 'ht_o25': round(ht_o25*100, 1),
-        'ou_conf': round(total_conf, 1),
-        'fair_1x2_h': round(fair_1x2_h, 2), 'fair_1x2_d': round(fair_1x2_d, 2), 'fair_1x2_a': round(fair_1x2_a, 2),
-        'min_odds_h': round(fair_1x2_h*1.05, 2), 'min_odds_a': round(fair_1x2_a*1.05, 2), 'min_odds_o25': round(fair_o25*1.05, 2), 
-        'fair_o25': round(fair_o25, 2), 'live_strat': live_strat,
-        'kelly_h': round(kelly_h, 1), 'kelly_a': round(kelly_a, 1),
-        'goal_range_low': round(lower_bound, 1), 'goal_range_high': round(upper_bound, 1),
-        
-        # 亞盤計算變數
-        'ah_minus_05': ah_minus_05, 'ah_minus_1': ah_minus_1, 'ah_minus_2': ah_minus_2,
-
-        # 亞盤展示數據
-        'ah_level_h': round(ah_level_h*100), 'ah_plus05_h': round(ah_plus05_h*100), 'ah_plus1_h': round(ah_plus1_h*100),
-        'ah_plus2_h': round(ah_plus2_h*100), 'ah_minus2_h': round(ah_minus_2*100),
-        
-        'ah_level_a': round(ah_level_a*100), 'ah_plus05_a': round(ah_plus05_a*100), 'ah_plus1_a': round(ah_plus1_a*100),
-        'ah_plus2_a': round(ah_plus2_a*100), 'ah_minus2_a': round((a_win - a_win_by_1 - a_win_by_2)*100) # 近似
-    }
-
-def calculate_weighted_form_score(form_str):
-    if not form_str or form_str == 'N/A': return 1.5 
-    score = 0; total_weight = 0
-    relevant = str(form_str).replace(',', '').strip()[-5:]
-    weights = [1.0, 1.2, 1.4, 1.8, 2.2] 
-    start_idx = 5 - len(relevant)
-    if start_idx < 0: start_idx = 0
-    curr_weights = weights[start_idx:]
-    for i, char in enumerate(relevant):
-        if i >= len(curr_weights): break
-        w = curr_weights[i]
-        s = 3 if char.upper()=='W' else 1 if char.upper()=='D' else 0
-        score += s * w
-        total_weight += w
-    return score / total_weight if total_weight > 0 else 1.5
-
-def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, lg_stats, lg_code):
-    lg_h = lg_stats.get('avg_home', 1.5)
-    lg_a = lg_stats.get('avg_away', 1.3)
-    factor = LEAGUE_GOAL_FACTOR.get(lg_code, 1.1) * MARKET_GOAL_INFLATION
-    
-    h_att_r = (h_info['home_att'] / lg_h) * 1.05; a_def_r = (a_info['away_def'] / lg_h) * 1.05
-    raw_h = ((h_att_r * a_def_r) ** 1.3) * lg_h * factor
-    
-    a_att_r = (a_info['away_att'] / lg_a) * 1.05; h_def_r = (h_info['home_def'] / lg_a) * 1.05
-    raw_a = ((a_att_r * h_def_r) ** 1.3) * lg_a * factor
-    
-    if h_val > 0 and a_val > 0:
-        ratio = h_val / a_val
-        val_factor = max(min(math.log(ratio) * 0.2, 0.5), -0.5)
-        raw_h *= (1 + val_factor); raw_a *= (1 - val_factor)
-
-    match_vol = (h_info.get('volatility', 2.5) + a_info.get('volatility', 2.5)) / 2
-    if match_vol > 3.0: raw_h *= 1.15; raw_a *= 1.15
-    elif match_vol < 2.2: raw_h *= 0.85; raw_a *= 0.85
-
-    h_mom = calculate_weighted_form_score(h_info['form']); a_mom = calculate_weighted_form_score(a_info['form'])
-    raw_h *= (1 + (h_mom-1.3)*0.15); raw_a *= (1 + (a_mom-1.3)*0.15)
-    
-    return round(max(0.2, raw_h), 2), round(max(0.2, raw_a), 2), round(match_vol, 2)
-
-# ================= 主流程 =================
-def get_standings():
-    season = 2025
-    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季數據 (Strict Mode)...")
-    
-    standings_map = {}; league_stats = {} 
-    
-    for lg_id, lg_name in LEAGUE_ID_MAP.items():
-        data = call_api('standings', {'league': lg_id, 'season': season})
-        if not data or not data.get('response'):
-            print(f"   ⚠️ 無法獲取 {lg_name} 數據"); continue
-            
-        l_h_g = 0; l_m = 0
-        for row in data['response'][0]['league']['standings'][0]:
-            t = row['team']['name']
-            p = row['all']['played']
-            h_f = row['home']['goals']['for']; h_a = row['home']['goals']['against']
-            a_f = row['away']['goals']['for']; a_a = row['away']['goals']['against']
-            h_p = row['home']['played']; a_p = row['away']['played']
-            
-            standings_map[t] = {
-                'rank': row['rank'], 'form': row['form'],
-                'home_att': h_f/h_p if h_p>0 else 1.3, 'home_def': h_a/h_p if h_p>0 else 1.3,
-                'away_att': a_f/a_p if a_p>0 else 1.0, 'away_def': a_a/a_p if a_p>0 else 1.0,
-                'volatility': (row['all']['goals']['for'] + row['all']['goals']['against'])/p if p>0 else 2.5
-            }
-            l_h_g += h_f; l_m += h_p
-            
-        league_stats[lg_name] = {'avg_home': l_h_g/l_m if l_m>0 else 1.5, 'avg_away': (l_h_g/l_m)*0.85 if l_m>0 else 1.3}
-        print(f"   ✅ {lg_name} 數據更新完成")
-        
-    return standings_map, league_stats
-
+# ================= 主程式 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V23.0 API-Football (HKJC + 7 Days) 啟動...")
+    st.title("⚽ 足球AI Pro (V24.0 API-Native)")
     
-    standings_map, league_stats = get_standings()
-    if not standings_map: print("❌ 程序終止"); return
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    try:
+        if os.path.exists("key.json"): creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+        else: creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        client = gspread.authorize(creds)
+        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+    except:
+        st.error("連接失敗")
+        return
 
-    hk_tz = pytz.timezone('Asia/Hong_Kong')
-    utc_now = datetime.now(pytz.utc)
-    # 擴展到過去 7 天 + 未來 3 天
-    from_date = (utc_now - timedelta(days=7)).strftime('%Y-%m-%d')
-    to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    season = 2025
+    if df.empty:
+        st.warning("⚠️ 暫無數據")
+        return
+
+    # === 側邊欄篩選 ===
+    st.sidebar.header("🔍 篩選")
     
-    print(f"🚀 正在掃描賽程 ({from_date} 至 {to_date})...")
-    
-    cleaned = []
-    
-    for lg_id, lg_name in LEAGUE_ID_MAP.items():
-        print(f"   🔍 掃描 {lg_name}...")
-        data = call_api('fixtures', {'league': lg_id, 'season': season, 'from': from_date, 'to': to_date})
+    # 聯賽
+    if '聯賽' in df.columns:
+        leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
+        sel_lg = st.sidebar.selectbox("聯賽:", leagues)
+        if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
+
+    # 狀態
+    status_filter = st.sidebar.radio("狀態:", ["全部", "未開賽", "進行中", "完場", "延遲/取消"])
+    if status_filter == "未開賽": df = df[df['狀態'] == '未開賽']
+    elif status_filter == "進行中": df = df[df['狀態'] == '進行中']
+    elif status_filter == "完場": df = df[df['狀態'] == '完場']
+    elif status_filter == "延遲/取消": df = df[df['狀態'].str.contains('延遲|取消')]
+
+    # 日期
+    if '時間' in df.columns:
+        df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
+        dates = ["全部"] + sorted(list(set(df['日期'])), reverse=True) # 最近日期排前
+        sel_date = st.sidebar.selectbox("日期:", dates)
+        if sel_date != "全部": df = df[df['日期'] == sel_date]
+
+    # 排序
+    df['sort_idx'] = df['狀態'].apply(lambda x: 0 if x == '進行中' else 1 if x=='未開賽' else 2)
+    df = df.sort_values(by=['sort_idx', '時間'])
+
+    # === 渲染卡片 ===
+    for index, row in df.iterrows():
+        # 主要樣式判斷
+        prob_h = clean_pct(row.get('主勝率', 0))
+        prob_a = clean_pct(row.get('客勝率', 0))
+        prob_o25 = clean_pct(row.get('大2.5', 0))
         
-        if not data or not data.get('response'): continue
-        fixtures = data['response']
-        print(f"      👉 找到 {len(fixtures)} 場比賽")
+        cls_h = "cell-val-high" if prob_h > 50 else "cell-val"
+        cls_a = "cell-val-high" if prob_a > 50 else "cell-val"
+        cls_o25 = "cell-val-high" if prob_o25 > 55 else "cell-val"
+
+        card_html = ""
+        card_html += f"<div class='compact-card'>"
+        card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
         
-        spreadsheet = get_google_spreadsheet()
-        market_value_map = load_manual_market_values(spreadsheet)
+        card_html += f"<div class='team-row'>"
+        card_html += f"<div style='text-align:right;'><div class='team-name'>{row.get('主隊','')}</div></div>"
+        
+        score_display = f"{row.get('主分','')} - {row.get('客分','')}" if row.get('主分') != '' else "vs"
+        card_html += f"<div class='score-box'>{score_display}</div>"
+        
+        card_html += f"<div><div class='team-name'>{row.get('客隊','')}</div></div>"
+        card_html += f"</div>"
+        
+        # Grid Matrix (6 Columns)
+        card_html += f"<div class='grid-matrix'>"
+        
+        # 1. 勝率 (API)
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>勝率 (API)</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>主</span><span class='{cls_h}'>{prob_h}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>和</span><span class='cell-val'>{clean_pct(row.get('和局率',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>客</span><span class='{cls_a}'>{prob_a}%</span></div></div>"
+        
+        # 2. 亞盤 (主)
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>主亞盤%</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>平(0)</span><span class='cell-val'>{clean_pct(row.get('主平',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5</span><span class='cell-val'>{clean_pct(row.get('主+0.5',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1.0</span><span class='cell-val'>{clean_pct(row.get('主+1',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-2.0</span><span class='cell-val'>{clean_pct(row.get('主-2',0))}%</span></div></div>"
+        
+        # 3. 亞盤 (客)
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>客亞盤%</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>平(0)</span><span class='cell-val'>{clean_pct(row.get('客平',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5</span><span class='cell-val'>{clean_pct(row.get('客+0.5',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1.0</span><span class='cell-val'>{clean_pct(row.get('客+1',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-2.0</span><span class='cell-val'>{clean_pct(row.get('客-2',0))}%</span></div></div>"
+        
+        # 4. 全場大小
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>全場大小</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大0.5</span><span class='cell-val'>{clean_pct(row.get('大0.5',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大1.5</span><span class='cell-val'>{clean_pct(row.get('大1.5',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大2.5</span><span class='{cls_o25}'>{prob_o25}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大3.5</span><span class='cell-val'>{clean_pct(row.get('大3.5',0))}%</span></div></div>"
+        
+        # 5. 半場大小
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>半場大小</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>H0.5</span><span class='cell-val'>{clean_pct(row.get('HT0.5',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>H1.5</span><span class='cell-val'>{clean_pct(row.get('HT1.5',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>H2.5</span><span class='cell-val'>{clean_pct(row.get('HT2.5',0))}%</span></div></div>"
+        
+        # 6. 賠率/凱利
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>賠率/凱利</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>主賠</span><span style='color:#00e5ff;'>{row.get('主賠','-')}</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>客賠</span><span style='color:#00e5ff;'>{row.get('客賠','-')}</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>K主</span><span class='cell-val'>{clean_pct(row.get('凱利主',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>K客</span><span class='cell-val'>{clean_pct(row.get('凱利客',0))}%</span></div></div>"
+        
+        card_html += f"</div>" # End Grid
+        
+        # Footer
+        advice = row.get('推介', '暫無')
+        card_html += f"<div class='footer-box'><div><span class='tag-pick'>🎯 API推介: {advice}</span></div></div>"
+        card_html += f"</div>"
 
-        for item in fixtures:
-            f = item['fixture']; h = item['teams']['home']['name']; a = item['teams']['away']['name']
-            t_str = datetime.fromtimestamp(f['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
-            
-            # 狀態處理
-            s_short = f['status']['short']
-            if s_short in ['1H','2H','HT','LIVE']: status = '進行中'
-            elif s_short in ['FT','AET','PEN']: status = '完場'
-            elif s_short in ['PST', 'CANC', 'ABD']: status = '延遲/取消'
-            else: status = '未開賽'
-
-            h_i = standings_map.get(h, {'rank':10,'form':'N/A','home_att':1.3,'home_def':1.3,'volatility':2.5})
-            a_i = standings_map.get(a, {'rank':10,'form':'N/A','away_att':1.1,'away_def':1.1,'volatility':2.5})
-            
-            p_h, p_a, vol = predict_match_outcome(h, h_i, a_i, parse_market_value(market_value_map.get(h)), parse_market_value(market_value_map.get(a)), league_stats.get(lg_name), lg_name)
-            adv = calculate_advanced_probs(p_h, p_a, vol)
-            
-            odds_h = 0; odds_a = 0
-            pick, score = calculate_alpha_pick(adv['h_win'], adv['a_win'], adv['prob_o25'], adv['btts']/100, vol, adv['kelly_h'], adv['kelly_a'])
-            
-            print(f"         ✅ {h} vs {a} | {pick}")
-            
-            cleaned.append({
-                '時間': t_str, '聯賽': lg_name, '主隊': h, '客隊': a,
-                '主排名': h_i['rank'], '客排名': a_i['rank'],
-                '主預測': p_h, '客預測': p_a, '總球數': round(p_h+p_a,1),
-                '狀態': status, 
-                '主分': item['goals']['home'] if item['goals']['home'] is not None else '', 
-                '客分': item['goals']['away'] if item['goals']['away'] is not None else '',
-                
-                # 百分比數據
-                '主勝率': round(adv['h_win']*100), '和局率': round(adv['draw']*100), '客勝率': round(adv['a_win']*100),
-                '大球率0.5': round(adv['prob_o05']*100), '大球率1.5': round(adv['prob_o15']*100),
-                '大球率2.5': round(adv['prob_o25']*100), '大球率3.5': round(adv['prob_o35']*100),
-                'BTTS率': round(adv['btts']*100),
-                '凱利主': round(adv['kelly_h']), '凱利客': round(adv['kelly_a']),
-                '亞盤建議': calculate_handicap_with_prob(adv['h_win'], adv['a_win'], adv['ah_minus_05'], adv['ah_minus_1'], adv['ah_minus_2']),
-                '智能標籤': analyze_team_tags(h_i, a_i, vol, adv['kelly_h'], adv['kelly_a'], calculate_dominance_index(h_i, a_i), adv['prob_o25']),
-                '風險評級': calculate_risk_level(adv['ou_conf'], adv['prob_o25'], adv['kelly_h']+adv['kelly_a'], adv['goal_range_high']-adv['goal_range_low']),
-                '首選推介': pick,
-                '主勝賠率': odds_h, '客勝賠率': odds_a,
-                
-                # 亞盤數據
-                '主平手': adv['ah_level_h'], '主+0.5': adv['ah_plus05_h'], '主+1': adv['ah_plus1_h'], '主+2': adv['ah_plus2_h'], '主-2': adv['ah_minus2_h'],
-                '客平手': adv['ah_level_a'], '客+0.5': adv['ah_plus05_a'], '客+1': adv['ah_plus1_a'], '客+2': adv['ah_plus2_a'], '客-2': round((adv['a_win']*0.3)*100), # 近似值
-                
-                # 半場數據
-                'HT0.5': adv['ht_o05'], 'HT1.5': adv['ht_o15'], 'HT2.5': adv['ht_o25'],
-                
-                # 兼容舊欄位
-                'xG主': p_h, 'xG客': p_a, 'HT主': adv['ht_h_win'], 'HT和': adv['ht_draw'], 'HT客': adv['ht_a_win'],
-                'C75': 0, 'C85': 0, 'C95': 0, 'AH-0.5': adv['ah_minus_05'], 'AH-1.0': adv['ah_minus_1'], 'AH-2.0': adv['ah_minus_2']
-            })
-            
-    if cleaned:
-        df = pd.DataFrame(cleaned)
-        cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主預測','客預測','總球數','狀態','主分','客分',
-                '主勝率','和局率','客勝率','大球率0.5','大球率1.5','大球率2.5','大球率3.5','BTTS率','凱利主','凱利客','亞盤建議','智能標籤','風險評級','首選推介',
-                '主勝賠率','客勝賠率',
-                '主平手','主+0.5','主+1','主+2','主-2',
-                '客平手','客+0.5','客+1','客+2','客-2',
-                'HT0.5','HT1.5','HT2.5',
-                'xG主','xG客','HT主','HT和','HT客','C75','C85','C95','AH-0.5','AH-1.0','AH-2.0']
-        df = df.reindex(columns=cols, fill_value='')
-        if spreadsheet:
-            try: spreadsheet.sheet1.clear(); spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist()); print("✅ 數據上傳成功！")
-            except: print("❌ 上傳失敗")
-    else: print("⚠️ 無比賽數據")
+        st.markdown(card_html, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
