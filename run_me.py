@@ -13,7 +13,7 @@ import numpy as np
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
 BASE_URL = 'https://v3.football.api-sports.io'
 
-# Google Sheet 設定 (保持不變)
+# Google Sheet 設定
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
@@ -31,12 +31,14 @@ LEAGUE_ID_MAP = {
     78: 'BL1',
     61: 'FL1'
 }
+
+# 聯賽入球系數
 LEAGUE_GOAL_FACTOR = {
     'BL1': 1.45, 'PL': 1.25, 'PD': 1.05,
     'SA': 1.15, 'FL1': 1.10
 }
 
-# 豪門名單
+# 豪門名單 (用於調整權重)
 TITAN_TEAMS = [
     'Manchester City', 'Liverpool', 'Arsenal', 'Real Madrid', 'Barcelona', 
     'Atletico Madrid', 'Bayern Munich', 'Bayer Leverkusen', 'Dortmund', 
@@ -95,7 +97,7 @@ def parse_market_value(val_str):
         return float(clean)
     except: return 0
 
-# ================= 核心計算 (數學模型保持不變) =================
+# ================= 核心計算 (數學模型) =================
 def calculate_synthetic_xg(home_exp, away_exp):
     return round(home_exp, 2), round(away_exp, 2)
 
@@ -374,13 +376,13 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
 
     return round(raw_h, 2), round(raw_a, 2), round(match_vol, 2), round(h_mom, 2), round(a_mom, 2)
 
-# ================= 數據抓取主流程 (已更新) =================
+# ================= 數據抓取主流程 =================
 def get_standings_from_new_api():
     print("📊 [API-Football] 正在下載各聯賽積分榜...")
     standings_map = {}
     league_stats = {} 
 
-    # 使用 2024/2025 賽季 (視乎當前時間，這裡設為 2024 覆蓋大部分)
+    # 使用 2024 賽季 (API-Football v3)
     current_season = 2024
 
     for lg_id, lg_code in LEAGUE_ID_MAP.items():
@@ -394,7 +396,6 @@ def get_standings_from_new_api():
         league_total_home_goals = 0
         league_total_matches = 0
         
-        # 解析數據 (API-Football v3 結構)
         try:
             standings_data = data['response'][0]['league']['standings'][0]
             for row in standings_data:
@@ -448,135 +449,135 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     
     utc_now = datetime.now(pytz.utc)
+    # 搜尋範圍：昨天 到 未來3天
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     
-    # 一次過獲取所有關注聯賽的比賽
-    ids_str = "-".join([str(k) for k in LEAGUE_ID_MAP.keys()])
-    params = {'from': from_date, 'to': to_date, 'ids': ids_str}
+    current_season = 2024 
     
-    # 由於 API 限制，這裡我們直接用日期查，再 Filter ID
-    params = {'from': from_date, 'to': to_date}
-    data = call_api('fixtures', params=params)
-    
-    if not data or not data.get('response'):
-        print("⚠️ 未能獲取賽程數據。")
-        return []
+    # 修正：逐個聯賽查詢
+    for lg_id, lg_code in LEAGUE_ID_MAP.items():
+        params = {
+            'league': lg_id, 
+            'season': current_season,
+            'from': from_date, 
+            'to': to_date
+        }
+        
+        print(f"   🔍 查詢 {lg_code} ({from_date} to {to_date})...")
+        data = call_api('fixtures', params=params)
+        
+        if not data or not data.get('response'):
+            continue
 
-    fixtures = data['response']
-    print(f"   📅 找到 {len(fixtures)} 場比賽 (全球)，正在篩選...")
+        fixtures = data['response']
+        
+        for item in fixtures:
+            fixture = item['fixture']
+            teams = item['teams']
+            goals = item['goals']
+            
+            # 時間轉換
+            utc_dt = datetime.fromtimestamp(fixture['timestamp'], pytz.utc)
+            time_str = utc_dt.astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
+            
+            # 狀態
+            status_short = fixture['status']['short']
+            status = '未開賽'
+            if status_short in ['1H','2H','HT','ET','P','LIVE']: status = '進行中'
+            elif status_short in ['FT','AET','PEN']: status = '完場'
+            elif status_short in ['PST', 'CANC', 'ABD']: status = '延期/取消'
 
-    for item in fixtures:
-        league_id = item['league']['id']
-        if league_id not in LEAGUE_ID_MAP: continue # 只處理我們關注的聯賽
-        
-        lg_code = LEAGUE_ID_MAP[league_id]
-        lg_name = LEAGUE_ID_MAP[league_id] # 簡化顯示
+            h_name = teams['home']['name']
+            a_name = teams['away']['name']
+            
+            # 獲取球隊數據
+            h_info = standings_map.get(h_name, {'rank':10,'form':'N/A','home_att':1.3,'home_def':1.3,'volatility':2.5,'season_ppg':1.3})
+            a_info = standings_map.get(a_name, {'rank':10,'form':'N/A','away_att':1.1,'away_def':1.1,'volatility':2.5,'season_ppg':1.3})
+            
+            # 身價
+            h_val = market_value_map.get(h_name, "N/A")
+            a_val = market_value_map.get(a_name, "N/A")
+            
+            # H2H (節省 API，暫時設為中性)
+            h2h_str = "N/A"; h2h_avg = -1; h2h_o25_rate = 0.5
+            
+            # 預測
+            lg_avg = league_stats.get(lg_code, {'avg_home': 1.6, 'avg_away': 1.3})
+            pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(
+                h_name, h_info, a_info, h_val, a_val, h2h_o25_rate, h2h_avg, lg_avg, lg_code
+            )
+            
+            xg_h, xg_a = calculate_synthetic_xg(pred_h, pred_a)
+            correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
+            adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate, vol, h2h_avg)
+            dom_idx = calculate_dominance_index(h_info, a_info)
+            c75, c85, c95, c_exp = calculate_corner_probs(vol, dom_idx)
+            handicap_txt = calculate_handicap_with_prob(adv_stats['h_win'], adv_stats['a_win'], adv_stats['ah_minus_05'], adv_stats['ah_minus_1'], adv_stats['ah_minus_2'])
+            kelly_sum = adv_stats['kelly_h'] + adv_stats['kelly_a']
+            smart_tags = analyze_team_tags(h_info, a_info, vol, h2h_avg, adv_stats['kelly_h'], adv_stats['kelly_a'], dom_idx, adv_stats['prob_o25'])
+            risk_level = calculate_risk_level(adv_stats['ou_conf'], vol, adv_stats['prob_o25'], kelly_sum, (adv_stats['goal_range_high'] - adv_stats['goal_range_low']))
+            
+            top_pick, pick_score = calculate_alpha_pick(
+                adv_stats['h_win'], adv_stats['a_win'], 
+                adv_stats['prob_o25'], adv_stats['btts']/100, 
+                h2h_avg, vol, adv_stats['kelly_h'], adv_stats['kelly_a'], dom_idx
+            )
 
-        fixture = item['fixture']
-        teams = item['teams']
-        goals = item['goals']
-        
-        # 時間轉換
-        utc_dt = datetime.fromtimestamp(fixture['timestamp'], pytz.utc)
-        time_str = utc_dt.astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
-        
-        # 狀態
-        status_short = fixture['status']['short']
-        status = '未開賽'
-        if status_short in ['1H','2H','HT','ET','P','LIVE']: status = '進行中'
-        elif status_short in ['FT','AET','PEN']: status = '完場'
+            score_h = goals['home'] if goals['home'] is not None else ''
+            score_a = goals['away'] if goals['away'] is not None else ''
 
-        h_name = teams['home']['name']
-        a_name = teams['away']['name']
-        
-        # 獲取球隊數據 (如果找不到，用默認值)
-        h_info = standings_map.get(h_name, {'rank':10,'form':'N/A','home_att':1.3,'home_def':1.3,'volatility':2.5,'season_ppg':1.3})
-        a_info = standings_map.get(a_name, {'rank':10,'form':'N/A','away_att':1.1,'away_def':1.1,'volatility':2.5,'season_ppg':1.3})
-        
-        # 身價
-        h_val = market_value_map.get(h_name, "N/A")
-        a_val = market_value_map.get(a_name, "N/A")
-        
-        # H2H (節省 API，暫時設為中性)
-        h2h_str = "N/A (API Saving)"; h2h_avg = -1; h2h_o25_rate = 0.5
-        
-        # 預測
-        lg_avg = league_stats.get(lg_code, {'avg_home': 1.6, 'avg_away': 1.3})
-        pred_h, pred_a, vol, h_mom, a_mom = predict_match_outcome(
-            h_name, h_info, a_info, h_val, a_val, h2h_o25_rate, h2h_avg, lg_avg, lg_code
-        )
-        
-        xg_h, xg_a = calculate_synthetic_xg(pred_h, pred_a)
-        correct_score_str = calculate_correct_score_probs(pred_h, pred_a)
-        adv_stats = calculate_advanced_probs(pred_h, pred_a, h2h_o25_rate, vol, h2h_avg)
-        dom_idx = calculate_dominance_index(h_info, a_info)
-        c75, c85, c95, c_exp = calculate_corner_probs(vol, dom_idx)
-        handicap_txt = calculate_handicap_with_prob(adv_stats['h_win'], adv_stats['a_win'], adv_stats['ah_minus_05'], adv_stats['ah_minus_1'], adv_stats['ah_minus_2'])
-        kelly_sum = adv_stats['kelly_h'] + adv_stats['kelly_a']
-        smart_tags = analyze_team_tags(h_info, a_info, vol, h2h_avg, adv_stats['kelly_h'], adv_stats['kelly_a'], dom_idx, adv_stats['prob_o25'])
-        risk_level = calculate_risk_level(adv_stats['ou_conf'], vol, adv_stats['prob_o25'], kelly_sum, (adv_stats['goal_range_high'] - adv_stats['goal_range_low']))
-        
-        top_pick, pick_score = calculate_alpha_pick(
-            adv_stats['h_win'], adv_stats['a_win'], 
-            adv_stats['prob_o25'], adv_stats['btts']/100, 
-            h2h_avg, vol, adv_stats['kelly_h'], adv_stats['kelly_a'], dom_idx
-        )
+            print(f"   👉 分析: {h_name} vs {a_name} | {top_pick}")
 
-        score_h = goals['home'] if goals['home'] is not None else ''
-        score_a = goals['away'] if goals['away'] is not None else ''
-
-        print(f"   👉 分析: {h_name} vs {a_name} | {top_pick}")
-
-        cleaned.append({
-            '時間': time_str, '聯賽': lg_code,
-            '主隊': h_name, '客隊': a_name,
-            '主排名': h_info['rank'], '客排名': a_info['rank'],
-            '主近況': h_info['form'], '客近況': a_info['form'],
-            '主預測': pred_h, '客預測': pred_a,
-            'xG主': xg_h, 'xG客': xg_a, 
-            '總球數': round(pred_h + pred_a, 1),
-            '狀態': status, '主分': score_h, '客分': score_a,
-            'H2H': h2h_str, 'H2H平均球': h2h_avg,
-            '主隊身價': h_val, '客隊身價': a_val,
-            '主導指數': dom_idx,
-            '波膽預測': correct_score_str,
-            'BTTS': adv_stats['btts'],
-            '主勝率': round(adv_stats['h_win']*100),
-            '和局率': round(adv_stats['draw']*100),
-            '客勝率': round(adv_stats['a_win']*100),
-            'HT主': round(adv_stats['ht_h_win']*100),
-            'HT和': round(adv_stats['ht_draw']*100),
-            'HT客': round(adv_stats['ht_a_win']*100),
-            'AH-0.5': round(adv_stats['ah_minus_05']*100),
-            'AH-1.0': round(adv_stats['ah_minus_1']*100),
-            'AH-2.0': round(adv_stats['ah_minus_2']*100),
-            'C75': c75, 'C85': c85, 'C95': c95,
-            '大球率1.5': adv_stats['prob_o15'],
-            '大球率2.5': adv_stats['prob_o25'],
-            '大球率3.5': adv_stats['prob_o35'],
-            '合理主賠': adv_stats['fair_1x2_h'],
-            '合理和賠': adv_stats['fair_1x2_d'],
-            '合理客賠': adv_stats['fair_1x2_a'],
-            '最低賠率主': adv_stats['min_odds_h'], 
-            '最低賠率客': adv_stats['min_odds_a'], 
-            '最低賠率大2.5': adv_stats['min_odds_o25'], 
-            '合理大賠2.5': adv_stats['fair_o25'], 
-            '凱利主(%)': adv_stats['kelly_h'],
-            '凱利客(%)': adv_stats['kelly_a'],
-            '亞盤建議': handicap_txt, 
-            '角球預測': f"{c_exp}", 
-            '入球區間低': adv_stats['goal_range_low'],
-            '入球區間高': adv_stats['goal_range_high'],
-            '走地策略': adv_stats['live_strat'],
-            '智能標籤': smart_tags,
-            '風險評級': risk_level,
-            '首選推介': top_pick
-        })
+            cleaned.append({
+                '時間': time_str, '聯賽': lg_code,
+                '主隊': h_name, '客隊': a_name,
+                '主排名': h_info['rank'], '客排名': a_info['rank'],
+                '主近況': h_info['form'], '客近況': a_info['form'],
+                '主預測': pred_h, '客預測': pred_a,
+                'xG主': xg_h, 'xG客': xg_a, 
+                '總球數': round(pred_h + pred_a, 1),
+                '狀態': status, '主分': score_h, '客分': score_a,
+                'H2H': h2h_str, 'H2H平均球': h2h_avg,
+                '主隊身價': h_val, '客隊身價': a_val,
+                '主導指數': dom_idx,
+                '波膽預測': correct_score_str,
+                'BTTS': adv_stats['btts'],
+                '主勝率': round(adv_stats['h_win']*100),
+                '和局率': round(adv_stats['draw']*100),
+                '客勝率': round(adv_stats['a_win']*100),
+                'HT主': round(adv_stats['ht_h_win']*100),
+                'HT和': round(adv_stats['ht_draw']*100),
+                'HT客': round(adv_stats['ht_a_win']*100),
+                'AH-0.5': round(adv_stats['ah_minus_05']*100),
+                'AH-1.0': round(adv_stats['ah_minus_1']*100),
+                'AH-2.0': round(adv_stats['ah_minus_2']*100),
+                'C75': c75, 'C85': c85, 'C95': c95,
+                '大球率1.5': adv_stats['prob_o15'],
+                '大球率2.5': adv_stats['prob_o25'],
+                '大球率3.5': adv_stats['prob_o35'],
+                '合理主賠': adv_stats['fair_1x2_h'],
+                '合理和賠': adv_stats['fair_1x2_d'],
+                '合理客賠': adv_stats['fair_1x2_a'],
+                '最低賠率主': adv_stats['min_odds_h'], 
+                '最低賠率客': adv_stats['min_odds_a'], 
+                '最低賠率大2.5': adv_stats['min_odds_o25'], 
+                '合理大賠2.5': adv_stats['fair_o25'], 
+                '凱利主(%)': adv_stats['kelly_h'],
+                '凱利客(%)': adv_stats['kelly_a'],
+                '亞盤建議': handicap_txt, 
+                '角球預測': f"{c_exp}", 
+                '入球區間低': adv_stats['goal_range_low'],
+                '入球區間高': adv_stats['goal_range_high'],
+                '走地策略': adv_stats['live_strat'],
+                '智能標籤': smart_tags,
+                '風險評級': risk_level,
+                '首選推介': top_pick
+            })
     return cleaned
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.0 API-Football Edition 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.1 API-Football (Fixed) 啟動...")
     
     # 1. 連接 Google Sheet
     spreadsheet = get_google_spreadsheet()
@@ -612,7 +613,7 @@ def main():
                     print(f"✅ 上傳完成！共 {len(real_data)} 場賽事。")
                 except Exception as e: print(f"❌ 上傳失敗: {e}")
         else:
-            print("⚠️ 未找到這幾天的比賽數據。")
+            print("⚠️ 未找到這幾天的比賽數據 (可能是淡季或聯賽無賽事)。")
     else:
         print("⚠️ 無法獲取積分榜數據，程序終止。")
 
