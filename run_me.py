@@ -42,7 +42,7 @@ def get_google_spreadsheet():
         return client.open(GOOGLE_SHEET_NAME)
     except: return None
 
-# ================= 數據獲取增強 =================
+# ================= 數據獲取工具 =================
 def get_injuries_count(fixture_id, home_team_name, away_team_name):
     data = call_api('injuries', {'fixture': fixture_id})
     if not data or not data.get('response'): return 0, 0
@@ -72,7 +72,7 @@ def get_best_odds(fixture_id):
 
 def get_h2h_stats(h_id, a_id):
     """
-    獲取 H2H 對賽往績 (最近 10 場)
+    修復版 H2H：獲取雙方最近 10 場對賽，統計勝平負
     """
     param_str = f"{h_id}-{a_id}"
     data = call_api('fixtures/headtohead', {'h2h': param_str})
@@ -86,13 +86,22 @@ def get_h2h_stats(h_id, a_id):
     recent_matches = data['response'][:10]
     
     for m in recent_matches:
-        if m['teams']['home']['id'] == h_id:
-            if m['teams']['home']['winner']: h_win += 1
-            elif m['teams']['away']['winner']: a_win += 1
+        home_team_id = m['teams']['home']['id']
+        away_team_id = m['teams']['away']['id']
+        
+        home_is_winner = m['teams']['home']['winner']
+        away_is_winner = m['teams']['away']['winner']
+        
+        # 邏輯判斷：確保我們統計的是「主隊(h_id)」贏了幾次，「客隊(a_id)」贏了幾次
+        if home_team_id == h_id:
+            # 這場比賽 h_id 是主場
+            if home_is_winner: h_win += 1
+            elif away_is_winner: a_win += 1
             else: draw += 1
-        else: # 客隊是主場
-            if m['teams']['home']['winner']: a_win += 1 # 這裡的 a_win 是指我們關注的客隊贏了
-            elif m['teams']['away']['winner']: h_win += 1 # 我們關注的主隊贏了
+        elif away_team_id == h_id:
+            # 這場比賽 h_id 是客場
+            if away_is_winner: h_win += 1 # h_id 贏了
+            elif home_is_winner: a_win += 1 # 對手(a_id)贏了
             else: draw += 1
             
     return h_win, draw, a_win
@@ -133,7 +142,7 @@ def get_smart_goals_exp(pred_data):
     except:
         return h_base, a_base, 0.5, 0.5, 0.5, 0.5
 
-# ================= 純數學運算 =================
+# ================= 數學運算核心 =================
 def poisson_prob(k, lam):
     if lam < 0: lam = 0
     return (math.pow(lam, k) * math.exp(-lam)) / math.factorial(k)
@@ -161,6 +170,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     a_win_1 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 1)
     a_win_2 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 2)
 
+    # 亞盤概率
     ah_level_h = h_win / (h_win + a_win + 0.00001)
     ah_level_a = a_win / (h_win + a_win + 0.00001)
     
@@ -175,9 +185,9 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     
     ah_m2_h = sum(p for (h, a), p in prob_exact_score.items() if h - a > 2)
     ah_m2_a = sum(p for (h, a), p in prob_exact_score.items() if a - h > 2)
-    ah_p2_h = h_win + draw + a_win_1 + a_win_2
-    ah_p2_a = a_win + draw + h_win_1 + h_win_2
+    ah_p2_h = h_win + draw + a_win_1 + a_win_2; ah_p2_a = a_win + draw + h_win_1 + h_win_2
 
+    # HT
     ht_prob = {}
     for h in range(6):
         for a in range(6):
@@ -186,6 +196,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     ht_o15 = sum(p for (h, a), p in ht_prob.items() if h+a > 1.5)
     ht_o25 = sum(p for (h, a), p in ht_prob.items() if h+a > 2.5)
     
+    # FTS & BTTS
     prob_0_0 = prob_exact_score.get((0,0), 0)
     denom = h_exp + a_exp + 0.00001
     fts_h = (h_exp / denom) * (1 - prob_0_0)
@@ -219,7 +230,7 @@ def clean_percent_str(val_str):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V31.0 API-Native (H2H Enhanced) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V32.0 API-Native (H2H Fixed) 啟動...")
     
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
@@ -253,7 +264,6 @@ def main():
             a_id = item['teams']['away']['id']
             h_name = item['teams']['home']['name']
             a_name = item['teams']['away']['name']
-            
             sc_h = item['goals']['home']; sc_a = item['goals']['away']
             score_h_display = str(int(sc_h)) if sc_h is not None else ""
             score_a_display = str(int(sc_a)) if sc_a is not None else ""
@@ -276,21 +286,21 @@ def main():
                 try:
                     form_h = pred['comparison']['form']['home']
                     form_a = pred['comparison']['form']['away']
+                    att_h = cmp.get('att', {}).get('home', "50%") # 確保讀取攻防
+                    att_a = cmp.get('att', {}).get('away', "50%")
+                    def_h = cmp.get('def', {}).get('home', "50%")
+                    def_a = cmp.get('def', {}).get('away', "50%")
                 except: pass
-                
                 h_final_exp, a_final_exp, att_h, att_a, def_h, def_a = get_smart_goals_exp(pred)
 
+            # H2H 修復：現在無條件調用 (包含完場賽事)
+            h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
+            
             inj_h, inj_a = 0, 0
             odds_h=0; odds_d=0; odds_a=0
-            
-            # H2H 數據 (新功能)
-            h2h_h, h2h_d, h2h_a = 0, 0, 0
-            
             if status != '完場':
                 inj_h, inj_a = get_injuries_count(fix_id, h_name, a_name)
                 odds_h, odds_d, odds_a = get_best_odds(fix_id)
-                # 獲取 H2H
-                h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
 
             math_probs = calculate_advanced_math_probs(h_final_exp, a_final_exp)
             kelly_h = calculate_kelly_stake(api_h_win/100, odds_h)
@@ -323,10 +333,12 @@ def main():
                 '主攻': round(att_h*100), '客攻': round(att_a*100), 
                 '主防': round(def_h*100), '客防': round(def_a*100),
                 '主傷': inj_h, '客傷': inj_a,
-                # H2H 數據
                 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
             })
             print(f"         ✅ {h_name} vs {a_name} | H2H: {h2h_h}-{h2h_d}-{h2h_a}")
+            
+            # API 頻率保護
+            time.sleep(0.1)
 
     if cleaned_data:
         df = pd.DataFrame(cleaned_data)
