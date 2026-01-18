@@ -9,7 +9,7 @@ import textwrap
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V19.0)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V20.0)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 =================
 st.markdown("""
@@ -53,7 +53,7 @@ def get_form_html(form_str):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V19.0)")
+    st.title("⚽ 足球AI Pro (V20.0)")
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -78,6 +78,7 @@ def main():
         if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
 
     for index, row in df.iterrows():
+        # 安全讀取數據
         prob_h = clean_pct(row.get('主勝率', 0))
         prob_a = clean_pct(row.get('客勝率', 0))
         prob_o25 = clean_pct(row.get('大球率', 0))
@@ -86,60 +87,60 @@ def main():
         cls_a = "cell-val-high" if prob_a > 50 else "cell-val"
         cls_o25 = "cell-val-high" if prob_o25 > 55 else "cell-val"
 
-        # 這裡使用 dedent 來確保 HTML 字串不會被誤判為代碼塊
+        # 這裡的 HTML 不應該有縮排，以避免被 Streamlit 誤認為 Code Block
         html_content = f"""
-        <div class='compact-card'>
-            <div class='match-header'>
-                <span>{row.get('時間','')} | {row.get('聯賽','')}</span>
-                <span>{row.get('狀態','')}</span>
-            </div>
-            
-            <div class='team-row'>
-                <div style='text-align:right;'>
-                    <div class='team-name'>{row.get('主隊','')} <span style='font-size:0.8rem; color:#888;'>#{row.get('主排名','-')}</span></div>
-                    <div class='team-meta'>{get_form_html(row.get('主近況'))}</div>
-                </div>
-                <div class='score-box'>{row.get('主分','')} - {row.get('客分','')}</div>
-                <div>
-                    <div class='team-name'><span style='font-size:0.8rem; color:#888;'>#{row.get('客排名','-')}</span> {row.get('客隊','')}</div>
-                    <div class='team-meta'>{get_form_html(row.get('客近況'))}</div>
-                </div>
-            </div>
-            
-            <div class='grid-matrix'>
-                <div class='matrix-col'>
-                    <div class='matrix-header'>勝率模型</div>
-                    <div class='matrix-cell'><span>主</span><span class='{cls_h}'>{prob_h:.0f}%</span></div>
-                    <div class='matrix-cell'><span>客</span><span class='{cls_a}'>{prob_a:.0f}%</span></div>
-                </div>
-                <div class='matrix-col'>
-                    <div class='matrix-header'>入球模型</div>
-                    <div class='matrix-cell'><span>大2.5</span><span class='{cls_o25}'>{prob_o25:.0f}%</span></div>
-                    <div class='matrix-cell'><span>BTTS</span><span class='cell-val'>{clean_pct(row.get('BTTS率',0)):.0f}%</span></div>
-                </div>
-                <div class='matrix-col'>
-                    <div class='matrix-header'>投資價值 (Kelly)</div>
-                    <div class='matrix-cell'><span>主</span><span class='cell-val'>{clean_pct(row.get('凱利主',0)):.0f}%</span></div>
-                    <div class='matrix-cell'><span>客</span><span class='cell-val'>{clean_pct(row.get('凱利客',0)):.0f}%</span></div>
-                </div>
-                <div class='matrix-col'>
-                    <div class='matrix-header'>亞盤建議</div>
-                    <div style='color:#00e5ff; font-weight:bold; margin-top:4px;'>{row.get('亞盤建議','-')}</div>
-                </div>
-                <div class='matrix-col'>
-                    <div class='matrix-header'>真實賠率</div>
-                    <div class='matrix-cell'><span>主</span><span>{row.get('主勝賠率', '-')}</span></div>
-                    <div class='matrix-cell'><span>客</span><span>{row.get('客勝賠率', '-')}</span></div>
-                </div>
-            </div>
-            
-            <div class='footer-box'>
-                <div><span class='tag tag-pick'>🎯 {row.get('首選推介','-')}</span></div>
-                <div style='color:#888; font-size:0.75rem;'>{row.get('智能標籤','')}</div>
-            </div>
+<div class='compact-card'>
+    <div class='match-header'>
+        <span>{row.get('時間','')} | {row.get('聯賽','')}</span>
+        <span>{row.get('狀態','')}</span>
+    </div>
+    
+    <div class='team-row'>
+        <div style='text-align:right;'>
+            <div class='team-name'>{row.get('主隊','')} <span style='font-size:0.8rem; color:#888;'>#{row.get('主排名','-')}</span></div>
+            <div class='team-meta'>{get_form_html(row.get('主近況'))}</div>
         </div>
-        """
-        st.markdown(textwrap.dedent(html_content), unsafe_allow_html=True)
+        <div class='score-box'>{row.get('主分','')} - {row.get('客分','')}</div>
+        <div>
+            <div class='team-name'><span style='font-size:0.8rem; color:#888;'>#{row.get('客排名','-')}</span> {row.get('客隊','')}</div>
+            <div class='team-meta'>{get_form_html(row.get('客近況'))}</div>
+        </div>
+    </div>
+    
+    <div class='grid-matrix'>
+        <div class='matrix-col'>
+            <div class='matrix-header'>勝率模型</div>
+            <div class='matrix-cell'><span>主</span><span class='{cls_h}'>{prob_h:.0f}%</span></div>
+            <div class='matrix-cell'><span>客</span><span class='{cls_a}'>{prob_a:.0f}%</span></div>
+        </div>
+        <div class='matrix-col'>
+            <div class='matrix-header'>入球模型</div>
+            <div class='matrix-cell'><span>大2.5</span><span class='{cls_o25}'>{prob_o25:.0f}%</span></div>
+            <div class='matrix-cell'><span>BTTS</span><span class='cell-val'>{clean_pct(row.get('BTTS率',0)):.0f}%</span></div>
+        </div>
+        <div class='matrix-col'>
+            <div class='matrix-header'>投資價值 (Kelly)</div>
+            <div class='matrix-cell'><span>主</span><span class='cell-val'>{clean_pct(row.get('凱利主',0)):.0f}%</span></div>
+            <div class='matrix-cell'><span>客</span><span class='cell-val'>{clean_pct(row.get('凱利客',0)):.0f}%</span></div>
+        </div>
+        <div class='matrix-col'>
+            <div class='matrix-header'>亞盤建議</div>
+            <div style='color:#00e5ff; font-weight:bold; margin-top:4px;'>{row.get('亞盤建議','-')}</div>
+        </div>
+        <div class='matrix-col'>
+            <div class='matrix-header'>真實賠率</div>
+            <div class='matrix-cell'><span>主</span><span>{row.get('主勝賠率', '-')}</span></div>
+            <div class='matrix-cell'><span>客</span><span>{row.get('客勝賠率', '-')}</span></div>
+        </div>
+    </div>
+    
+    <div class='footer-box'>
+        <div><span class='tag tag-pick'>🎯 {row.get('首選推介','-')}</span></div>
+        <div style='color:#888; font-size:0.75rem;'>{row.get('智能標籤','')}</div>
+    </div>
+</div>
+"""
+        st.markdown(html_content, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
