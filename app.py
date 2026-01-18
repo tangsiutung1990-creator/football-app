@@ -7,7 +7,7 @@ import os
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V30.0)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V30.1)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 =================
 st.markdown("""
@@ -57,7 +57,7 @@ def format_odds(val):
     except: return "-"
 
 def main():
-    st.title("⚽ 足球AI Pro (V30.0 Ultimate)")
+    st.title("⚽ 足球AI Pro (V30.1 Ultimate)")
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -128,7 +128,6 @@ def main():
         card_html += f"<div class='score-area'>{score_txt}</div>"
         card_html += f"</div>"
         
-        # Grid Matrix
         card_html += f"<div class='grid-matrix'>"
         
         # 1. 勝率
