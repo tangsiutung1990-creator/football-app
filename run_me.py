@@ -68,9 +68,6 @@ def parse_market_value(val_str):
     except: return 0
 
 # ================= 核心計算 (數學模型) =================
-def calculate_synthetic_xg(home_exp, away_exp):
-    return round(home_exp, 2), round(away_exp, 2)
-
 def calculate_kelly_stake(prob, odds):
     if odds <= 1: return 0
     b = odds - 1; q = 1 - prob; f = (b * prob - q) / b
@@ -80,17 +77,6 @@ def calculate_dominance_index(h_info, a_info):
     h_force = (h_info['home_att'] * 1.1) / max(a_info['away_def'], 0.5)
     a_force = (a_info['away_att'] * 1.1) / max(h_info['home_def'], 0.5)
     return round(h_force - a_force, 2)
-
-def calculate_corner_probs(match_vol, dom_idx):
-    lambda_corners = 9.5
-    if match_vol > 3.0: lambda_corners += 1.5
-    elif match_vol < 2.2: lambda_corners -= 1.0
-    if abs(dom_idx) > 1.2: lambda_corners += 1.2
-    def poisson_cdf(k, lam):
-        sum_p = 0
-        for i in range(k + 1): sum_p += (lam**i * math.exp(-lam)) / math.factorial(i)
-        return sum_p
-    return round((1-poisson_cdf(7, lambda_corners))*100), round((1-poisson_cdf(8, lambda_corners))*100), round((1-poisson_cdf(9, lambda_corners))*100), round(lambda_corners, 1)
 
 def calculate_handicap_with_prob(h_win, a_win, ah05, ah1, ah2):
     if h_win > 0.65: return f"-1.5 ({int((ah1+ah2)/2*100)}%)"
@@ -103,7 +89,7 @@ def calculate_handicap_with_prob(h_win, a_win, ah05, ah1, ah2):
     elif a_win > 0.4: return f"客 -0/0.5 ({int((a_win+0.1)*100)}%)"
     return "0"
 
-def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a, dom_idx, prob_o25):
+def analyze_team_tags(h_info, a_info, match_vol, kelly_h, kelly_a, dom_idx, prob_o25):
     tags = []
     if dom_idx > 1.2: tags.append("👑主宰")
     elif dom_idx < -1.2: tags.append("👑客宰")
@@ -116,9 +102,9 @@ def analyze_team_tags(h_info, a_info, match_vol, h2h_avg_goals, kelly_h, kelly_a
     if kelly_a > 10: tags.append("💎客EV")
     return " ".join(tags) if tags else "⚖️均"
 
-def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol, kelly_h, kelly_a, dom_idx):
+def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, match_vol, kelly_h, kelly_a):
     scores = {}
-    scores['2.5大'] = prob_o25 * 100 + (10 if h2h_avg > 3.0 else 0) if prob_o25 > 0.5 else -999
+    scores['2.5大'] = prob_o25 * 100 if prob_o25 > 0.5 else -999
     scores['2.5細'] = (1-prob_o25) * 100 + (10 if match_vol < 2.2 else 0) if (1-prob_o25) > 0.5 else -999
     scores['主勝'] = h_win * 100 + kelly_h if h_win > 0.4 else -999
     scores['客勝'] = a_win * 100 + kelly_a if a_win > 0.4 else -999
@@ -130,7 +116,7 @@ def calculate_alpha_pick(h_win, a_win, prob_o25, prob_btts, h2h_avg, match_vol, 
     sc = valid_scores[best]
     return f"{best} {'🌟' if sc>90 else '🔥' if sc>75 else '✅'}", sc
 
-def calculate_risk_level(ou_conf, match_vol, prob_o25, kelly_sum, range_spread):
+def calculate_risk_level(ou_conf, prob_o25, kelly_sum, range_spread):
     score = 50 - (ou_conf - 50)
     if range_spread > 1.5: score += 20 
     if prob_o25 < 0.45 and prob_o25 > 0.35: score += 15 
@@ -140,7 +126,7 @@ def calculate_risk_level(ou_conf, match_vol, prob_o25, kelly_sum, range_spread):
     elif score < 55: return "🔵穩健"
     else: return "🔴高險"
 
-def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_avg_goals):
+def calculate_advanced_probs(home_exp, away_exp, match_vol):
     def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
     def adjustment(x, y, lam, mu, rho):
         if x == 0 and y == 0: return 1 - (lam * mu * rho)
@@ -221,33 +207,25 @@ def calculate_advanced_probs(home_exp, away_exp, h2h_o25_rate, match_vol, h2h_av
         'goal_range_low': round(lower_bound, 1), 'goal_range_high': round(upper_bound, 1) 
     }
 
-def calculate_correct_score_probs(home_exp, away_exp):
-    def poisson(k, lam): return (lam**k * math.exp(-lam)) / math.factorial(k)
-    scores = []
-    for h in range(6):
-        for a in range(6):
-            prob = poisson(h, home_exp) * poisson(a, away_exp)
-            if h==0 and a==0: prob *= (1 - home_exp*away_exp*DIXON_COLES_RHO)
-            scores.append({'score': f"{h}:{a}", 'prob': prob})
-    scores.sort(key=lambda x: x['prob'], reverse=True)
-    return " | ".join([f"{s['score']} ({int(s['prob']*100)}%)" for s in scores[:3]])
-
 def calculate_weighted_form_score(form_str):
     if not form_str or form_str == 'N/A': return 1.5 
     score = 0; total_weight = 0
     relevant = str(form_str).replace(',', '').strip()[-5:]
     weights = [1.0, 1.2, 1.4, 1.8, 2.2] 
     start_idx = 5 - len(relevant)
+    if start_idx < 0: start_idx = 0
     curr_weights = weights[start_idx:]
     for i, char in enumerate(relevant):
+        if i >= len(curr_weights): break
         w = curr_weights[i]
         s = 3 if char.upper()=='W' else 1 if char.upper()=='D' else 0
         score += s * w
         total_weight += w
     return score / total_weight if total_weight > 0 else 1.5
 
-def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, h2h_o25_rate, h2h_avg, lg_avg, lg_code):
-    lg_h = lg_avg.get('avg_home', 1.6); lg_a = lg_avg.get('avg_away', 1.3)
+def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, lg_stats, lg_code):
+    lg_h = lg_stats.get('avg_home', 1.5)
+    lg_a = lg_stats.get('avg_away', 1.3)
     factor = LEAGUE_GOAL_FACTOR.get(lg_code, 1.1) * MARKET_GOAL_INFLATION
     
     h_att_r = (h_info['home_att'] / lg_h) * 1.05; a_def_r = (a_info['away_def'] / lg_h) * 1.05
@@ -268,46 +246,20 @@ def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, h2h_o25_rate, h2
     h_mom = calculate_weighted_form_score(h_info['form']); a_mom = calculate_weighted_form_score(a_info['form'])
     raw_h *= (1 + (h_mom-1.3)*0.15); raw_a *= (1 + (a_mom-1.3)*0.15)
     
-    return round(max(0.2, raw_h), 2), round(max(0.2, raw_a), 2), round(match_vol, 2), round(h_mom, 2), round(a_mom, 2)
+    return round(max(0.2, raw_h), 2), round(max(0.2, raw_a), 2), round(match_vol, 2)
 
-# ================= 主流程 (智能容錯版) =================
-def get_standings_with_fallback():
-    """
-    智能下載積分榜：先試 2025，若無數據則自動回退至 2024
-    返回: (數據Map, 聯賽統計, 使用的賽季, 時間偏移量)
-    """
-    # 1. 嘗試下載 2025 賽季
-    primary_season = 2025
-    print(f"📊 [API-Football] 嘗試下載 {primary_season} 賽季數據...")
+# ================= 主流程 (無回退版) =================
+def get_standings():
+    # ⚠️ 強制使用 2025 賽季
+    season = 2025
+    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季數據 (Strict Mode)...")
     
     standings_map = {}; league_stats = {} 
-    success_count = 0
     
     for lg_id, lg_code in LEAGUE_ID_MAP.items():
-        data = call_api('standings', {'league': lg_id, 'season': primary_season})
-        if data and data.get('response'):
-            success_count += 1
-            # 處理數據 (略，稍後統一處理以節省代碼)
-    
-    # 2. 判斷是否需要回退
-    used_season = primary_season
-    time_offset = 0 # 預設不偏移
-    
-    if success_count == 0:
-        print(f"⚠️ 2025 賽季無數據 (可能未開季)。自動切換至 2024 賽季 (Time Travel Mode)...")
-        used_season = 2024
-        time_offset = -1 # 搜尋日期往前推一年
-    else:
-        print(f"✅ 成功獲取 2025 賽季數據")
-
-    # 3. 正式下載 (根據決定好的賽季)
-    final_standings = {}; final_stats = {}
-    
-    for lg_id, lg_code in LEAGUE_ID_MAP.items():
-        data = call_api('standings', {'league': lg_id, 'season': used_season})
-        
+        data = call_api('standings', {'league': lg_id, 'season': season})
         if not data or not data.get('response'):
-            print(f"   ⚠️ 無法獲取 {lg_code} (Season {used_season})"); continue
+            print(f"   ⚠️ 無法獲取 {lg_code} 數據 (可能未開季或 API Key 問題)"); continue
             
         l_h_g = 0; l_m = 0
         for row in data['response'][0]['league']['standings'][0]:
@@ -317,7 +269,7 @@ def get_standings_with_fallback():
             a_f = row['away']['goals']['for']; a_a = row['away']['goals']['against']
             h_p = row['home']['played']; a_p = row['away']['played']
             
-            final_standings[t] = {
+            standings_map[t] = {
                 'rank': row['rank'], 'form': row['form'],
                 'home_att': h_f/h_p if h_p>0 else 1.3, 'home_def': h_a/h_p if h_p>0 else 1.3,
                 'away_att': a_f/a_p if a_p>0 else 1.0, 'away_def': a_a/a_p if a_p>0 else 1.0,
@@ -325,31 +277,31 @@ def get_standings_with_fallback():
             }
             l_h_g += h_f; l_m += h_p
             
-        final_stats[lg_code] = {'avg_home': l_h_g/l_m if l_m>0 else 1.5, 'avg_away': (l_h_g/l_m)*0.85 if l_m>0 else 1.3}
+        league_stats[lg_code] = {'avg_home': l_h_g/l_m if l_m>0 else 1.5, 'avg_away': (l_h_g/l_m)*0.85 if l_m>0 else 1.3}
+        print(f"   ✅ {lg_code} 數據更新完成")
         
-    return final_standings, final_stats, used_season, time_offset
+    return standings_map, league_stats
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V17.1 API-Football (Auto-Fallback) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V18.0 API-Football (Strict 2025) 啟動...")
     
-    # 1. 獲取數據 (含自動回退邏輯)
-    standings_map, league_stats, season, time_offset = get_standings_with_fallback()
+    # 1. 獲取數據
+    standings_map, league_stats = get_standings()
     
     if not standings_map:
         print("❌ 無法獲取任何積分榜數據，程序終止。"); return
 
-    # 2. 設定搜尋日期 (應用時間偏移)
+    # 2. 設定搜尋日期 (直接使用 2026 年)
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
+    from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
+    to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     
-    # 關鍵：如果使用了 2024 賽季 (回退模式)，則搜尋日期也要減一年
-    search_base_date = utc_now.replace(year = utc_now.year + time_offset)
-    
-    from_date = (search_base_date - timedelta(days=1)).strftime('%Y-%m-%d')
-    to_date = (search_base_date + timedelta(days=3)).strftime('%Y-%m-%d')
+    # 強制賽季 2025
+    season = 2025
     
     print(f"🚀 正在掃描賽程 (Season {season})...")
-    print(f"📅 搜尋範圍: {from_date} to {to_date} (Offset: {time_offset} year)")
+    print(f"📅 搜尋範圍: {from_date} to {to_date}")
     
     cleaned = []
     
@@ -366,21 +318,24 @@ def main():
 
         for item in fixtures:
             f = item['fixture']; h = item['teams']['home']['name']; a = item['teams']['away']['name']
-            
-            # 顯示時間要加回偏移量，讓 User 看到的是「2026年」的日期 (即使內部是用 2025 查的)
-            fixture_dt = datetime.fromtimestamp(f['timestamp'], pytz.utc)
-            display_dt = fixture_dt.replace(year = fixture_dt.year - time_offset) # 加回年份
-            t_str = display_dt.astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
-            
+            t_str = datetime.fromtimestamp(f['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
             status = '進行中' if f['status']['short'] in ['1H','2H','HT','LIVE'] else '未開賽'
             if f['status']['short'] in ['FT','AET','PEN']: status = '完場'
 
             h_i = standings_map.get(h, {'rank':10,'form':'N/A','home_att':1.3,'home_def':1.3,'volatility':2.5})
             a_i = standings_map.get(a, {'rank':10,'form':'N/A','away_att':1.1,'away_def':1.1,'volatility':2.5})
             
-            p_h, p_a, vol, hm, am = predict_match_outcome(h, h_i, a_i, parse_market_value(market_value_map.get(h)), parse_market_value(market_value_map.get(a)), 0.5, -1, league_stats.get(lg_code), lg_code)
-            adv = calculate_advanced_probs(p_h, p_a, 0.5, vol, -1)
-            pick, score = calculate_alpha_pick(adv['h_win'], adv['a_win'], adv['prob_o25'], adv['btts']/100, -1, vol, adv['kelly_h'], adv['kelly_a'], calculate_dominance_index(h_i, a_i))
+            p_h, p_a, vol = predict_match_outcome(h, h_i, a_i, parse_market_value(market_value_map.get(h)), parse_market_value(market_value_map.get(a)), league_stats.get(lg_code), lg_code)
+            adv = calculate_advanced_probs(p_h, p_a, vol)
+            
+            # 獲取真實賠率
+            odds_h = 0; odds_a = 0
+            # 這裡簡化處理，如果要獲取真實賠率需要 call 'odds' endpoint，但這會大量消耗 quota
+            # 如果你想要真實賠率，可以解開註釋 (但會慢很多)
+            # odds_data = call_api('odds', {'fixture': f['id'], 'bookmaker': 1})
+            # ... 解析 odds_data ...
+            
+            pick, score = calculate_alpha_pick(adv['h_win'], adv['a_win'], adv['prob_o25'], adv['btts']/100, vol, adv['kelly_h'], adv['kelly_a'])
             
             print(f"         ✅ {h} vs {a} | {pick}")
             
@@ -388,21 +343,30 @@ def main():
                 '時間': t_str, '聯賽': lg_code, '主隊': h, '客隊': a,
                 '主排名': h_i['rank'], '客排名': a_i['rank'],
                 '主預測': p_h, '客預測': p_a, '總球數': round(p_h+p_a,1),
-                '狀態': status, '主分': item['goals']['home'], '客分': item['goals']['away'],
-                '主勝率': round(adv['h_win']*100), '和局率': round(adv['draw']*100), '客勝率': round(adv['a_win']*100),
-                '大球率': adv['prob_o25'], 'BTTS率': adv['btts'],
-                '凱利主(%)': adv['kelly_h'], '凱利客(%)': adv['kelly_a'],
+                '狀態': status, 
+                '主分': item['goals']['home'] if item['goals']['home'] is not None else '', 
+                '客分': item['goals']['away'] if item['goals']['away'] is not None else '',
+                # 輸出為整數百分比
+                '主勝率': round(adv['h_win']*100), 
+                '和局率': round(adv['draw']*100), 
+                '客勝率': round(adv['a_win']*100),
+                '大球率': round(adv['prob_o25']*100), 
+                'BTTS率': round(adv['btts']*100),
+                '凱利主': round(adv['kelly_h']), 
+                '凱利客': round(adv['kelly_a']),
                 '亞盤建議': calculate_handicap_with_prob(adv['h_win'], adv['a_win'], adv['ah_minus_05'], adv['ah_minus_1'], adv['ah_minus_2']),
-                '智能標籤': analyze_team_tags(h_i, a_i, vol, -1, adv['kelly_h'], adv['kelly_a'], calculate_dominance_index(h_i, a_i), adv['prob_o25']),
-                '風險評級': calculate_risk_level(adv['ou_conf'], vol, adv['prob_o25'], adv['kelly_h']+adv['kelly_a'], adv['goal_range_high']-adv['goal_range_low']),
-                '首選推介': pick
+                '智能標籤': analyze_team_tags(h_i, a_i, vol, adv['kelly_h'], adv['kelly_a'], calculate_dominance_index(h_i, a_i), adv['prob_o25']),
+                '風險評級': calculate_risk_level(adv['ou_conf'], adv['prob_o25'], adv['kelly_h']+adv['kelly_a'], adv['goal_range_high']-adv['goal_range_low']),
+                '首選推介': pick,
+                '主勝賠率': odds_h, '客勝賠率': odds_a
             })
             
     if cleaned:
         df = pd.DataFrame(cleaned)
-        # 修正欄位名稱以匹配 app.py
+        # 欄位必須與 app.py 完全對應
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主預測','客預測','總球數','狀態','主分','客分',
-                '主勝率','和局率','客勝率','大球率','BTTS率','凱利主(%)','凱利客(%)','亞盤建議','智能標籤','風險評級','首選推介']
+                '主勝率','和局率','客勝率','大球率','BTTS率','凱利主','凱利客','亞盤建議','智能標籤','風險評級','首選推介',
+                '主勝賠率','客勝賠率']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try: spreadsheet.sheet1.clear(); spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist()); print("✅ 數據上傳成功！")
