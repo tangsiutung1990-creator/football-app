@@ -7,7 +7,7 @@ import os
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V30.1)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V31.0)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 =================
 st.markdown("""
@@ -22,10 +22,11 @@ st.markdown("""
     .content-row { display: grid; grid-template-columns: 7fr 3fr; align-items: center; margin-bottom: 10px; }
     .teams-area { text-align: left; display: flex; flex-direction: column; justify-content: center; }
     .team-name { font-weight: bold; font-size: 1.15rem; color: #fff; margin-bottom: 2px; } 
-    .team-sub { font-size: 0.75rem; color: #aaa; display: flex; gap: 8px; align-items: center; }
+    .team-sub { font-size: 0.75rem; color: #aaa; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .score-area { text-align: right; font-size: 2.2rem; font-weight: bold; color: #00ffea; letter-spacing: 2px; line-height: 1; }
     
     .inj-badge { color: #ff4b4b; font-weight: bold; font-size: 0.75rem; border: 1px solid #ff4b4b; padding: 0 4px; border-radius: 3px; }
+    .h2h-badge { color: #ffd700; font-weight: bold; font-size: 0.75rem; background: #333; padding: 0 4px; border-radius: 3px; }
     
     .grid-matrix { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 8px; text-align: center; }
     .matrix-col { background: #222; padding: 2px; border-radius: 4px; border: 1px solid #333; display: flex; flex-direction: column; }
@@ -57,7 +58,7 @@ def format_odds(val):
     except: return "-"
 
 def main():
-    st.title("⚽ 足球AI Pro (V30.1 Ultimate)")
+    st.title("⚽ 足球AI Pro (V31.0 H2H Edition)")
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -113,6 +114,10 @@ def main():
         inj_a = clean_pct(row.get('客傷', 0))
         inj_h_tag = f"<span class='inj-badge'>🚑 {inj_h}</span>" if inj_h > 0 else ""
         inj_a_tag = f"<span class='inj-badge'>🚑 {inj_a}</span>" if inj_a > 0 else ""
+        
+        # H2H 展示
+        h2h_h = row.get('H2H主', 0); h2h_d = row.get('H2H和', 0); h2h_a = row.get('H2H客', 0)
+        h2h_tag = f"<span class='h2h-badge'>⚔️ {h2h_h}勝 {h2h_d}和 {h2h_a}負</span>"
 
         card_html = ""
         card_html += f"<div class='compact-card'>"
@@ -121,13 +126,14 @@ def main():
         card_html += f"<div class='content-row'>"
         card_html += f"<div class='teams-area'>"
         card_html += f"<div class='team-name'>{row.get('主隊','')} {inj_h_tag}</div>"
-        card_html += f"<div class='team-sub'>狀態: {row.get('主狀態','-')} | 攻: {row.get('主攻','-')}% 防: {row.get('主防','-')}%</div>"
+        card_html += f"<div class='team-sub'>狀態: {row.get('主狀態','-')} | 攻: {row.get('主攻','-')}% {h2h_tag}</div>"
         card_html += f"<div class='team-name' style='margin-top:4px;'>{row.get('客隊','')} {inj_a_tag}</div>"
-        card_html += f"<div class='team-sub'>狀態: {row.get('客狀態','-')} | 攻: {row.get('客攻','-')}% 防: {row.get('客防','-')}%</div>"
+        card_html += f"<div class='team-sub'>狀態: {row.get('客狀態','-')} | 攻: {row.get('客攻','-')}%</div>"
         card_html += f"</div>"
         card_html += f"<div class='score-area'>{score_txt}</div>"
         card_html += f"</div>"
         
+        # Grid Matrix
         card_html += f"<div class='grid-matrix'>"
         
         # 1. 勝率
