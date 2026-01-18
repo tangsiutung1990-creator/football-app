@@ -8,7 +8,7 @@ import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import numpy as np
 
-# ================= 設定區 (已更新 API-Football) =================
+# ================= 設定區 =================
 # 你提供的 API Key
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
 BASE_URL = 'https://v3.football.api-sports.io'
@@ -377,16 +377,25 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
     return round(raw_h, 2), round(raw_a, 2), round(match_vol, 2), round(h_mom, 2), round(a_mom, 2)
 
 # ================= 數據抓取主流程 =================
+
+def determine_season():
+    """自動判斷當前賽季年份 (解決 1-7 月搜不到比賽的問題)"""
+    now = datetime.now()
+    # 如果是 1-7 月，當前賽季應該是 上一年開始的 (例如 2026年1月，屬於 2025-2026 賽季，API 參數是 2025)
+    if now.month <= 7:
+        return now.year - 1
+    else:
+        return now.year
+
 def get_standings_from_new_api():
-    print("📊 [API-Football] 正在下載各聯賽積分榜...")
+    season = determine_season()
+    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季積分榜...")
+    
     standings_map = {}
     league_stats = {} 
 
-    # 使用 2024 賽季 (API-Football v3)
-    current_season = 2024
-
     for lg_id, lg_code in LEAGUE_ID_MAP.items():
-        params = {'league': lg_id, 'season': current_season}
+        params = {'league': lg_id, 'season': season}
         data = call_api('standings', params=params)
         
         if not data or not data.get('response'):
@@ -444,7 +453,8 @@ def get_standings_from_new_api():
     return standings_map, league_stats
 
 def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
-    print("🚀 [API-Football] 正在獲取賽程...")
+    season = determine_season()
+    print(f"🚀 [API-Football] 正在獲取賽程 (Season {season})...")
     cleaned = []
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     
@@ -453,13 +463,10 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     
-    current_season = 2024 
-    
-    # 修正：逐個聯賽查詢
     for lg_id, lg_code in LEAGUE_ID_MAP.items():
         params = {
             'league': lg_id, 
-            'season': current_season,
+            'season': season,
             'from': from_date, 
             'to': to_date
         }
@@ -471,6 +478,7 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
             continue
 
         fixtures = data['response']
+        print(f"      👉 找到 {len(fixtures)} 場比賽")
         
         for item in fixtures:
             fixture = item['fixture']
@@ -527,7 +535,7 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
             score_h = goals['home'] if goals['home'] is not None else ''
             score_a = goals['away'] if goals['away'] is not None else ''
 
-            print(f"   👉 分析: {h_name} vs {a_name} | {top_pick}")
+            print(f"         ✅ 分析: {h_name} vs {a_name} | {top_pick}")
 
             cleaned.append({
                 '時間': time_str, '聯賽': lg_code,
@@ -577,7 +585,7 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
     return cleaned
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.1 API-Football (Fixed) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.2 API-Football (Season Fix) 啟動...")
     
     # 1. 連接 Google Sheet
     spreadsheet = get_google_spreadsheet()
@@ -613,7 +621,7 @@ def main():
                     print(f"✅ 上傳完成！共 {len(real_data)} 場賽事。")
                 except Exception as e: print(f"❌ 上傳失敗: {e}")
         else:
-            print("⚠️ 未找到這幾天的比賽數據 (可能是淡季或聯賽無賽事)。")
+            print("⚠️ 未找到這幾天的比賽數據 (請確認 API Key 權限或當前賽期)。")
     else:
         print("⚠️ 無法獲取積分榜數據，程序終止。")
 
