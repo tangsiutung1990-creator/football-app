@@ -38,7 +38,7 @@ LEAGUE_GOAL_FACTOR = {
     'SA': 1.15, 'FL1': 1.10
 }
 
-# 豪門名單 (用於調整權重)
+# 豪門名單
 TITAN_TEAMS = [
     'Manchester City', 'Liverpool', 'Arsenal', 'Real Madrid', 'Barcelona', 
     'Atletico Madrid', 'Bayern Munich', 'Bayer Leverkusen', 'Dortmund', 
@@ -46,7 +46,7 @@ TITAN_TEAMS = [
     'Benfica', 'Porto', 'Sporting CP'
 ]
 
-# ================= API 連接函式 (API-Football 專用) =================
+# ================= API 連接函式 =================
 def call_api(endpoint, params=None):
     headers = {
         'x-rapidapi-host': "v3.football.api-sports.io",
@@ -58,7 +58,7 @@ def call_api(endpoint, params=None):
         if response.status_code == 200:
             return response.json()
         else:
-            print(f"⚠️ API 錯誤: {response.status_code} | {response.text}")
+            print(f"⚠️ API Http 錯誤: {response.status_code} | {response.text}")
             return None
     except Exception as e:
         print(f"❌ 連線異常: {e}")
@@ -378,18 +378,10 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
 
 # ================= 數據抓取主流程 =================
 
-def determine_season():
-    """自動判斷當前賽季年份 (解決 1-7 月搜不到比賽的問題)"""
-    now = datetime.now()
-    # 如果是 1-7 月，當前賽季應該是 上一年開始的 (例如 2026年1月，屬於 2025-2026 賽季，API 參數是 2025)
-    if now.month <= 7:
-        return now.year - 1
-    else:
-        return now.year
-
 def get_standings_from_new_api():
-    season = determine_season()
-    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季積分榜...")
+    # 強制使用 2024 賽季 (解決系統時間錯誤問題)
+    season = 2024
+    print(f"📊 [API-Football] 強制下載 {season}-{season+1} 賽季積分榜...")
     
     standings_map = {}
     league_stats = {} 
@@ -398,8 +390,17 @@ def get_standings_from_new_api():
         params = {'league': lg_id, 'season': season}
         data = call_api('standings', params=params)
         
-        if not data or not data.get('response'):
-            print(f"   ⚠️ 無法獲取聯賽 ID {lg_id} 的數據")
+        # 加入詳細 Debug 訊息
+        if not data:
+            print(f"   ⚠️ API 連線無回應: {lg_code}")
+            continue
+
+        if data.get('errors'):
+            print(f"   ❌ API 權限錯誤 ({lg_code}): {data['errors']}")
+            continue
+            
+        if not data.get('response'):
+            print(f"   ⚠️ 無數據 ({lg_code}): 可能該聯賽未開季或 ID 錯誤")
             continue
 
         league_total_home_goals = 0
@@ -453,13 +454,14 @@ def get_standings_from_new_api():
     return standings_map, league_stats
 
 def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
-    season = determine_season()
+    season = 2024 # 強制使用 2024 賽季
     print(f"🚀 [API-Football] 正在獲取賽程 (Season {season})...")
     cleaned = []
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     
+    # 這裡如果不相信系統時間，可以暫時手動設定查詢日期
+    # 但為求自動化，這裡暫時信任系統日期，如果日期也錯，建議手動改 from_date
     utc_now = datetime.now(pytz.utc)
-    # 搜尋範圍：昨天 到 未來3天
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     
@@ -475,6 +477,8 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
         data = call_api('fixtures', params=params)
         
         if not data or not data.get('response'):
+            if data and data.get('errors'):
+                 print(f"      ❌ API Error: {data['errors']}")
             continue
 
         fixtures = data['response']
@@ -585,7 +589,7 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
     return cleaned
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.2 API-Football (Season Fix) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.3 API-Football (Force Season 2024) 啟動...")
     
     # 1. 連接 Google Sheet
     spreadsheet = get_google_spreadsheet()
@@ -621,7 +625,7 @@ def main():
                     print(f"✅ 上傳完成！共 {len(real_data)} 場賽事。")
                 except Exception as e: print(f"❌ 上傳失敗: {e}")
         else:
-            print("⚠️ 未找到這幾天的比賽數據 (請確認 API Key 權限或當前賽期)。")
+            print("⚠️ 未找到這幾天的比賽數據 (請確認該日期範圍是否有賽事)。")
     else:
         print("⚠️ 無法獲取積分榜數據，程序終止。")
 
