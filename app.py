@@ -7,31 +7,33 @@ import os
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V24.1)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V25.0)", page_icon="⚽", layout="wide")
 
-# ================= CSS 優化 =================
+# ================= CSS 優化 (球隊左，比分右) =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
-    .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: 'Arial', sans-serif; }
+    .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-bottom: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: 'Arial', sans-serif; }
     
-    .match-header { display: flex; justify-content: space-between; color: #888; font-size: 0.85rem; margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 3px; }
+    .match-header { display: flex; justify-content: space-between; color: #888; font-size: 0.8rem; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
     
-    .team-row { display: grid; grid-template-columns: 4fr 1fr 4fr; align-items: center; margin-bottom: 8px; }
-    .team-name { font-weight: bold; font-size: 1.2rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } 
-    .score-box { font-size: 1.8rem; font-weight: bold; color: #00ffea; text-align: center; }
+    /* 核心佈局：左邊球隊 (70%)，右邊比分 (30%) */
+    .content-row { display: grid; grid-template-columns: 7fr 3fr; align-items: center; margin-bottom: 10px; }
+    
+    .teams-area { text-align: left; display: flex; flex-direction: column; justify-content: center; }
+    .team-name { font-weight: bold; font-size: 1.15rem; color: #fff; margin-bottom: 2px; } 
+    .team-sub { font-size: 0.75rem; color: #aaa; }
+    
+    .score-area { text-align: right; font-size: 2.2rem; font-weight: bold; color: #00ffea; letter-spacing: 2px; line-height: 1; }
+    .status-badge { font-size: 0.7rem; background: #333; padding: 2px 6px; border-radius: 4px; vertical-align: middle; color: #ddd; margin-left: 5px; }
     
     /* 6欄緊湊網格 */
-    .grid-matrix { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 5px; text-align: center; }
+    .grid-matrix { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 8px; text-align: center; }
     .matrix-col { background: #222; padding: 2px; border-radius: 4px; border: 1px solid #333; display: flex; flex-direction: column; }
-    
-    /* 標題 */
     .matrix-header { color: #ff9800; font-weight: bold; font-size: 0.75rem; margin-bottom: 2px; border-bottom: 1px solid #444; padding-bottom: 1px; }
-    
-    /* 數據單元格 */
     .matrix-cell { display: flex; justify-content: space-between; padding: 0 4px; align-items: center; line-height: 1.4; }
     .cell-label { color: #999; font-size: 0.75rem; }
-    .cell-val { color: #fff; font-weight: bold; font-size: 0.9rem; } /* 加大字體 */
+    .cell-val { color: #fff; font-weight: bold; font-size: 0.9rem; }
     .cell-val-high { color: #00ff00; font-weight: bold; font-size: 0.9rem; }
     
     .footer-box { display: flex; justify-content: space-between; margin-top: 6px; background: #16181d; padding: 4px 8px; border-radius: 4px; align-items: center; }
@@ -39,7 +41,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據處理函式 =================
 def clean_pct(val):
     if pd.isna(val) or val == '': return 0
     try:
@@ -48,9 +49,16 @@ def clean_pct(val):
         return int(f)
     except: return 0
 
-# ================= 主程式 =================
+def format_odds(val):
+    """格式化賠率，如果是 0 則顯示 -"""
+    try:
+        f = float(val)
+        if f <= 1: return "-"
+        return f"{f:.2f}"
+    except: return "-"
+
 def main():
-    st.title("⚽ 足球AI Pro (V24.1 API-Native)")
+    st.title("⚽ 足球AI Pro (V25.0 Ultimate)")
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -92,6 +100,7 @@ def main():
     df = df.sort_values(by=['sort_idx', '時間'])
 
     for index, row in df.iterrows():
+        # 樣式
         prob_h = clean_pct(row.get('主勝率', 0))
         prob_a = clean_pct(row.get('客勝率', 0))
         prob_o25 = clean_pct(row.get('大2.5', 0))
@@ -99,39 +108,46 @@ def main():
         cls_h = "cell-val-high" if prob_h > 50 else "cell-val"
         cls_a = "cell-val-high" if prob_a > 50 else "cell-val"
         cls_o25 = "cell-val-high" if prob_o25 > 55 else "cell-val"
+        
+        score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) != '' else "VS"
 
         card_html = ""
         card_html += f"<div class='compact-card'>"
         card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
         
-        card_html += f"<div class='team-row'>"
-        card_html += f"<div style='text-align:right;'><div class='team-name'>{row.get('主隊','')}</div></div>"
-        score_display = f"{row.get('主分','')} - {row.get('客分','')}" if row.get('主分') != '' else "vs"
-        card_html += f"<div class='score-box'>{score_display}</div>"
-        card_html += f"<div><div class='team-name'>{row.get('客隊','')}</div></div>"
+        # 新佈局：左球隊，右比分
+        card_html += f"<div class='content-row'>"
+        card_html += f"<div class='teams-area'>"
+        card_html += f"<div class='team-name'>{row.get('主隊','')}</div>"
+        card_html += f"<div class='team-sub'>狀態: {row.get('主狀態','-')}</div>"
+        card_html += f"<div class='team-name' style='margin-top:4px;'>{row.get('客隊','')}</div>"
+        card_html += f"<div class='team-sub'>狀態: {row.get('客狀態','-')}</div>"
+        card_html += f"</div>"
+        card_html += f"<div class='score-area'>{score_txt}</div>"
         card_html += f"</div>"
         
+        # Grid Matrix
         card_html += f"<div class='grid-matrix'>"
         
-        # 1. 勝率 (API)
-        card_html += f"<div class='matrix-col'><div class='matrix-header'>勝率 (API)</div>"
+        # 1. 勝率
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>勝率</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>主</span><span class='{cls_h}'>{prob_h}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>和</span><span class='cell-val'>{clean_pct(row.get('和局率',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>客</span><span class='{cls_a}'>{prob_a}%</span></div></div>"
         
-        # 2. 亞盤 (主)
+        # 2. 亞盤主
         card_html += f"<div class='matrix-col'><div class='matrix-header'>主亞盤%</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>平(0)</span><span class='cell-val'>{clean_pct(row.get('主平',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span><span class='cell-val'>{clean_pct(row.get('主平',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5</span><span class='cell-val'>{clean_pct(row.get('主+0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1.0</span><span class='cell-val'>{clean_pct(row.get('主+1',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>-2.0</span><span class='cell-val'>{clean_pct(row.get('主-2',0))}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1</span><span class='cell-val'>{clean_pct(row.get('主+1',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-2</span><span class='cell-val'>{clean_pct(row.get('主-2',0))}%</span></div></div>"
         
-        # 3. 亞盤 (客)
+        # 3. 亞盤客
         card_html += f"<div class='matrix-col'><div class='matrix-header'>客亞盤%</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>平(0)</span><span class='cell-val'>{clean_pct(row.get('客平',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span><span class='cell-val'>{clean_pct(row.get('客平',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5</span><span class='cell-val'>{clean_pct(row.get('客+0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1.0</span><span class='cell-val'>{clean_pct(row.get('客+1',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>-2.0</span><span class='cell-val'>{clean_pct(row.get('客-2',0))}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1</span><span class='cell-val'>{clean_pct(row.get('客+1',0))}%</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-2</span><span class='cell-val'>{clean_pct(row.get('客-2',0))}%</span></div></div>"
         
         # 4. 全場大小
         card_html += f"<div class='matrix-col'><div class='matrix-header'>全場大小</div>"
@@ -148,15 +164,16 @@ def main():
         
         # 6. 賠率/凱利
         card_html += f"<div class='matrix-col'><div class='matrix-header'>賠率/凱利</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>主賠</span><span style='color:#00e5ff;'>{row.get('主賠','-')}</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>客賠</span><span style='color:#00e5ff;'>{row.get('客賠','-')}</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>主賠</span><span style='color:#00e5ff;'>{format_odds(row.get('主賠'))}</span></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>客賠</span><span style='color:#00e5ff;'>{format_odds(row.get('客賠'))}</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>K主</span><span class='cell-val'>{clean_pct(row.get('凱利主',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>K客</span><span class='cell-val'>{clean_pct(row.get('凱利客',0))}%</span></div></div>"
         
         card_html += f"</div>" # End Grid
         
+        # Footer
         advice = row.get('推介', '暫無')
-        card_html += f"<div class='footer-box'><div><span class='tag-pick'>🎯 API推介: {advice}</span></div></div>"
+        card_html += f"<div class='footer-box'><div><span class='tag-pick'>🎯 推介: {advice}</span></div></div>"
         card_html += f"</div>"
 
         st.markdown(card_html, unsafe_allow_html=True)
