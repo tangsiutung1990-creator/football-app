@@ -379,9 +379,9 @@ def predict_match_outcome(h_name, h_info, a_info, h_val_str, a_val_str, h2h_o25_
 # ================= 數據抓取主流程 =================
 
 def get_standings_from_new_api():
-    # 強制使用 2024 賽季 (解決系統時間錯誤問題)
+    # 強制使用 2024 賽季 
     season = 2024
-    print(f"📊 [API-Football] 強制下載 {season}-{season+1} 賽季積分榜...")
+    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季積分榜...")
     
     standings_map = {}
     league_stats = {} 
@@ -454,14 +454,21 @@ def get_standings_from_new_api():
     return standings_map, league_stats
 
 def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
-    season = 2024 # 強制使用 2024 賽季
+    season = 2024
+    
+    # === 修正部分：時間旅行修正 ===
+    # 你的環境顯示是 2026年，但賽季是 2024。
+    # 這裡會檢測年份，如果 > 2025，就自動把搜尋日期減去 1 年 (或設為 2025)，以配合 2024 賽季數據
+    utc_now = datetime.now(pytz.utc)
+    if utc_now.year >= 2026:
+        print("⚠️ 檢測到系統時間為 2026，自動修正搜尋日期至 2025 以配合 2024 賽季數據...")
+        # 將搜尋時間倒流 1 年
+        utc_now = utc_now.replace(year=utc_now.year - 1)
+        
     print(f"🚀 [API-Football] 正在獲取賽程 (Season {season})...")
     cleaned = []
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     
-    # 這裡如果不相信系統時間，可以暫時手動設定查詢日期
-    # 但為求自動化，這裡暫時信任系統日期，如果日期也錯，建議手動改 from_date
-    utc_now = datetime.now(pytz.utc)
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     
@@ -589,7 +596,7 @@ def get_fixtures_and_analyze(standings_map, league_stats, market_value_map):
     return cleaned
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.3 API-Football (Force Season 2024) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V16.4 API-Football (Time-Travel Fix) 啟動...")
     
     # 1. 連接 Google Sheet
     spreadsheet = get_google_spreadsheet()
