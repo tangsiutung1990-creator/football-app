@@ -7,7 +7,6 @@ import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ================= 設定區 =================
-# 請確認這是你的 Pro Key
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
 BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -251,7 +250,7 @@ def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, lg_stats, lg_cod
 
 # ================= 主流程 =================
 def get_standings():
-    # ⚠️ 強制鎖定 2025 賽季
+    # ⚠️ 強制鎖定 2025 賽季，不進行任何檢查或回退
     season = 2025
     print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季數據 (Strict Mode)...")
     
@@ -284,7 +283,7 @@ def get_standings():
     return standings_map, league_stats
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V20.0 API-Football (Force 2025) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V21.0 API-Football (Force 2025) 啟動...")
     
     # 1. 獲取數據
     standings_map, league_stats = get_standings()
@@ -292,7 +291,7 @@ def main():
     if not standings_map:
         print("❌ 無法獲取任何積分榜數據，程序終止。"); return
 
-    # 2. 設定搜尋日期 (直接使用當前日期)
+    # 2. 設定搜尋日期 (直接使用當前日期，不進行年份偏移)
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
