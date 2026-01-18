@@ -63,7 +63,7 @@ st.markdown("""
 
 # ================= 輔助函式 =================
 def clean_pct(val):
-    """清除 % 符號並轉為浮點數"""
+    """清除 % 符號並轉為浮點數，處理空值"""
     if pd.isna(val) or val == '': return 0.0
     try:
         s = str(val).replace('%', '').strip()
@@ -71,7 +71,7 @@ def clean_pct(val):
     except: return 0.0
 
 def get_form_html(form_str):
-    if pd.isna(form_str) or str(form_str) == 'N/A': return ""
+    if pd.isna(form_str) or str(form_str) == 'N/A' or str(form_str) == '?????': return ""
     html = ""
     for char in str(form_str).strip()[-5:]:
         color = "#28a745" if char.upper()=='W' else "#ffc107" if char.upper()=='D' else "#dc3545"
@@ -83,8 +83,10 @@ def get_form_html(form_str):
 def load_data():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
+        # 兼容 Streamlit Cloud 與 本地環境
         if os.path.exists("key.json"): creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         else: creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         data = sheet.get_all_records()
@@ -107,40 +109,41 @@ def main():
         return
 
     # === 數據前處理 (適配 V17 格式) ===
-    # V17 輸出欄位: 時間, 聯賽, 主隊, 客隊, 狀態, 主分, 客分, 主排名, 客排名, 主近況, 客近況, 
-    #              主勝賠率, 客勝賠率, 主勝率, 和局率, 客勝率, 大球率, BTTS率, 智能標籤, 首選推介
-    
-    # 確保數值欄位可用
+    # 確保數值欄位可用，防止 KeyError
     numeric_cols = ['主勝賠率', '客勝賠率']
     for c in numeric_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+        if c not in df.columns: df[c] = 0 # 若欄位缺失則補 0
+        else: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
     # === 側邊欄篩選 ===
     st.sidebar.header("🔍 賽事篩選")
     
     # 日期篩選
-    df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
-    all_dates = sorted(list(set(df['日期'])))
-    sel_date = st.sidebar.selectbox("📅 日期", ["全部"] + all_dates)
-    if sel_date != "全部": df = df[df['日期'] == sel_date]
+    if '時間' in df.columns:
+        df['日期'] = df['時間'].apply(lambda x: str(x).split(' ')[0])
+        all_dates = sorted(list(set(df['日期'])))
+        sel_date = st.sidebar.selectbox("📅 日期", ["全部"] + all_dates)
+        if sel_date != "全部": df = df[df['日期'] == sel_date]
 
     # 聯賽篩選
-    all_leagues = sorted(list(set(df['聯賽'].astype(str))))
-    sel_lg = st.sidebar.selectbox("🏆 聯賽", ["全部"] + all_leagues)
-    if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
+    if '聯賽' in df.columns:
+        all_leagues = sorted(list(set(df['聯賽'].astype(str))))
+        sel_lg = st.sidebar.selectbox("🏆 聯賽", ["全部"] + all_leagues)
+        if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
 
-    # 狀態排序 (進行中 -> 未開賽 -> 完場)
-    df['sort_idx'] = df['狀態'].apply(lambda x: 0 if x in ['進行中','中場休息'] else 1 if x=='未開賽' else 2)
-    df = df.sort_values(by=['sort_idx', '時間'])
+    # 狀態排序
+    if '狀態' in df.columns:
+        df['sort_idx'] = df['狀態'].apply(lambda x: 0 if x in ['進行中','中場休息'] else 1 if x=='未開賽' else 2)
+        df = df.sort_values(by=['sort_idx', '時間'])
 
     # === 顯示卡片 ===
     for index, row in df.iterrows():
-        # 讀取 AI 概率 (處理 % 號)
+        # 讀取 AI 概率 (適配 V17 新欄位名稱)
+        # 注意: 這裡讀取的是 '大球率' 而不是 '大球率2.5'
         prob_h = clean_pct(row.get('主勝率', 0))
         prob_d = clean_pct(row.get('和局率', 0))
         prob_a = clean_pct(row.get('客勝率', 0))
-        prob_o25 = clean_pct(row.get('大球率', 0))
+        prob_o25 = clean_pct(row.get('大球率', 0)) 
         prob_btts = clean_pct(row.get('BTTS率', 0))
         
         # 讀取真實賠率
@@ -150,26 +153,27 @@ def main():
         # 樣式邏輯
         pick = row.get('首選推介', '')
         tags = row.get('智能標籤', '')
-        status_html = f"<span class='status-live'>● {row['狀態']}</span>" if row['狀態'] in ['進行中','中場休息'] else row['狀態']
+        status = row.get('狀態', '未開賽')
+        status_html = f"<span class='status-live'>● {status}</span>" if status in ['進行中','中場休息'] else status
         
         # HTML 構建
         st.markdown(f"""
         <div class='match-card'>
             <div class='match-header'>
-                <span>{row['時間']} &nbsp;|&nbsp; {row['聯賽']}</span>
+                <span>{row.get('時間','')} &nbsp;|&nbsp; {row.get('聯賽','')}</span>
                 <span>{status_html}</span>
             </div>
 
             <div class='score-row'>
                 <div class='team-box'>
-                    <div class='team-name'>{row['主隊']} <span style='font-size:0.8rem; color:#888;'>#{row.get('主排名','-')}</span></div>
+                    <div class='team-name'>{row.get('主隊','')} <span style='font-size:0.8rem; color:#888;'>#{row.get('主排名','-')}</span></div>
                     <div class='team-meta'>{get_form_html(row.get('主近況'))}</div>
                 </div>
                 <div class='score-box'>
-                    {row['主分']} - {row['客分']}
+                    {row.get('主分','')} - {row.get('客分','')}
                 </div>
                 <div class='team-box'>
-                    <div class='team-name'>{row['客隊']} <span style='font-size:0.8rem; color:#888;'>#{row.get('客排名','-')}</span></div>
+                    <div class='team-name'>{row.get('客隊','')} <span style='font-size:0.8rem; color:#888;'>#{row.get('客排名','-')}</span></div>
                     <div class='team-meta'>{get_form_html(row.get('客近況'))}</div>
                 </div>
             </div>
