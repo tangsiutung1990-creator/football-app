@@ -42,35 +42,23 @@ def get_google_spreadsheet():
         return client.open(GOOGLE_SHEET_NAME)
     except: return None
 
-# ================= 數據獲取增強 (100% Potential) =================
+# ================= 數據獲取增強 =================
 def get_injuries_count(fixture_id, home_team_name, away_team_name):
-    """
-    調用 /injuries 接口，計算雙方缺陣人數
-    """
     data = call_api('injuries', {'fixture': fixture_id})
-    if not data or not data.get('response'):
-        return 0, 0 # 無數據或無傷兵
-    
-    h_count = 0
-    a_count = 0
-    
+    if not data or not data.get('response'): return 0, 0
+    h_count = 0; a_count = 0
     for item in data['response']:
         t_name = item['team']['name']
-        # 簡單字串比對，API通常名字一致
         if t_name == home_team_name: h_count += 1
         elif t_name == away_team_name: a_count += 1
-        
     return h_count, a_count
 
 def get_best_odds(fixture_id):
     data = call_api('odds', {'fixture': fixture_id})
     if not data or not data.get('response'): return 0, 0, 0
-    
     bookmakers = data['response'][0]['bookmakers']
-    # 優先找主流莊家
     target_book = next((b for b in bookmakers if b['id'] in [1, 6, 8, 2, 3, 10]), None) 
     if not target_book and bookmakers: target_book = bookmakers[0]
-        
     if target_book:
         winner_bet = next((b for b in target_book['bets'] if b['name'] == 'Match Winner'), None)
         if winner_bet:
@@ -91,53 +79,90 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     h_exp = float(h_exp); a_exp = float(a_exp)
     prob_exact_score = {}
     
+    # 建立波膽矩陣
     for h in range(10):
         for a in range(10):
             p = poisson_prob(h, h_exp) * poisson_prob(a, a_exp)
             prob_exact_score[(h, a)] = p
 
-    o05 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 0.5)
-    o15 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 1.5)
-    o25 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 2.5)
-    o35 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 3.5)
-    
+    # 基礎勝平負
     h_win = sum(p for (h, a), p in prob_exact_score.items() if h > a)
     draw = sum(p for (h, a), p in prob_exact_score.items() if h == a)
     a_win = sum(p for (h, a), p in prob_exact_score.items() if a > h)
     
+    # 輸贏球差
     h_win_1 = sum(p for (h, a), p in prob_exact_score.items() if h - a == 1)
-    h_win_2 = sum(p for (h, a), p in prob_exact_score.items() if h - a == 2)
-    a_win_1 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 1)
-    a_win_2 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 2)
+    a_win_1 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 1) # 主輸1球
+    
+    # === 亞盤精算 (Quarter Handicaps) ===
+    # 1. 平手盤 (0): 贏盤率 = 贏 / (贏+輸)
+    ah_0_h = h_win / (h_win + a_win + 0.00001)
+    ah_0_a = a_win / (h_win + a_win + 0.00001)
+    
+    # 2. 0/-0.5 (-0.25): 贏全贏，和輸半
+    # 這裡計算「期望回報率」概念的勝率: P(Win) + 0 (Draw是輸半)
+    # 但為了顯示勝率，我們顯示「不輸全」的概率? 
+    # 習慣上顯示 P(Win)。因為Draw是虧錢的。
+    ah_minus_025_h = h_win 
+    ah_minus_025_a = a_win
+    
+    # 3. 0/+0.5 (+0.25): 贏全贏，和贏半
+    # 勝率 = P(Win) + 0.5 * P(Draw) (贏半算一半勝率)
+    ah_plus_025_h = h_win + 0.5 * draw
+    ah_plus_025_a = a_win + 0.5 * draw
+    
+    # 4. -0.5/-1 (-0.75): 贏2球全贏，贏1球贏半
+    # 勝率 = P(Win>=2) + 0.5 * P(Win==1)
+    ah_minus_075_h = (h_win - h_win_1) + 0.5 * h_win_1
+    ah_minus_075_a = (a_win - a_win_1) + 0.5 * a_win_1
+    
+    # 5. +0.5/+1 (+0.75): 不敗全贏，輸1球輸半
+    # 勝率 = P(Win+Draw) (輸1球是輸錢，所以不算在勝率)
+    ah_plus_075_h = h_win + draw
+    ah_plus_075_a = a_win + draw
+    
+    # 6. -1/-1.5 (-1.25): 贏2球全贏，贏1球輸半
+    # 勝率 = P(Win>=2)
+    ah_minus_125_h = h_win - h_win_1
+    ah_minus_125_a = a_win - a_win_1
+    
+    # 7. +1/+1.5 (+1.25): 不敗全贏，輸1球贏半
+    # 勝率 = P(Win+Draw) + 0.5 * P(Lose==1)
+    ah_plus_125_h = (h_win + draw) + 0.5 * a_win_1
+    ah_plus_125_a = (a_win + draw) + 0.5 * h_win_1
 
-    ah_level_h = h_win / (h_win + a_win + 0.00001)
-    ah_level_a = a_win / (h_win + a_win + 0.00001)
-    ah_plus05_h = h_win + draw
-    ah_plus05_a = a_win + draw
-    ah_plus1_h = h_win + draw + a_win_1
-    ah_plus1_a = a_win + draw + h_win_1
-    ah_plus2_h = h_win + draw + a_win_1 + a_win_2
-    ah_plus2_a = a_win + draw + h_win_1 + h_win_2
-    ah_minus2_h = sum(p for (h, a), p in prob_exact_score.items() if h - a > 2)
-    ah_minus2_a = sum(p for (h, a), p in prob_exact_score.items() if a - h > 2)
+    # === 進球數據 ===
+    # FTS (First Team to Score)
+    prob_0_0 = prob_exact_score.get((0,0), 0)
+    denom = h_exp + a_exp + 0.00001
+    fts_h = (h_exp / denom) * (1 - prob_0_0)
+    fts_a = (a_exp / denom) * (1 - prob_0_0)
+    
+    # BTTS
+    btts = 1 - (sum(p for (h, a), p in prob_exact_score.items() if h==0 or a==0))
 
     # HT
-    ht_prob_score = {}
+    ht_prob = {}
     for h in range(6):
         for a in range(6):
-            p = poisson_prob(h, h_exp*0.45) * poisson_prob(a, a_exp*0.45)
-            ht_prob_score[(h, a)] = p
-    ht_o05 = sum(p for (h, a), p in ht_prob_score.items() if h+a > 0.5)
-    ht_o15 = sum(p for (h, a), p in ht_prob_score.items() if h+a > 1.5)
-    ht_o25 = sum(p for (h, a), p in ht_prob_score.items() if h+a > 2.5)
+            ht_prob[(h, a)] = poisson_prob(h, h_exp*0.45) * poisson_prob(a, a_exp*0.45)
+    ht_o05 = sum(p for (h, a), p in ht_prob.items() if h+a > 0.5)
+    ht_o15 = sum(p for (h, a), p in ht_prob.items() if h+a > 1.5)
+    ht_o25 = sum(p for (h, a), p in ht_prob.items() if h+a > 2.5)
 
     return {
-        'o05': round(o05*100), 'o15': round(o15*100), 'o25': round(o25*100), 'o35': round(o35*100),
-        'ht_o05': round(ht_o05*100), 'ht_o15': round(ht_o15*100), 'ht_o25': round(ht_o25*100),
-        'ah_level_h': round(ah_level_h*100), 'ah_plus05_h': round(ah_plus05_h*100), 
-        'ah_plus1_h': round(ah_plus1_h*100), 'ah_plus2_h': round(ah_plus2_h*100), 'ah_minus2_h': round(ah_minus2_h*100),
-        'ah_level_a': round(ah_level_a*100), 'ah_plus05_a': round(ah_plus05_a*100), 
-        'ah_plus1_a': round(ah_plus1_a*100), 'ah_plus2_a': round(ah_plus2_a*100), 'ah_minus2_a': round(ah_minus2_a*100)
+        # 亞盤數據 (HKJC Style)
+        'ah_0_h': round(ah_0_h*100), 'ah_0_a': round(ah_0_a*100),
+        'ah_m025_h': round(ah_minus_025_h*100), 'ah_m025_a': round(ah_minus_025_a*100),
+        'ah_p025_h': round(ah_plus_025_h*100), 'ah_p025_a': round(ah_plus_025_a*100),
+        'ah_m075_h': round(ah_minus_075_h*100), 'ah_m075_a': round(ah_minus_075_a*100),
+        'ah_p075_h': round(ah_plus_075_h*100), 'ah_p075_a': round(ah_plus_075_a*100),
+        'ah_m125_h': round(ah_minus_125_h*100), 'ah_m125_a': round(ah_minus_125_a*100),
+        'ah_p125_h': round(ah_plus_125_h*100), 'ah_p125_a': round(ah_plus_125_a*100),
+        
+        # 進球數據
+        'fts_h': round(fts_h*100), 'fts_a': round(fts_a*100), 'btts': round(btts*100),
+        'ht_o05': round(ht_o05*100), 'ht_o15': round(ht_o15*100), 'ht_o25': round(ht_o25*100)
     }
 
 def calculate_kelly_stake(prob, odds):
@@ -152,7 +177,7 @@ def clean_percent_str(val_str):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V28.0 API-Native (Full Potential: Injuries + Stats) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V29.0 API-Native (HKJC Handicap) 啟動...")
     
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
@@ -160,7 +185,7 @@ def main():
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     season = 2025 
     
-    print(f"📅 掃描範圍: {from_date} 至 {to_date} (Season {season})")
+    print(f"📅 掃描範圍: {from_date} 至 {to_date}")
     
     cleaned_data = []
     
@@ -184,21 +209,16 @@ def main():
 
             h_name = item['teams']['home']['name']
             a_name = item['teams']['away']['name']
-            
             sc_h = item['goals']['home']; sc_a = item['goals']['away']
             score_h_display = str(int(sc_h)) if sc_h is not None else ""
             score_a_display = str(int(sc_a)) if sc_a is not None else ""
 
-            # === API 預測 + 攻防數據 ===
+            # API 預測
             pred_resp = call_api('predictions', {'fixture': fix_id})
-            
             api_h_win=0; api_draw=0; api_a_win=0
             api_goals_h=1.2; api_goals_a=1.0
             advice="暫無"; confidence_score = 0
-            # 狀態與攻防 (Full Potential)
-            form_h="50%"; form_a="50%"
-            att_h="50%"; att_a="50%"
-            def_h="50%"; def_a="50%"
+            form_h="50%"; form_a="50%"; att_h="50%"; att_a="50%"; def_h="50%"; def_a="50%"
             
             if pred_resp and pred_resp.get('response'):
                 pred = pred_resp['response'][0]
@@ -207,9 +227,7 @@ def main():
                 api_a_win = clean_percent_str(pred['predictions']['percent']['away'])
                 advice = pred['predictions'].get('advice', '觀望')
                 confidence_score = max(api_h_win, api_draw, api_a_win)
-                
                 try:
-                    # 獲取 Comparison 詳細數據
                     cmp = pred['comparison']
                     form_h = cmp.get('form', {}).get('home', "50%")
                     form_a = cmp.get('form', {}).get('away', "50%")
@@ -217,24 +235,18 @@ def main():
                     att_a = cmp.get('att', {}).get('away', "50%")
                     def_h = cmp.get('def', {}).get('home', "50%")
                     def_a = cmp.get('def', {}).get('away', "50%")
-                    
-                    # 預期入球
                     api_goals_h = float(pred['teams']['home']['last_5']['goals']['for']['average'])
                     api_goals_a = float(pred['teams']['away']['last_5']['goals']['for']['average'])
                     if api_goals_h == 0: api_goals_h = 0.5
                     if api_goals_a == 0: api_goals_a = 0.5
                 except: pass
 
-            # === 傷停數據 (100% Potential) ===
             inj_h, inj_a = 0, 0
-            # 只有未完場比賽才去 call injuries，節省資源
+            odds_h=0; odds_d=0; odds_a=0
             if status != '完場':
                 inj_h, inj_a = get_injuries_count(fix_id, h_name, a_name)
                 odds_h, odds_d, odds_a = get_best_odds(fix_id)
-            else:
-                odds_h=0; odds_d=0; odds_a=0
 
-            # === 純數學運算 ===
             math_probs = calculate_advanced_math_probs(api_goals_h, api_goals_a)
             kelly_h = calculate_kelly_stake(api_h_win/100, odds_h)
             kelly_a = calculate_kelly_stake(api_a_win/100, odds_a)
@@ -245,35 +257,35 @@ def main():
                 
                 '主勝率': api_h_win, '和局率': api_draw, '客勝率': api_a_win,
                 
-                '大0.5': math_probs['o05'], '大1.5': math_probs['o15'],
-                '大2.5': math_probs['o25'], '大3.5': math_probs['o35'],
+                # 亞盤 (Home)
+                '主平': math_probs['ah_0_h'], '主0/-0.5': math_probs['ah_m025_h'], 
+                '主-0.5/-1': math_probs['ah_m075_h'], '主-1/-1.5': math_probs['ah_m125_h'],
+                '主0/+0.5': math_probs['ah_p025_h'], '主+0.5/+1': math_probs['ah_p075_h'], '主+1/+1.5': math_probs['ah_p125_h'],
+                
+                # 亞盤 (Away)
+                '客平': math_probs['ah_0_a'], '客0/-0.5': math_probs['ah_m025_a'], 
+                '客-0.5/-1': math_probs['ah_m075_a'], '客-1/-1.5': math_probs['ah_m125_a'],
+                '客0/+0.5': math_probs['ah_p025_a'], '客+0.5/+1': math_probs['ah_p075_a'], '客+1/+1.5': math_probs['ah_p125_a'],
+                
+                # 進球
+                'FTS主': math_probs['fts_h'], 'FTS客': math_probs['fts_a'], 'BTTS': math_probs['btts'],
                 'HT0.5': math_probs['ht_o05'], 'HT1.5': math_probs['ht_o15'], 'HT2.5': math_probs['ht_o25'],
-                
-                '主平': math_probs['ah_level_h'], '主+0.5': math_probs['ah_plus05_h'], 
-                '主+1': math_probs['ah_plus1_h'], '主+2': math_probs['ah_plus2_h'], '主-2': math_probs['ah_minus2_h'],
-                
-                '客平': math_probs['ah_level_a'], '客+0.5': math_probs['ah_plus05_a'], 
-                '客+1': math_probs['ah_plus1_a'], '客+2': math_probs['ah_plus2_a'], '客-2': math_probs['ah_minus2_a'],
 
-                '主賠': odds_h, '客賠': odds_a,
-                '凱利主': round(kelly_h), '凱利客': round(kelly_a),
+                '主賠': odds_h, '客賠': odds_a, '凱利主': round(kelly_h), '凱利客': round(kelly_a),
                 '推介': advice, '信心': confidence_score,
-                # 攻防與傷停
-                '主狀態': form_h, '客狀態': form_a,
-                '主攻': att_h, '客攻': att_a,
-                '主防': def_h, '客防': def_a,
-                '主傷': inj_h, '客傷': inj_a
+                '主狀態': form_h, '客狀態': form_a, '主攻': att_h, '客攻': att_a, '主防': def_h, '客防': def_a, '主傷': inj_h, '客傷': inj_a
             })
-            print(f"         ✅ {h_name} vs {a_name} | 傷: {inj_h}-{inj_a}")
+            print(f"         ✅ {h_name} vs {a_name}")
 
     if cleaned_data:
         df = pd.DataFrame(cleaned_data)
+        # 更新欄位順序以包含新數據
         cols = ['時間','聯賽','主隊','客隊','狀態','主分','客分',
                 '主勝率','和局率','客勝率',
-                '大0.5','大1.5','大2.5','大3.5',
+                '主平','主0/-0.5','主-0.5/-1','主-1/-1.5','主0/+0.5','主+0.5/+1','主+1/+1.5',
+                '客平','客0/-0.5','客-0.5/-1','客-1/-1.5','客0/+0.5','客+0.5/+1','客+1/+1.5',
+                'FTS主','FTS客','BTTS',
                 'HT0.5','HT1.5','HT2.5',
-                '主平','主+0.5','主+1','主+2','主-2',
-                '客平','客+0.5','客+1','客+2','客-2',
                 '主賠','客賠','凱利主','凱利客','推介','信心',
                 '主狀態','客狀態','主攻','客攻','主防','客防','主傷','客傷']
         
