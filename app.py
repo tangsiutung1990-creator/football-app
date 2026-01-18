@@ -4,11 +4,12 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import math
+import textwrap
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V18.0)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V19.0)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 =================
 st.markdown("""
@@ -34,12 +35,10 @@ st.markdown("""
 
 # ================= 數據處理函式 =================
 def clean_pct(val):
-    """智能清洗百分比數據"""
     if pd.isna(val) or val == '': return 0.0
     try:
         s = str(val).replace('%', '').strip()
         f = float(s)
-        # 如果數據是小數 (例如 0.75)，轉換為 75
         if f < 1.0 and f > 0: return f * 100
         return f
     except: return 0.0
@@ -54,9 +53,8 @@ def get_form_html(form_str):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V18.0)")
+    st.title("⚽ 足球AI Pro (V19.0)")
     
-    # 連接 Google Sheet
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
         if os.path.exists("key.json"): creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
@@ -73,26 +71,23 @@ def main():
         st.warning("⚠️ 數據庫為空，請先運行後端程式 (run_me.py)")
         return
 
-    # === 側邊欄 ===
     st.sidebar.header("🔍 篩選")
     if '聯賽' in df.columns:
         leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
         sel_lg = st.sidebar.selectbox("聯賽:", leagues)
         if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
 
-    # === 渲染列表 ===
     for index, row in df.iterrows():
-        # 容錯讀取數據 (優先讀新欄位，兼容舊欄位)
         prob_h = clean_pct(row.get('主勝率', 0))
         prob_a = clean_pct(row.get('客勝率', 0))
-        # 兼容 '大球率' 和 '大球率2.5'
-        prob_o25 = clean_pct(row.get('大球率', row.get('大球率2.5', 0))) 
+        prob_o25 = clean_pct(row.get('大球率', 0))
         
         cls_h = "cell-val-high" if prob_h > 50 else "cell-val"
         cls_a = "cell-val-high" if prob_a > 50 else "cell-val"
         cls_o25 = "cell-val-high" if prob_o25 > 55 else "cell-val"
 
-        html = f"""
+        # 這裡使用 dedent 來確保 HTML 字串不會被誤判為代碼塊
+        html_content = f"""
         <div class='compact-card'>
             <div class='match-header'>
                 <span>{row.get('時間','')} | {row.get('聯賽','')}</span>
@@ -120,7 +115,7 @@ def main():
                 <div class='matrix-col'>
                     <div class='matrix-header'>入球模型</div>
                     <div class='matrix-cell'><span>大2.5</span><span class='{cls_o25}'>{prob_o25:.0f}%</span></div>
-                    <div class='matrix-cell'><span>BTTS</span><span class='cell-val'>{clean_pct(row.get('BTTS率', row.get('BTTS',0))):.0f}%</span></div>
+                    <div class='matrix-cell'><span>BTTS</span><span class='cell-val'>{clean_pct(row.get('BTTS率',0)):.0f}%</span></div>
                 </div>
                 <div class='matrix-col'>
                     <div class='matrix-header'>投資價值 (Kelly)</div>
@@ -144,7 +139,7 @@ def main():
             </div>
         </div>
         """
-        st.markdown(html, unsafe_allow_html=True)
+        st.markdown(textwrap.dedent(html_content), unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
