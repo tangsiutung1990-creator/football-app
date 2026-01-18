@@ -135,9 +135,18 @@ def calculate_advanced_probs(home_exp, away_exp, match_vol):
         if x == 1 and y == 1: return 1 - rho
         return 1.0
 
-    h_win=0; draw=0; a_win=0; prob_o15=0; prob_o25=0; prob_o35=0
-    ah_minus_05=0; ah_minus_1=0; ah_minus_2=0
-    ht_lambda_h = home_exp * 0.45; ht_lambda_a = away_exp * 0.45
+    # 全場變數
+    h_win=0; draw=0; a_win=0
+    prob_o15=0; prob_o25=0; prob_o35=0
+    
+    # 亞盤相關：輸贏一球
+    h_win_by_1 = 0 # 主勝1球
+    a_win_by_1 = 0 # 客勝1球
+    
+    # 半場變數 (假設半場入球期望值約為全場的 45%)
+    ht_lambda_h = home_exp * 0.45
+    ht_lambda_a = away_exp * 0.45
+    ht_o05=0; ht_o15=0; ht_o25=0
     ht_h_win=0; ht_draw=0; ht_a_win=0
     
     total_exp = home_exp + away_exp
@@ -145,37 +154,47 @@ def calculate_advanced_probs(home_exp, away_exp, match_vol):
     lower_bound = max(0, total_exp - CONFIDENCE_INTERVAL_SIGMA * std_dev)
     upper_bound = total_exp + CONFIDENCE_INTERVAL_SIGMA * std_dev
     
+    # === 全場循環 (計算勝率與亞盤) ===
     for h in range(10): 
         for a in range(10):
             base_prob = poisson(h, home_exp) * poisson(a, away_exp)
             adj = adjustment(h, a, home_exp, away_exp, DIXON_COLES_RHO)
             final_prob = max(0, base_prob * adj)
             
-            if h > a: h_win += final_prob; ah_minus_05 += final_prob
-            elif h == a: draw += final_prob
-            else: a_win += final_prob
-            
-            if (h - a) >= 2: ah_minus_1 += final_prob 
-            if (h - a) >= 3: ah_minus_2 += final_prob
+            if h > a: 
+                h_win += final_prob
+                if (h - a) == 1: h_win_by_1 += final_prob
+            elif h == a: 
+                draw += final_prob
+            else: 
+                a_win += final_prob
+                if (a - h) == 1: a_win_by_1 += final_prob
             
             if h+a > 1.5: prob_o15 += final_prob
             if h+a > 2.5: prob_o25 += final_prob
             if h+a > 3.5: prob_o35 += final_prob
 
+    # === 半場循環 (計算半場大小) ===
     for h in range(6):
         for a in range(6):
             p = poisson(h, ht_lambda_h) * poisson(a, ht_lambda_a)
             if h > a: ht_h_win += p
             elif h == a: ht_draw += p
             else: ht_a_win += p
+            
+            total_goals = h + a
+            if total_goals > 0.5: ht_o05 += p
+            if total_goals > 1.5: ht_o15 += p
+            if total_goals > 2.5: ht_o25 += p
 
     total = h_win + draw + a_win
     if total > 0:
         h_win/=total; draw/=total; a_win/=total
         prob_o15/=total; prob_o25/=total; prob_o35/=total
-        ah_minus_05/=total; ah_minus_1/=total; ah_minus_2/=total
+        # 正規化亞盤中間值
+        h_win_by_1/=total; a_win_by_1/=total
 
-    prob_ht_o05 = 1 - (poisson(0, ht_lambda_h) * poisson(0, ht_lambda_a))
+    prob_ht_o05_f = 1 - (poisson(0, ht_lambda_h) * poisson(0, ht_lambda_a)) # 快速算法驗證
     btts = (1 - poisson(0, home_exp)) * (1 - poisson(0, away_exp))
     
     limit = 50.0
@@ -191,20 +210,38 @@ def calculate_advanced_probs(home_exp, away_exp, match_vol):
     total_conf = max(min(math_conf, 99), 25) 
     
     live_strat = "🔥追大" if match_vol > 3.1 else "🛡️細/角" if match_vol < 2.3 else "🏰主控" if home_exp > away_exp*2 else "中性"
-    if prob_ht_o05 > 0.72: live_strat += "|HT大"
+    if ht_o05 > 0.72: live_strat += "|HT大"
+    
+    # 計算亞盤概率
+    # 平手盤 (Level): 主勝 / (主勝+客勝)
+    ah_level_h = h_win / (h_win + a_win + 0.0001)
+    ah_level_a = a_win / (h_win + a_win + 0.0001)
+    # +0.5 (雙勝)
+    ah_plus05_h = h_win + draw
+    ah_plus05_a = a_win + draw
+    # +1.0: 贏 + 和 + 輸1球
+    ah_plus1_h = h_win + draw + h_win_by_1 # 注意: 這裡是對方贏1球即我方輸1球，邏輯反轉。正確應為 h_win + draw + a_win_by_1 (輸1球走盤，輸2球全輸，所以+1不輸=贏+和+輸1)
+    # 更正：盤口機率通常指「贏盤率」。+1 贏盤 = 贏或和。輸1球是走盤。所以純贏盤率 = 贏+和。不輸率 = 贏+和+輸1。
+    # 這裡我們計算「不輸盤率」 (Win + Draw + Lose by 1)
+    ah_not_lose_1_h = h_win + draw + a_win_by_1
+    ah_not_lose_1_a = a_win + draw + h_win_by_1
     
     return {
         'btts': round(btts*100, 1), 
         'h_win': h_win, 'draw': draw, 'a_win': a_win,
         'ht_h_win': ht_h_win, 'ht_draw': ht_draw, 'ht_a_win': ht_a_win,
-        'ah_minus_05': round(ah_minus_05*100, 1), 'ah_minus_1': round(ah_minus_1*100, 1), 'ah_minus_2': round(ah_minus_2*100, 1),
         'prob_o15': round(prob_o15*100, 1), 'prob_o25': round(prob_o25*100, 1), 'prob_o35': round(prob_o35*100, 1), 
-        'prob_ht_o05': round(prob_ht_o05*100, 1), 'ou_conf': round(total_conf, 1),
+        'ht_o05': round(ht_o05*100, 1), 'ht_o15': round(ht_o15*100, 1), 'ht_o25': round(ht_o25*100, 1),
+        'ou_conf': round(total_conf, 1),
         'fair_1x2_h': round(fair_1x2_h, 2), 'fair_1x2_d': round(fair_1x2_d, 2), 'fair_1x2_a': round(fair_1x2_a, 2),
         'min_odds_h': round(fair_1x2_h*1.05, 2), 'min_odds_a': round(fair_1x2_a*1.05, 2), 'min_odds_o25': round(fair_o25*1.05, 2), 
         'fair_o25': round(fair_o25, 2), 'live_strat': live_strat,
         'kelly_h': round(kelly_h, 1), 'kelly_a': round(kelly_a, 1),
-        'goal_range_low': round(lower_bound, 1), 'goal_range_high': round(upper_bound, 1) 
+        'goal_range_low': round(lower_bound, 1), 'goal_range_high': round(upper_bound, 1),
+        
+        # 亞盤數據
+        'ah_level_h': round(ah_level_h*100), 'ah_plus05_h': round(ah_plus05_h*100), 'ah_plus1_h': round(ah_not_lose_1_h*100),
+        'ah_level_a': round(ah_level_a*100), 'ah_plus05_a': round(ah_plus05_a*100), 'ah_plus1_a': round(ah_not_lose_1_a*100)
     }
 
 def calculate_weighted_form_score(form_str):
@@ -250,7 +287,7 @@ def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, lg_stats, lg_cod
 
 # ================= 主流程 =================
 def get_standings():
-    # ⚠️ 強制鎖定 2025 賽季，不進行任何檢查或回退
+    # ⚠️ 強制鎖定 2025 賽季
     season = 2025
     print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季數據 (Strict Mode)...")
     
@@ -283,7 +320,7 @@ def get_standings():
     return standings_map, league_stats
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V21.0 API-Football (Force 2025) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V22.0 API-Football (Force 2025 + AH/HT) 啟動...")
     
     # 1. 獲取數據
     standings_map, league_stats = get_standings()
@@ -291,13 +328,11 @@ def main():
     if not standings_map:
         print("❌ 無法獲取任何積分榜數據，程序終止。"); return
 
-    # 2. 設定搜尋日期 (直接使用當前日期，不進行年份偏移)
+    # 2. 設定搜尋日期
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    
-    # 強制賽季 2025
     season = 2025
     
     print(f"🚀 正在掃描賽程 (Season {season})...")
@@ -346,7 +381,8 @@ def main():
                 '主勝率': round(adv['h_win']*100), 
                 '和局率': round(adv['draw']*100), 
                 '客勝率': round(adv['a_win']*100),
-                '大球率': round(adv['prob_o25']*100), 
+                '大球率2.5': round(adv['prob_o25']*100), 
+                '大球率3.5': round(adv['prob_o35']*100), # 新增
                 'BTTS率': round(adv['btts']*100),
                 '凱利主': round(adv['kelly_h']), 
                 '凱利客': round(adv['kelly_a']),
@@ -354,15 +390,21 @@ def main():
                 '智能標籤': analyze_team_tags(h_i, a_i, vol, adv['kelly_h'], adv['kelly_a'], calculate_dominance_index(h_i, a_i), adv['prob_o25']),
                 '風險評級': calculate_risk_level(adv['ou_conf'], adv['prob_o25'], adv['kelly_h']+adv['kelly_a'], adv['goal_range_high']-adv['goal_range_low']),
                 '首選推介': pick,
-                '主勝賠率': odds_h, '客勝賠率': odds_a
+                '主勝賠率': odds_h, '客勝賠率': odds_a,
+                # 新增亞盤數據列
+                '主平手': adv['ah_level_h'], '主+0.5': adv['ah_plus05_h'], '主+1': adv['ah_plus1_h'],
+                '客平手': adv['ah_level_a'], '客+0.5': adv['ah_plus05_a'], '客+1': adv['ah_plus1_a'],
+                # 新增半場大小數據列
+                'HT0.5': adv['ht_o05'], 'HT1.5': adv['ht_o15'], 'HT2.5': adv['ht_o25']
             })
             
     if cleaned:
         df = pd.DataFrame(cleaned)
-        # 欄位必須與 app.py 完全對應
+        # 確保所有欄位都列入
         cols = ['時間','聯賽','主隊','客隊','主排名','客排名','主預測','客預測','總球數','狀態','主分','客分',
-                '主勝率','和局率','客勝率','大球率','BTTS率','凱利主','凱利客','亞盤建議','智能標籤','風險評級','首選推介',
-                '主勝賠率','客勝賠率']
+                '主勝率','和局率','客勝率','大球率2.5','大球率3.5','BTTS率','凱利主','凱利客','亞盤建議','智能標籤','風險評級','首選推介',
+                '主勝賠率','客勝賠率',
+                '主平手','主+0.5','主+1','客平手','客+0.5','客+1','HT0.5','HT1.5','HT2.5']
         df = df.reindex(columns=cols, fill_value='')
         if spreadsheet:
             try: spreadsheet.sheet1.clear(); spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist()); print("✅ 數據上傳成功！")
