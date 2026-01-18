@@ -7,44 +7,28 @@ import os
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V27.0)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V28.0)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
     
-    /* 強制縮窄側邊欄 (約縮小 1/3) */
-    [data-testid="stSidebar"] {
-        min-width: 200px !important;
-        max-width: 250px !important;
-    }
+    [data-testid="stSidebar"] { min-width: 200px !important; max-width: 250px !important; }
     
     .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: 'Arial', sans-serif; }
     
     .match-header { display: flex; justify-content: space-between; color: #888; font-size: 0.8rem; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
     
-    /* 比分置中佈局：左隊 | 比分 | 右隊 */
-    .content-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin-bottom: 10px; gap: 10px; }
+    .content-row { display: grid; grid-template-columns: 7fr 3fr; align-items: center; margin-bottom: 10px; }
+    .teams-area { text-align: left; display: flex; flex-direction: column; justify-content: center; }
+    .team-name { font-weight: bold; font-size: 1.15rem; color: #fff; margin-bottom: 2px; } 
+    .team-sub { font-size: 0.75rem; color: #aaa; display: flex; gap: 8px; align-items: center; }
+    .score-area { text-align: right; font-size: 2.2rem; font-weight: bold; color: #00ffea; letter-spacing: 2px; line-height: 1; }
     
-    .team-left { text-align: right; }
-    .team-right { text-align: left; }
-    .team-name { font-weight: bold; font-size: 1.2rem; color: #fff; margin-bottom: 2px; line-height: 1.2; } 
-    .team-sub { font-size: 0.75rem; color: #aaa; }
+    .inj-badge { color: #ff4b4b; font-weight: bold; font-size: 0.75rem; border: 1px solid #ff4b4b; padding: 0 4px; border-radius: 3px; }
     
-    .score-area { 
-        text-align: center; 
-        font-size: 2.4rem; 
-        font-weight: bold; 
-        color: #00ffea; 
-        letter-spacing: 2px; 
-        line-height: 1; 
-        padding: 0 15px;
-        background: #222;
-        border-radius: 6px;
-    }
-    
-    /* 6欄緊湊網格 */
+    /* Grid Matrix */
     .grid-matrix { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 8px; text-align: center; }
     .matrix-col { background: #222; padding: 2px; border-radius: 4px; border: 1px solid #333; display: flex; flex-direction: column; }
     .matrix-header { color: #ff9800; font-weight: bold; font-size: 0.75rem; margin-bottom: 2px; border-bottom: 1px solid #444; padding-bottom: 1px; }
@@ -75,7 +59,7 @@ def format_odds(val):
     except: return "-"
 
 def main():
-    st.title("⚽ 足球AI Pro (V27.0 Ultimate)")
+    st.title("⚽ 足球AI Pro (V28.0 Full Potential)")
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -93,9 +77,7 @@ def main():
         st.warning("⚠️ 暫無數據")
         return
 
-    # === 側邊欄篩選 ===
     st.sidebar.header("🔍 篩選")
-    
     if '聯賽' in df.columns:
         leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
         sel_lg = st.sidebar.selectbox("聯賽:", leagues)
@@ -128,24 +110,25 @@ def main():
         score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) != '' else "VS"
         advice = row.get('推介', '暫無')
         confidence = row.get('信心', 0)
+        
+        # 傷停標籤 (如果 > 0 才顯示)
+        inj_h = clean_pct(row.get('主傷', 0))
+        inj_a = clean_pct(row.get('客傷', 0))
+        inj_h_tag = f"<span class='inj-badge'>🚑 {inj_h}</span>" if inj_h > 0 else ""
+        inj_a_tag = f"<span class='inj-badge'>🚑 {inj_a}</span>" if inj_a > 0 else ""
 
         card_html = ""
         card_html += f"<div class='compact-card'>"
         card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
         
-        # 新佈局：置中比分
         card_html += f"<div class='content-row'>"
-        card_html += f"<div class='team-left'>"
-        card_html += f"<div class='team-name'>{row.get('主隊','')}</div>"
-        card_html += f"<div class='team-sub'>狀態: {row.get('主狀態','-')}</div>"
+        card_html += f"<div class='teams-area'>"
+        card_html += f"<div class='team-name'>{row.get('主隊','')} {inj_h_tag}</div>"
+        card_html += f"<div class='team-sub'>狀態: {row.get('主狀態','-')} | 攻: {row.get('主攻','-')} 防: {row.get('主防','-')}</div>"
+        card_html += f"<div class='team-name' style='margin-top:4px;'>{row.get('客隊','')} {inj_a_tag}</div>"
+        card_html += f"<div class='team-sub'>狀態: {row.get('客狀態','-')} | 攻: {row.get('客攻','-')} 防: {row.get('客防','-')}</div>"
         card_html += f"</div>"
-        
         card_html += f"<div class='score-area'>{score_txt}</div>"
-        
-        card_html += f"<div class='team-right'>"
-        card_html += f"<div class='team-name'>{row.get('客隊','')}</div>"
-        card_html += f"<div class='team-sub'>狀態: {row.get('客狀態','-')}</div>"
-        card_html += f"</div>"
         card_html += f"</div>"
         
         # Grid Matrix
@@ -193,7 +176,6 @@ def main():
         
         card_html += f"</div>" # End Grid
         
-        # Footer
         card_html += f"<div class='footer-box'>"
         card_html += f"<span class='sugg-text'>🎯 {advice}</span>"
         card_html += f"<span class='conf-badge'>信心: {confidence}%</span>"
