@@ -7,6 +7,7 @@ import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ================= 設定區 =================
+# 請確認這是你的 Pro Key
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
 BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -248,18 +249,18 @@ def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, lg_stats, lg_cod
     
     return round(max(0.2, raw_h), 2), round(max(0.2, raw_a), 2), round(match_vol, 2)
 
-# ================= 主流程 (嚴格版) =================
+# ================= 主流程 =================
 def get_standings():
-    # ⚠️ 強制使用 2025 賽季
+    # ⚠️ 強制鎖定 2025 賽季
     season = 2025
-    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季數據 (Strict 2025)...")
+    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季數據 (Strict Mode)...")
     
     standings_map = {}; league_stats = {} 
     
     for lg_id, lg_code in LEAGUE_ID_MAP.items():
         data = call_api('standings', {'league': lg_id, 'season': season})
         if not data or not data.get('response'):
-            print(f"   ⚠️ 無法獲取 {lg_code} 數據 (可能 API Key 權限不足或聯賽未開)"); continue
+            print(f"   ⚠️ 無法獲取 {lg_code} 數據 (可能是聯賽未開始)"); continue
             
         l_h_g = 0; l_m = 0
         for row in data['response'][0]['league']['standings'][0]:
@@ -283,7 +284,7 @@ def get_standings():
     return standings_map, league_stats
 
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V19.0 API-Football (Strict 2025) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V20.0 API-Football (Force 2025) 啟動...")
     
     # 1. 獲取數據
     standings_map, league_stats = get_standings()
@@ -328,7 +329,7 @@ def main():
             p_h, p_a, vol = predict_match_outcome(h, h_i, a_i, parse_market_value(market_value_map.get(h)), parse_market_value(market_value_map.get(a)), league_stats.get(lg_code), lg_code)
             adv = calculate_advanced_probs(p_h, p_a, vol)
             
-            # 獲取真實賠率 (節省 Quota 暫時設 0，如需開啟請解除註釋並 Call odds endpoint)
+            # 獲取真實賠率 (暫時設 0，如需開啟請解除註釋並 Call odds endpoint)
             odds_h = 0; odds_a = 0
             
             pick, score = calculate_alpha_pick(adv['h_win'], adv['a_win'], adv['prob_o25'], adv['btts']/100, vol, adv['kelly_h'], adv['kelly_a'])
