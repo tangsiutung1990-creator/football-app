@@ -13,15 +13,13 @@ BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 MANUAL_TAB_NAME = "球隊身價表" 
 
-# 聯賽 ID 對照表 (HKJC 全面版)
+# HKJC 常見聯賽 ID 對照表
 LEAGUE_ID_MAP = {
-    39: '英超', 40: '英冠', 41: '英甲', 42: '英乙',
-    140: '西甲', 141: '西乙',
-    135: '意甲', 78: '德甲', 61: '法甲',
-    88: '荷甲', 94: '葡超', 144: '比甲', 179: '蘇超',
-    203: '土超', 119: '丹超', 113: '瑞典超', 103: '挪超',
-    98: '日職', 292: '韓K1', 188: '澳職', 
-    253: '美職', 262: '墨超', 71: '巴甲', 128: '阿甲', 265: '智甲',
+    39: '英超', 40: '英冠', 41: '英甲', 140: '西甲', 141: '西乙',
+    135: '意甲', 78: '德甲', 61: '法甲', 88: '荷甲', 94: '葡超',
+    144: '比甲', 179: '蘇超', 203: '土超', 119: '丹超', 113: '瑞典超',
+    103: '挪超', 98: '日職', 292: '韓K1', 188: '澳職', 253: '美職',
+    262: '墨超', 71: '巴甲', 128: '阿甲', 265: '智甲',
     2: '歐聯', 3: '歐霸'
 }
 
@@ -44,38 +42,94 @@ def get_google_spreadsheet():
         return client.open(GOOGLE_SHEET_NAME)
     except: return None
 
-# ================= 數學與工具 =================
+# ================= 純數學運算核心 (No Guesses) =================
 def poisson_prob(k, lam):
     if lam < 0: lam = 0
     return (math.pow(lam, k) * math.exp(-lam)) / math.factorial(k)
 
-def calculate_exact_goals_probs(h_exp, a_exp):
-    h_exp = float(h_exp); a_exp = float(a_exp)
-    prob_o05=0; prob_o15=0; prob_o25=0; prob_o35=0
-    ht_h_exp = h_exp * 0.45; ht_a_exp = a_exp * 0.45
-    prob_ht_o05=0; prob_ht_o15=0; prob_ht_o25=0
+def calculate_advanced_math_probs(h_exp, a_exp):
+    """
+    使用 Poisson 矩陣積分計算所有盤口，不含任何人工權重
+    """
+    h_exp = float(h_exp)
+    a_exp = float(a_exp)
     
-    # 全場
-    for h in range(8):
-        for a in range(8):
+    # 矩陣變數
+    prob_exact_score = {} # 儲存波膽概率
+    
+    # 1. 建立波膽矩陣 (0-0 到 9-9)
+    for h in range(10):
+        for a in range(10):
             p = poisson_prob(h, h_exp) * poisson_prob(a, a_exp)
-            if h+a > 0.5: prob_o05 += p
-            if h+a > 1.5: prob_o15 += p
-            if h+a > 2.5: prob_o25 += p
-            if h+a > 3.5: prob_o35 += p
+            prob_exact_score[(h, a)] = p
+
+    # 2. 積分計算 (Integrate)
+    # 大小球
+    o05 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 0.5)
+    o15 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 1.5)
+    o25 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 2.5)
+    o35 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 3.5)
+    
+    # 亞盤/讓球 (精確數學)
+    # 主贏 (Win)
+    h_win = sum(p for (h, a), p in prob_exact_score.items() if h > a)
+    # 和局 (Draw)
+    draw = sum(p for (h, a), p in prob_exact_score.items() if h == a)
+    # 客贏 (Loss)
+    a_win = sum(p for (h, a), p in prob_exact_score.items() if a > h)
+    
+    # 輸贏球差概率
+    # 主剛好贏 1 球 (e.g. 1-0, 2-1)
+    h_win_1 = sum(p for (h, a), p in prob_exact_score.items() if h - a == 1)
+    # 主剛好贏 2 球
+    h_win_2 = sum(p for (h, a), p in prob_exact_score.items() if h - a == 2)
+    # 客剛好贏 1 球 (主輸 1 球)
+    a_win_1 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 1)
+    # 客剛好贏 2 球 (主輸 2 球)
+    a_win_2 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 2)
+
+    # 3. 亞盤機率推導 (Probability of Non-Loss)
+    # 平手盤 (0): 視為獨贏 (在平局退款機制下，勝率相對比例不變)
+    # 這裡顯示的是「贏盤率」，即 (Win) / (Win + Loss)
+    ah_level_h = h_win / (h_win + a_win + 0.00001)
+    ah_level_a = a_win / (h_win + a_win + 0.00001)
+    
+    # +0.5 (不敗): 贏 + 和
+    ah_plus05_h = h_win + draw
+    ah_plus05_a = a_win + draw
+    
+    # +1.0 (輸1球走盤): 贏盤率 = (贏+和)。不輸盤率 = (贏+和+輸1)。
+    # 這裡我們計算「不輸盤率 (Not Lose Bet)」
+    ah_plus1_h = h_win + draw + a_win_1
+    ah_plus1_a = a_win + draw + h_win_1
+    
+    # +2.0 (輸2球走盤): 不輸盤率 = (贏+和+輸1+輸2)
+    ah_plus2_h = h_win + draw + a_win_1 + a_win_2
+    ah_plus2_a = a_win + draw + h_win_1 + h_win_2
+    
+    # -2.0 (必須贏3球): 
+    ah_minus2_h = sum(p for (h, a), p in prob_exact_score.items() if h - a > 2)
+    ah_minus2_a = sum(p for (h, a), p in prob_exact_score.items() if a - h > 2)
+
+    # 4. 半場計算 (HT)
+    # 假設半場 lambda 為全場的 45%
+    ht_prob_score = {}
+    for h in range(6):
+        for a in range(6):
+            p = poisson_prob(h, h_exp*0.45) * poisson_prob(a, a_exp*0.45)
+            ht_prob_score[(h, a)] = p
             
-    # 半場
-    for h in range(5):
-        for a in range(5):
-            p = poisson_prob(h, ht_h_exp) * poisson_prob(a, ht_a_exp)
-            if h+a > 0.5: prob_ht_o05 += p
-            if h+a > 1.5: prob_ht_o15 += p
-            if h+a > 2.5: prob_ht_o25 += p
+    ht_o05 = sum(p for (h, a), p in ht_prob_score.items() if h+a > 0.5)
+    ht_o15 = sum(p for (h, a), p in ht_prob_score.items() if h+a > 1.5)
+    ht_o25 = sum(p for (h, a), p in ht_prob_score.items() if h+a > 2.5)
 
     return {
-        'o05': round(prob_o05*100), 'o15': round(prob_o15*100),
-        'o25': round(prob_o25*100), 'o35': round(prob_o35*100),
-        'ht_o05': round(prob_ht_o05*100), 'ht_o15': round(prob_ht_o15*100), 'ht_o25': round(prob_ht_o25*100)
+        'o05': round(o05*100), 'o15': round(o15*100), 'o25': round(o25*100), 'o35': round(o35*100),
+        'ht_o05': round(ht_o05*100), 'ht_o15': round(ht_o15*100), 'ht_o25': round(ht_o25*100),
+        'ah_level_h': round(ah_level_h*100), 'ah_plus05_h': round(ah_plus05_h*100), 
+        'ah_plus1_h': round(ah_plus1_h*100), 'ah_plus2_h': round(ah_plus2_h*100), 'ah_minus2_h': round(ah_minus2_h*100),
+        'ah_level_a': round(ah_level_a*100), 'ah_plus05_a': round(ah_plus05_a*100), 
+        'ah_plus1_a': round(ah_plus1_a*100), 'ah_plus2_a': round(ah_plus2_a*100), 'ah_minus2_a': round(ah_minus2_a*100)
     }
 
 def calculate_kelly_stake(prob, odds):
@@ -92,14 +146,9 @@ def get_best_odds(fixture_id):
     data = call_api('odds', {'fixture': fixture_id})
     if not data or not data.get('response'): return 0, 0, 0
     
-    preferred_books = [1, 6, 8, 2] # Bet365, 1xBet, Unibet, Bwin
     bookmakers = data['response'][0]['bookmakers']
-    target_book = None
-    
-    for pref_id in preferred_books:
-        target_book = next((b for b in bookmakers if b['id'] == pref_id), None)
-        if target_book: break
-        
+    # 擴大搜尋範圍，只要有賠率就拿
+    target_book = next((b for b in bookmakers if b['id'] in [1, 6, 8, 2, 3, 10]), None) 
     if not target_book and bookmakers: target_book = bookmakers[0]
         
     if target_book:
@@ -115,7 +164,7 @@ def get_best_odds(fixture_id):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V26.0 API-Native (Confidence + UI Boost) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V27.0 API-Native (Pure Math Core) 啟動...")
     
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
@@ -152,13 +201,13 @@ def main():
             score_h_display = str(int(sc_h)) if sc_h is not None else ""
             score_a_display = str(int(sc_a)) if sc_a is not None else ""
 
-            # === API 預測與詳細數據 ===
+            # === API 預測 ===
             pred_resp = call_api('predictions', {'fixture': fix_id})
             
             api_h_win=0; api_draw=0; api_a_win=0
             api_goals_h=1.2; api_goals_a=1.0
             advice="暫無"; form_h="50%"; form_a="50%"
-            confidence_score = 0 # 信心指數
+            confidence_score = 0
             
             if pred_resp and pred_resp.get('response'):
                 pred = pred_resp['response'][0]
@@ -166,8 +215,6 @@ def main():
                 api_draw = clean_percent_str(pred['predictions']['percent']['draw'])
                 api_a_win = clean_percent_str(pred['predictions']['percent']['away'])
                 advice = pred['predictions'].get('advice', '觀望')
-                
-                # 計算信心指數：取勝平負中最大的那個概率作為基礎信心
                 confidence_score = max(api_h_win, api_draw, api_a_win)
                 
                 try:
@@ -183,14 +230,8 @@ def main():
             if status != '完場':
                 odds_h, odds_d, odds_a = get_best_odds(fix_id)
 
-            ou_probs = calculate_exact_goals_probs(api_goals_h, api_goals_a)
-            
-            total_win = api_h_win + api_a_win + 0.01
-            ah_level_h = round((api_h_win / total_win) * 100)
-            ah_level_a = round((api_a_win / total_win) * 100)
-            
-            ah_plus05_h = api_h_win + api_draw
-            ah_plus05_a = api_a_win + api_draw
+            # === 純數學運算 (No Weights) ===
+            math_probs = calculate_advanced_math_probs(api_goals_h, api_goals_a)
             
             kelly_h = calculate_kelly_stake(api_h_win/100, odds_h)
             kelly_a = calculate_kelly_stake(api_a_win/100, odds_a)
@@ -201,19 +242,19 @@ def main():
                 
                 '主勝率': api_h_win, '和局率': api_draw, '客勝率': api_a_win,
                 
-                '大0.5': ou_probs['o05'], '大1.5': ou_probs['o15'],
-                '大2.5': ou_probs['o25'], '大3.5': ou_probs['o35'],
-                'HT0.5': ou_probs['ht_o05'], 'HT1.5': ou_probs['ht_o15'], 'HT2.5': ou_probs['ht_o25'],
+                '大0.5': math_probs['o05'], '大1.5': math_probs['o15'],
+                '大2.5': math_probs['o25'], '大3.5': math_probs['o35'],
+                'HT0.5': math_probs['ht_o05'], 'HT1.5': math_probs['ht_o15'], 'HT2.5': math_probs['ht_o25'],
                 
-                '主平': ah_level_h, '主+0.5': ah_plus05_h, 
-                '主+1': min(100, ah_plus05_h + 15), '主+2': min(100, ah_plus05_h + 25), '主-2': max(0, api_h_win - 30),
+                '主平': math_probs['ah_level_h'], '主+0.5': math_probs['ah_plus05_h'], 
+                '主+1': math_probs['ah_plus1_h'], '主+2': math_probs['ah_plus2_h'], '主-2': math_probs['ah_minus2_h'],
                 
-                '客平': ah_level_a, '客+0.5': ah_plus05_a, 
-                '客+1': min(100, ah_plus05_a + 15), '客+2': min(100, ah_plus05_a + 25), '客-2': max(0, api_a_win - 30),
+                '客平': math_probs['ah_level_a'], '客+0.5': math_probs['ah_plus05_a'], 
+                '客+1': math_probs['ah_plus1_a'], '客+2': math_probs['ah_plus2_a'], '客-2': math_probs['ah_minus2_a'],
 
                 '主賠': odds_h, '客賠': odds_a,
                 '凱利主': round(kelly_h), '凱利客': round(kelly_a),
-                '推介': advice, '信心': confidence_score, # 新增信心
+                '推介': advice, '信心': confidence_score,
                 '主狀態': form_h, '客狀態': form_a
             })
             print(f"         ✅ {h_name} vs {a_name} | 信心: {confidence_score}%")
