@@ -7,23 +7,44 @@ import os
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V26.0)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V27.0)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
+    
+    /* 強制縮窄側邊欄 (約縮小 1/3) */
+    [data-testid="stSidebar"] {
+        min-width: 200px !important;
+        max-width: 250px !important;
+    }
+    
     .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: 'Arial', sans-serif; }
     
     .match-header { display: flex; justify-content: space-between; color: #888; font-size: 0.8rem; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
     
-    .content-row { display: grid; grid-template-columns: 7fr 3fr; align-items: center; margin-bottom: 10px; }
-    .teams-area { text-align: left; display: flex; flex-direction: column; justify-content: center; }
-    .team-name { font-weight: bold; font-size: 1.15rem; color: #fff; margin-bottom: 2px; } 
-    .team-sub { font-size: 0.75rem; color: #aaa; }
-    .score-area { text-align: right; font-size: 2.2rem; font-weight: bold; color: #00ffea; letter-spacing: 2px; line-height: 1; }
+    /* 比分置中佈局：左隊 | 比分 | 右隊 */
+    .content-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin-bottom: 10px; gap: 10px; }
     
-    /* 數據網格 */
+    .team-left { text-align: right; }
+    .team-right { text-align: left; }
+    .team-name { font-weight: bold; font-size: 1.2rem; color: #fff; margin-bottom: 2px; line-height: 1.2; } 
+    .team-sub { font-size: 0.75rem; color: #aaa; }
+    
+    .score-area { 
+        text-align: center; 
+        font-size: 2.4rem; 
+        font-weight: bold; 
+        color: #00ffea; 
+        letter-spacing: 2px; 
+        line-height: 1; 
+        padding: 0 15px;
+        background: #222;
+        border-radius: 6px;
+    }
+    
+    /* 6欄緊湊網格 */
     .grid-matrix { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 8px; text-align: center; }
     .matrix-col { background: #222; padding: 2px; border-radius: 4px; border: 1px solid #333; display: flex; flex-direction: column; }
     .matrix-header { color: #ff9800; font-weight: bold; font-size: 0.75rem; margin-bottom: 2px; border-bottom: 1px solid #444; padding-bottom: 1px; }
@@ -32,7 +53,6 @@ st.markdown("""
     .cell-val { color: #fff; font-weight: bold; font-size: 0.9rem; }
     .cell-val-high { color: #00ff00; font-weight: bold; font-size: 0.9rem; }
     
-    /* 底部推介欄 (加大字體) */
     .footer-box { display: flex; justify-content: space-between; margin-top: 8px; background: #16181d; padding: 8px 10px; border-radius: 6px; align-items: center; border-left: 4px solid #00b09b; }
     .sugg-text { color: #fff; font-size: 1.1rem; font-weight: bold; }
     .conf-badge { background: #333; color: #00ffea; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.9rem; border: 1px solid #00ffea; }
@@ -55,7 +75,7 @@ def format_odds(val):
     except: return "-"
 
 def main():
-    st.title("⚽ 足球AI Pro (V26.0)")
+    st.title("⚽ 足球AI Pro (V27.0 Ultimate)")
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -73,7 +93,9 @@ def main():
         st.warning("⚠️ 暫無數據")
         return
 
+    # === 側邊欄篩選 ===
     st.sidebar.header("🔍 篩選")
+    
     if '聯賽' in df.columns:
         leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
         sel_lg = st.sidebar.selectbox("聯賽:", leagues)
@@ -111,53 +133,58 @@ def main():
         card_html += f"<div class='compact-card'>"
         card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
         
+        # 新佈局：置中比分
         card_html += f"<div class='content-row'>"
-        card_html += f"<div class='teams-area'>"
+        card_html += f"<div class='team-left'>"
         card_html += f"<div class='team-name'>{row.get('主隊','')}</div>"
         card_html += f"<div class='team-sub'>狀態: {row.get('主狀態','-')}</div>"
-        card_html += f"<div class='team-name' style='margin-top:4px;'>{row.get('客隊','')}</div>"
+        card_html += f"</div>"
+        
+        card_html += f"<div class='score-area'>{score_txt}</div>"
+        
+        card_html += f"<div class='team-right'>"
+        card_html += f"<div class='team-name'>{row.get('客隊','')}</div>"
         card_html += f"<div class='team-sub'>狀態: {row.get('客狀態','-')}</div>"
         card_html += f"</div>"
-        card_html += f"<div class='score-area'>{score_txt}</div>"
         card_html += f"</div>"
         
         # Grid Matrix
         card_html += f"<div class='grid-matrix'>"
         
-        # Col 1: 1x2
+        # 1. 勝率
         card_html += f"<div class='matrix-col'><div class='matrix-header'>勝率</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>主</span><span class='{cls_h}'>{prob_h}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>和</span><span class='cell-val'>{clean_pct(row.get('和局率',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>客</span><span class='{cls_a}'>{prob_a}%</span></div></div>"
         
-        # Col 2: 亞盤主
+        # 2. 亞盤主
         card_html += f"<div class='matrix-col'><div class='matrix-header'>主亞盤%</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span><span class='cell-val'>{clean_pct(row.get('主平',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5</span><span class='cell-val'>{clean_pct(row.get('主+0.5',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>+1</span><span class='cell-val'>{clean_pct(row.get('主+1',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>-2</span><span class='cell-val'>{clean_pct(row.get('主-2',0))}%</span></div></div>"
         
-        # Col 3: 亞盤客
+        # 3. 亞盤客
         card_html += f"<div class='matrix-col'><div class='matrix-header'>客亞盤%</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span><span class='cell-val'>{clean_pct(row.get('客平',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5</span><span class='cell-val'>{clean_pct(row.get('客+0.5',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>+1</span><span class='cell-val'>{clean_pct(row.get('客+1',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>-2</span><span class='cell-val'>{clean_pct(row.get('客-2',0))}%</span></div></div>"
         
-        # Col 4: 全場大小
+        # 4. 全場大小
         card_html += f"<div class='matrix-col'><div class='matrix-header'>全場大小</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>大0.5</span><span class='cell-val'>{clean_pct(row.get('大0.5',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>大1.5</span><span class='cell-val'>{clean_pct(row.get('大1.5',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>大2.5</span><span class='{cls_o25}'>{prob_o25}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>大3.5</span><span class='cell-val'>{clean_pct(row.get('大3.5',0))}%</span></div></div>"
         
-        # Col 5: 半場大小
+        # 5. 半場大小
         card_html += f"<div class='matrix-col'><div class='matrix-header'>半場大小</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>H0.5</span><span class='cell-val'>{clean_pct(row.get('HT0.5',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>H1.5</span><span class='cell-val'>{clean_pct(row.get('HT1.5',0))}%</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>H2.5</span><span class='cell-val'>{clean_pct(row.get('HT2.5',0))}%</span></div></div>"
         
-        # Col 6: 賠率/凱利
+        # 6. 賠率/凱利
         card_html += f"<div class='matrix-col'><div class='matrix-header'>賠率/凱利</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>主賠</span><span style='color:#00e5ff;'>{format_odds(row.get('主賠'))}</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>客賠</span><span style='color:#00e5ff;'>{format_odds(row.get('客賠'))}</span></div>"
@@ -166,7 +193,7 @@ def main():
         
         card_html += f"</div>" # End Grid
         
-        # Footer (字體加大，信心指數)
+        # Footer
         card_html += f"<div class='footer-box'>"
         card_html += f"<span class='sugg-text'>🎯 {advice}</span>"
         card_html += f"<span class='conf-badge'>信心: {confidence}%</span>"
