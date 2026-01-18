@@ -1,12 +1,10 @@
 import requests
 import pandas as pd
-import time
 import math
 import gspread
 from datetime import datetime, timedelta
 import pytz
 from oauth2client.service_account import ServiceAccountCredentials
-import numpy as np
 
 # ================= 設定區 =================
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
@@ -21,7 +19,11 @@ CONFIDENCE_INTERVAL_SIGMA = 0.95
 
 # 聯賽 ID 對照表
 LEAGUE_ID_MAP = {
-    39: 'PL', 140: 'PD', 135: 'SA', 78: 'BL1', 61: 'FL1'
+    39: 'PL',    # 英超
+    140: 'PD',   # 西甲
+    135: 'SA',   # 意甲
+    78: 'BL1',   # 德甲
+    61: 'FL1'    # 法甲
 }
 
 LEAGUE_GOAL_FACTOR = {
@@ -269,14 +271,14 @@ def predict_match_outcome(h_name, h_info, a_info, h_val, a_val, h2h_o25_rate, h2
     return round(max(0.2, raw_h), 2), round(max(0.2, raw_a), 2), round(match_vol, 2), round(h_mom, 2), round(a_mom, 2)
 
 # ================= 主流程 =================
-def get_standings_and_analyze():
-    # ⚠️ 關鍵修正：將賽季設定為 2025 (即 2025-2026 賽季)
+def main():
+    # ⚠️ 鎖定 2025 賽季 (對應 2026 年初)
     season = 2025
-    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 最新賽季數據 (Real-Time)...")
+    print(f"📊 [API-Football] 正在下載 {season}-{season+1} 賽季數據 (V16.6 Complete)...")
     
     standings_map = {}; league_stats = {} 
     
-    # 1. 獲取積分榜 (建立球隊實力庫)
+    # 1. 獲取積分榜
     for lg_id, lg_code in LEAGUE_ID_MAP.items():
         data = call_api('standings', {'league': lg_id, 'season': season})
         if not data or not data.get('response'):
@@ -302,11 +304,10 @@ def get_standings_and_analyze():
         print(f"   ✅ {lg_code} 數據更新完成")
 
     # 2. 獲取賽程 (未來 3 日)
-    print(f"🚀 [API-Football] 正在掃描未來賽程 (2026年 真實賽程)...")
+    print(f"🚀 [API-Football] 正在掃描未來賽程...")
     
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
-    # 不再扣減年份，直接用系統當前時間
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     
