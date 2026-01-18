@@ -28,7 +28,7 @@ def call_api(endpoint, params=None):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-apisports-key': API_KEY}
     url = f"{BASE_URL}/{endpoint}"
     try:
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=10) # 增加 timeout
         if response.status_code == 200: return response.json()
         return None
     except: return None
@@ -72,7 +72,7 @@ def get_best_odds(fixture_id):
 
 def get_h2h_stats(h_id, a_id):
     """
-    修復版 H2H：獲取雙方最近 10 場對賽，統計勝平負
+    V33.0 修復版：使用比分 (Goals) 直接判定勝負，不依賴 winner 布林值
     """
     param_str = f"{h_id}-{a_id}"
     data = call_api('fixtures/headtohead', {'h2h': param_str})
@@ -80,28 +80,37 @@ def get_h2h_stats(h_id, a_id):
     h_win = 0; draw = 0; a_win = 0
     
     if not data or not data.get('response'):
+        print(f"   ⚠️ H2H 無數據: ID {h_id} vs {a_id}")
         return 0, 0, 0
         
     # 只取最近 10 場
     recent_matches = data['response'][:10]
     
     for m in recent_matches:
-        home_team_id = m['teams']['home']['id']
-        away_team_id = m['teams']['away']['id']
+        # 獲取當時比賽的 ID 與比分
+        past_home_id = m['teams']['home']['id']
+        past_home_score = m['goals']['home']
+        past_away_score = m['goals']['away']
         
-        home_is_winner = m['teams']['home']['winner']
-        away_is_winner = m['teams']['away']['winner']
+        # 如果比分是 None (例如延期)，跳過
+        if past_home_score is None or past_away_score is None:
+            continue
+            
+        # 判定該場比賽結果 (相對於當時的主隊)
+        result = "draw"
+        if past_home_score > past_away_score: result = "home_win"
+        elif past_away_score > past_home_score: result = "away_win"
         
-        # 邏輯判斷：確保我們統計的是「主隊(h_id)」贏了幾次，「客隊(a_id)」贏了幾次
-        if home_team_id == h_id:
-            # 這場比賽 h_id 是主場
-            if home_is_winner: h_win += 1
-            elif away_is_winner: a_win += 1
+        # 映射回我們現在關注的 主隊(h_id) vs 客隊(a_id)
+        if past_home_id == h_id:
+            # 當時 h_id 是主場
+            if result == "home_win": h_win += 1
+            elif result == "away_win": a_win += 1
             else: draw += 1
-        elif away_team_id == h_id:
-            # 這場比賽 h_id 是客場
-            if away_is_winner: h_win += 1 # h_id 贏了
-            elif home_is_winner: a_win += 1 # 對手(a_id)贏了
+        else:
+            # 當時 h_id 是客場 (即 past_home_id 是 a_id)
+            if result == "home_win": a_win += 1 # 對手贏了
+            elif result == "away_win": h_win += 1 # h_id (客) 贏了
             else: draw += 1
             
     return h_win, draw, a_win
@@ -142,7 +151,7 @@ def get_smart_goals_exp(pred_data):
     except:
         return h_base, a_base, 0.5, 0.5, 0.5, 0.5
 
-# ================= 數學運算核心 =================
+# ================= 數學運算 =================
 def poisson_prob(k, lam):
     if lam < 0: lam = 0
     return (math.pow(lam, k) * math.exp(-lam)) / math.factorial(k)
@@ -170,7 +179,6 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     a_win_1 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 1)
     a_win_2 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 2)
 
-    # 亞盤概率
     ah_level_h = h_win / (h_win + a_win + 0.00001)
     ah_level_a = a_win / (h_win + a_win + 0.00001)
     
@@ -187,7 +195,6 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     ah_m2_a = sum(p for (h, a), p in prob_exact_score.items() if a - h > 2)
     ah_p2_h = h_win + draw + a_win_1 + a_win_2; ah_p2_a = a_win + draw + h_win_1 + h_win_2
 
-    # HT
     ht_prob = {}
     for h in range(6):
         for a in range(6):
@@ -196,7 +203,6 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     ht_o15 = sum(p for (h, a), p in ht_prob.items() if h+a > 1.5)
     ht_o25 = sum(p for (h, a), p in ht_prob.items() if h+a > 2.5)
     
-    # FTS & BTTS
     prob_0_0 = prob_exact_score.get((0,0), 0)
     denom = h_exp + a_exp + 0.00001
     fts_h = (h_exp / denom) * (1 - prob_0_0)
@@ -230,7 +236,7 @@ def clean_percent_str(val_str):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V32.0 API-Native (H2H Fixed) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V33.0 API-Native (H2H Score Logic) 啟動...")
     
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
@@ -268,9 +274,8 @@ def main():
             score_h_display = str(int(sc_h)) if sc_h is not None else ""
             score_a_display = str(int(sc_a)) if sc_a is not None else ""
 
-            # API 詳細預測
+            # API 預測
             pred_resp = call_api('predictions', {'fixture': fix_id})
-            
             api_h_win=0; api_draw=0; api_a_win=0
             advice="暫無"; confidence_score = 0
             form_h="50%"; form_a="50%"; att_h=0.5; att_a=0.5; def_h=0.5; def_a=0.5
@@ -284,16 +289,17 @@ def main():
                 advice = pred['predictions'].get('advice', '觀望')
                 confidence_score = max(api_h_win, api_draw, api_a_win)
                 try:
-                    form_h = pred['comparison']['form']['home']
-                    form_a = pred['comparison']['form']['away']
-                    att_h = cmp.get('att', {}).get('home', "50%") # 確保讀取攻防
+                    cmp = pred['comparison']
+                    form_h = cmp.get('form', {}).get('home', "50%")
+                    form_a = cmp.get('form', {}).get('away', "50%")
+                    att_h = cmp.get('att', {}).get('home', "50%") # 攻防
                     att_a = cmp.get('att', {}).get('away', "50%")
                     def_h = cmp.get('def', {}).get('home', "50%")
                     def_a = cmp.get('def', {}).get('away', "50%")
                 except: pass
                 h_final_exp, a_final_exp, att_h, att_a, def_h, def_a = get_smart_goals_exp(pred)
 
-            # H2H 修復：現在無條件調用 (包含完場賽事)
+            # H2H 獲取 (不論狀態)
             h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
             
             inj_h, inj_a = 0, 0
@@ -337,7 +343,6 @@ def main():
             })
             print(f"         ✅ {h_name} vs {a_name} | H2H: {h2h_h}-{h2h_d}-{h2h_a}")
             
-            # API 頻率保護
             time.sleep(0.1)
 
     if cleaned_data:
