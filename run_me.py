@@ -44,23 +44,55 @@ def get_google_spreadsheet():
         return None
 
 # ================= 數據獲取工具 =================
+def get_league_standings(league_id, season):
+    """
+    獲取聯賽積分榜，建立 {team_id: {'rank': 1, 'form': 'WWLDW'}} 的映射表
+    """
+    data = call_api('standings', {'league': league_id, 'season': season})
+    standings_map = {}
+    
+    if not data or not data.get('response'):
+        return standings_map
+
+    try:
+        # 大部分聯賽是 response[0]['league']['standings'][0] (單一分組)
+        # 美職/墨超等可能是多組，這裡簡化處理取第一組或扁平化
+        standings_list = data['response'][0]['league']['standings']
+        
+        # 扁平化處理所有分組 (針對美職聯等多區制)
+        all_teams = []
+        for group in standings_list:
+            all_teams.extend(group)
+            
+        for team_info in all_teams:
+            t_id = team_info['team']['id']
+            rank = team_info['rank']
+            form = team_info['form'] # e.g. "WWLDW"
+            points = team_info['points']
+            standings_map[t_id] = {
+                'rank': rank,
+                'form': form,
+                'points': points
+            }
+    except:
+        pass
+        
+    return standings_map
+
 def get_injuries_count(fixture_id, home_team_name, away_team_name):
     data = call_api('injuries', {'fixture': fixture_id})
     if not data or not data.get('response'): return 0, 0
     h_count = 0; a_count = 0
     for item in data['response']:
-        # 這裡可以發揮潛力：未來可以判斷球員重要性，目前先維持計數
         t_name = item['team']['name']
         if t_name == home_team_name: h_count += 1
         elif t_name == away_team_name: a_count += 1
     return h_count, a_count
 
 def get_best_odds(fixture_id):
-    # 獲取實時賠率，這是事實數據，不是猜測
     data = call_api('odds', {'fixture': fixture_id})
     if not data or not data.get('response'): return 0, 0, 0
     bookmakers = data['response'][0]['bookmakers']
-    # 優先選取大莊家
     target_book = next((b for b in bookmakers if b['id'] in [1, 6, 8, 2, 3, 10]), None) 
     if not target_book and bookmakers: target_book = bookmakers[0]
     
@@ -76,31 +108,20 @@ def get_best_odds(fixture_id):
     return 0, 0, 0
 
 def get_h2h_stats(h_id, a_id):
-    """
-    獲取真實歷史對賽數據
-    """
     param_str = f"{h_id}-{a_id}"
     data = call_api('fixtures/headtohead', {'h2h': param_str})
-    
     h_win = 0; draw = 0; a_win = 0
-    
-    if not data or not data.get('response'):
-        return 0, 0, 0
-        
-    recent_matches = data['response'][:10] # 只看最近10場
-    
+    if not data or not data.get('response'): return 0, 0, 0
+    recent_matches = data['response'][:10]
     for m in recent_matches:
-        past_home_id = m['teams']['home']['id']
         past_home_score = m['goals']['home']
         past_away_score = m['goals']['away']
-        
         if past_home_score is None or past_away_score is None: continue
-            
         result = "draw"
         if past_home_score > past_away_score: result = "home_win"
         elif past_away_score > past_home_score: result = "away_win"
         
-        if past_home_id == h_id:
+        if m['teams']['home']['id'] == h_id:
             if result == "home_win": h_win += 1
             elif result == "away_win": a_win += 1
             else: draw += 1
@@ -108,7 +129,6 @@ def get_h2h_stats(h_id, a_id):
             if result == "home_win": a_win += 1 
             elif result == "away_win": h_win += 1
             else: draw += 1
-            
     return h_win, draw, a_win
 
 def safe_float(val):
@@ -118,51 +138,32 @@ def safe_float(val):
     except: return 0.0
 
 def get_strict_api_goals_exp(pred_data):
-    """
-    【核心修改】
-    完全去除猜測。只讀取 API 提供的 'last_5' (近況) 或 'league' (賽季平均) 入球數據。
-    如果 API 說不知道，那就是 0，不作默認值填充。
-    """
     if not pred_data: return 0, 0, 0.5, 0.5, 0.5, 0.5
-
     teams = pred_data.get('teams', {})
     home_data = teams.get('home', {})
     away_data = teams.get('away', {})
-
-    # 1. 嘗試讀取近 5 場平均入球 (最準確反映近況)
     h_exp = safe_float(home_data.get('last_5', {}).get('goals', {}).get('for', {}).get('average'))
     a_exp = safe_float(away_data.get('last_5', {}).get('goals', {}).get('for', {}).get('average'))
-
-    # 2. 如果近 5 場無數據，讀取本賽季聯賽平均
     if h_exp == 0:
         h_exp = safe_float(home_data.get('league', {}).get('goals', {}).get('for', {}).get('average', {}).get('total'))
     if a_exp == 0:
         a_exp = safe_float(away_data.get('league', {}).get('goals', {}).get('for', {}).get('average', {}).get('total'))
-
-    # 讀取 Comparison 攻防數據 (僅作顯示用，不再用於人手修正入球數)
+    
     cmp = pred_data.get('comparison', {})
     def parse_pct(s): return safe_float(str(s).replace('%',''))
-    
     att_h = parse_pct(cmp.get('att', {}).get('home', "0%"))
     att_a = parse_pct(cmp.get('att', {}).get('away', "0%"))
     def_h = parse_pct(cmp.get('def', {}).get('home', "0%"))
     def_a = parse_pct(cmp.get('def', {}).get('away', "0%"))
-
     return h_exp, a_exp, att_h, att_a, def_h, def_a
 
-# ================= 數學運算 (純統計模型) =================
+# ================= 數學與價值計算 =================
 def poisson_prob(k, lam):
-    if lam <= 0: return 0 # 如果期望值是0，概率為0
+    if lam <= 0: return 0
     return (math.pow(lam, k) * math.exp(-lam)) / math.factorial(k)
 
 def calculate_advanced_math_probs(h_exp, a_exp):
-    """
-    使用泊松分佈計算矩陣。
-    注意：這裡的 h_exp 和 a_exp 現在是嚴格來自 API 的歷史數據，
-    所以這裡的輸出是「基於歷史數據的統計推算」，而非「瞎猜」。
-    """
     if h_exp == 0 and a_exp == 0:
-        # 如果完全沒數據，回傳全 0
         return {k: 0 for k in ['o05','o15','o25','o35','ht_o05','ht_o15','ht_o25',
                                'ah_level_h','ah_level_a','ah_m025_h','ah_m025_a',
                                'ah_p025_h','ah_p025_a','ah_m075_h','ah_m075_a',
@@ -171,50 +172,36 @@ def calculate_advanced_math_probs(h_exp, a_exp):
                                'ah_p2_h','ah_p2_a','fts_h','fts_a','btts']}
 
     prob_exact_score = {}
-    
-    # 計算直到 9:9 的波膽概率
     for h in range(10):
         for a in range(10):
             p = poisson_prob(h, h_exp) * poisson_prob(a, a_exp)
             prob_exact_score[(h, a)] = p
 
-    # 大小球
     o05 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 0.5)
     o15 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 1.5)
     o25 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 2.5)
     o35 = sum(p for (h, a), p in prob_exact_score.items() if h+a > 3.5)
     
-    # 勝平負 (用於亞盤計算)
     h_win = sum(p for (h, a), p in prob_exact_score.items() if h > a)
     draw = sum(p for (h, a), p in prob_exact_score.items() if h == a)
     a_win = sum(p for (h, a), p in prob_exact_score.items() if a > h)
     
-    # 讓球盤計算 (基於統計概率)
-    # 平手盤
-    norm = h_win + a_win + 0.00001
-    ah_level_h = h_win / norm
-    ah_level_a = a_win / norm
-    
-    # 0/-0.5 (輸半博全)
-    ah_m025_h = h_win
-    ah_m025_a = a_win
-    
-    # 0/+0.5
-    ah_p025_h = h_win + draw
-    ah_p025_a = a_win + draw
-    
-    # -0.5/-1 & +0.5/+1 等...
     h_win_1 = sum(p for (h, a), p in prob_exact_score.items() if h - a == 1)
     a_win_1 = sum(p for (h, a), p in prob_exact_score.items() if a - h == 1)
     h_win_2 = sum(p for (h, a), p in prob_exact_score.items() if h - a == 2)
     
-    ah_m075_h = h_win - (h_win_1 * 0.5) # 贏1球贏半，這裡簡化計算
+    norm = h_win + a_win + 0.00001
+    ah_level_h = h_win / norm
+    ah_level_a = a_win / norm
+    ah_m025_h = h_win
+    ah_m025_a = a_win
+    ah_p025_h = h_win + draw
+    ah_p025_a = a_win + draw
+    ah_m075_h = h_win - (h_win_1 * 0.5)
     ah_m075_a = a_win - (a_win_1 * 0.5)
-    
     ah_m125_h = h_win - h_win_1
     ah_m125_a = a_win - a_win_1
     
-    # 半場 (簡單假設為全場的 40-45% 效率，這部分保留因為這符合足球統計規律，不算亂猜)
     ht_prob = {}
     for h in range(6):
         for a in range(6):
@@ -223,7 +210,6 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     ht_o15 = sum(p for (h, a), p in ht_prob.items() if h+a > 1.5)
     ht_o25 = sum(p for (h, a), p in ht_prob.items() if h+a > 2.5)
     
-    # FTS (First Team to Score) & BTTS
     prob_0_0 = prob_exact_score.get((0,0), 0)
     denom = h_exp + a_exp + 0.00001
     fts_h = (h_exp / denom) * (1 - prob_0_0)
@@ -236,12 +222,12 @@ def calculate_advanced_math_probs(h_exp, a_exp):
         'ah_level_h': round(ah_level_h*100), 'ah_level_a': round(ah_level_a*100),
         'ah_m025_h': round(ah_m025_h*100), 'ah_m025_a': round(ah_m025_a*100),
         'ah_p025_h': round(ah_p025_h*100), 'ah_p025_a': round(ah_p025_a*100),
-        'ah_m075_h': round(h_win*100), 'ah_m075_a': round(a_win*100), # 簡化顯示
+        'ah_m075_h': round(h_win*100), 'ah_m075_a': round(a_win*100),
         'ah_p075_h': round((h_win+draw)*100), 'ah_p075_a': round((a_win+draw)*100),
         'ah_m125_h': round(ah_m125_h*100), 'ah_m125_a': round(ah_m125_a*100),
         'ah_p125_h': round((h_win+draw+a_win_1)*100), 'ah_p125_a': round((a_win+draw+h_win_1)*100),
-        'ah_m2_h': round((h_win-h_win_1-h_win_2)*100), 'ah_m2_a': round((a_win-a_win_1)*100), # 粗略估算
-        'ah_p2_h': 0, 'ah_p2_a': 0, # 簡化
+        'ah_m2_h': round((h_win-h_win_1-h_win_2)*100), 'ah_m2_a': round((a_win-a_win_1)*100),
+        'ah_p2_h': 0, 'ah_p2_a': 0,
         'fts_h': round(fts_h*100), 'fts_a': round(fts_a*100), 'btts': round(btts*100)
     }
 
@@ -259,11 +245,11 @@ def clean_percent_str(val_str):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V34.0 Pure-API Edition 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V35.0 Context-Aware Edition 啟動...")
     
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
-    from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d') # 範圍可調
+    from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     season = 2025 
     
@@ -273,6 +259,12 @@ def main():
     
     for lg_id, lg_name in LEAGUE_ID_MAP.items():
         print(f"   🔍 掃描 {lg_name}...")
+        
+        # 1. 優先獲取該聯賽積分榜 (發揮 API 潛力：獲取排名和走勢)
+        standings = get_league_standings(lg_id, season)
+        if standings:
+            print(f"      📊 已獲取積分榜數據 (包含 {len(standings)} 隊)")
+        
         fixtures_data = call_api('fixtures', {'league': lg_id, 'season': season, 'from': from_date, 'to': to_date})
         
         if not fixtures_data or not fixtures_data.get('response'): continue
@@ -297,61 +289,66 @@ def main():
             score_h_display = str(int(sc_h)) if sc_h is not None else ""
             score_a_display = str(int(sc_a)) if sc_a is not None else ""
 
-            # 1. 獲取 API 預測數據
+            # 從 standings 提取排名和走勢
+            h_rank_info = standings.get(h_id, {'rank': 99, 'form': 'N/A'})
+            a_rank_info = standings.get(a_id, {'rank': 99, 'form': 'N/A'})
+            
+            h_rank = h_rank_info['rank']
+            a_rank = h_rank_info['rank']
+            h_form_str = h_rank_info['form'] # e.g. WWLLD
+            a_form_str = a_rank_info['form']
+
+            # API 預測
             pred_resp = call_api('predictions', {'fixture': fix_id})
             
-            # 初始化變量
             api_h_win=0; api_draw=0; api_a_win=0
             advice="數據不足"; confidence_score = 0
             att_h=0; att_a=0; def_h=0; def_a=0
             h_final_exp = 0; a_final_exp = 0
-            form_h = "0%"; form_a = "0%"
-
+            
             if pred_resp and pred_resp.get('response'):
                 pred = pred_resp['response'][0]
-                
-                # 直接拿 API 算好的勝率
                 api_h_win = clean_percent_str(pred['predictions']['percent']['home'])
                 api_draw = clean_percent_str(pred['predictions']['percent']['draw'])
                 api_a_win = clean_percent_str(pred['predictions']['percent']['away'])
                 advice = pred['predictions'].get('advice', '觀望')
-                
-                # 拿 API 的 form (近況) 百分比顯示用
-                try:
-                    form_h = pred['comparison']['form']['home']
-                    form_a = pred['comparison']['form']['away']
-                except: pass
-
-                # 獲取嚴格的入球期望值 (無數據則為0)
                 h_final_exp, a_final_exp, att_h, att_a, def_h, def_a = get_strict_api_goals_exp(pred)
-                
-                # 如果 API 有信心指數，就用 API 的
-                # 但 V3 API 的 percent 就是它的信心分佈
                 confidence_score = max(api_h_win, api_draw, api_a_win)
 
-            # 2. H2H 獲取
             h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
             
-            # 3. 傷病與賠率 (僅未開賽或進行中)
             inj_h, inj_a = 0, 0
             odds_h=0; odds_d=0; odds_a=0
             if status != '完場':
                 inj_h, inj_a = get_injuries_count(fix_id, h_name, a_name)
                 odds_h, odds_d, odds_a = get_best_odds(fix_id)
 
-            # 4. 計算數學概率 (僅當有真實入球數據時)
             math_probs = calculate_advanced_math_probs(h_final_exp, a_final_exp)
-            
-            # 5. 凱利指數 (使用 API 勝率 vs 真實賠率)
             kelly_h = calculate_kelly_stake(api_h_win/100, odds_h)
             kelly_a = calculate_kelly_stake(api_a_win/100, odds_a)
+            
+            # 價值判斷 (Value Bet)
+            # 賠率隱含勝率 = 1/賠率。如果 API 勝率 > 隱含勝率，就是 Value
+            val_h = "❌"
+            if odds_h > 0:
+                implied_h = 1.0 / odds_h
+                if (api_h_win / 100.0) > implied_h * 1.05: val_h = "💰" # 5% buffer
+
+            val_a = "❌"
+            if odds_a > 0:
+                implied_a = 1.0 / odds_a
+                if (api_a_win / 100.0) > implied_a * 1.05: val_a = "💰"
 
             cleaned_data.append({
                 '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name,
                 '狀態': status, '主分': score_h_display, '客分': score_a_display,
                 
+                # 新增 Context 字段
+                '主排名': h_rank, '客排名': a_rank,
+                '主走勢': h_form_str, '客走勢': a_form_str,
+                '主Value': val_h, '客Value': val_a,
+
                 '主勝率': api_h_win, '和局率': api_draw, '客勝率': api_a_win,
-                
                 '大0.5': math_probs['o05'], '大1.5': math_probs['o15'],
                 '大2.5': math_probs['o25'], '大3.5': math_probs['o35'],
                 'HT0.5': math_probs['ht_o05'], 'HT1.5': math_probs['ht_o15'], 'HT2.5': math_probs['ht_o25'],
@@ -369,20 +366,20 @@ def main():
 
                 '主賠': odds_h, '客賠': odds_a, '凱利主': round(kelly_h), '凱利客': round(kelly_a),
                 '推介': advice, '信心': confidence_score,
-                '主狀態': form_h, '客狀態': form_a, 
+                '主狀態': h_form_str, '客狀態': a_form_str, # 使用真實走勢取代百分比
                 '主攻': round(att_h), '客攻': round(att_a), 
                 '主防': round(def_h), '客防': round(def_a),
                 '主傷': inj_h, '客傷': inj_a,
                 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
             })
-            print(f"         ✅ {h_name} vs {a_name} | API勝率: {api_h_win}%/{api_a_win}% | xG: {h_final_exp}/{a_final_exp}")
-            
-            time.sleep(0.15) # 稍微放慢一點避免 API limit
+            print(f"         ✅ {h_name}[#{h_rank}] vs {a_name}[#{a_rank}] | Form: {h_form_str} vs {a_form_str}")
+            time.sleep(0.15)
 
     if cleaned_data:
         df = pd.DataFrame(cleaned_data)
         # 確保所有列都存在
         cols = ['時間','聯賽','主隊','客隊','狀態','主分','客分',
+                '主排名','客排名','主走勢','客走勢','主Value','客Value',
                 '主勝率','和局率','客勝率',
                 '大0.5','大1.5','大2.5','大3.5',
                 'HT0.5','HT1.5','HT2.5',
@@ -403,7 +400,7 @@ def main():
             try: 
                 spreadsheet.sheet1.clear()
                 spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print("✅ 數據上傳成功！")
+                print("✅ V35.0 數據上傳成功！")
             except Exception as e: print(f"❌ 上傳失敗: {e}")
     else:
         print("⚠️ 無數據")
