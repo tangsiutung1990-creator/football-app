@@ -7,12 +7,12 @@ from datetime import datetime, timedelta
 import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import os
-import sys
 
 # ================= 設定區 =================
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
 BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
+CSV_FILENAME = "football_data_backup.csv" # 本地備份文件名
 
 # HKJC 常見聯賽 ID 對照表
 LEAGUE_ID_MAP = {
@@ -34,7 +34,7 @@ def call_api(endpoint, params=None):
         return None
     except: return None
 
-# ================= Google Sheet (帶防錯) =================
+# ================= Google Sheet =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -42,10 +42,8 @@ def get_google_spreadsheet():
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
             client = gspread.authorize(creds)
             return client.open(GOOGLE_SHEET_NAME)
-        else:
-            return None
-    except Exception as e:
         return None
+    except: return None
 
 # ================= 數據獲取工具 =================
 def get_league_standings(league_id, season):
@@ -58,12 +56,11 @@ def get_league_standings(league_id, season):
         for group in standings_response: all_teams.extend(group)
         for team in all_teams:
             t_id = team['team']['id']
-            h_played = team['home']['played']; h_for = team['home']['goals']['for']; h_ag = team['home']['goals']['against']
-            a_played = team['away']['played']; a_for = team['away']['goals']['for']; a_ag = team['away']['goals']['against']
+            h_s = team['home']; a_s = team['away']
             standings_map[t_id] = {
                 'rank': team['rank'], 'form': team['form'],
-                'home_stats': {'played': h_played, 'avg_goals_for': h_for/h_played if h_played>0 else 0, 'avg_goals_against': h_ag/h_played if h_played>0 else 0},
-                'away_stats': {'played': a_played, 'avg_goals_for': a_for/a_played if a_played>0 else 0, 'avg_goals_against': a_ag/a_played if a_played>0 else 0}
+                'home_stats': {'played': h_s['played'], 'avg_goals_for': h_s['goals']['for']/(h_s['played'] or 1), 'avg_goals_against': h_s['goals']['against']/(h_s['played'] or 1)},
+                'away_stats': {'played': a_s['played'], 'avg_goals_for': a_s['goals']['for']/(a_s['played'] or 1), 'avg_goals_against': a_s['goals']['against']/(a_s['played'] or 1)}
             }
     except: pass
     return standings_map
@@ -75,16 +72,17 @@ def get_h2h_stats(h_id, a_id):
     for m in data['response'][:10]:
         sc_h = m['goals']['home']; sc_a = m['goals']['away']
         if sc_h is None: continue
-        res = "D"
-        if sc_h > sc_a: res = "H"
-        elif sc_a > sc_h: res = "A"
+        if sc_h > sc_a: res="H"
+        elif sc_a > sc_h: res="A"
+        else: res="D"
+        
         if m['teams']['home']['id'] == h_id:
-            if res == "H": h+=1
-            elif res == "A": a+=1
+            if res=="H": h+=1
+            elif res=="A": a+=1
             else: d+=1
         else:
-            if res == "H": a+=1
-            elif res == "A": h+=1
+            if res=="H": a+=1
+            elif res=="A": h+=1
             else: d+=1
     return h, d, a
 
@@ -121,7 +119,7 @@ def clean_percent_str(val_str):
     try: return int(float(str(val_str).replace('%', '')))
     except: return 0
 
-# ================= V36 數學核心 =================
+# ================= V37 數學核心 (特化數據) =================
 def calculate_split_expected_goals(h_id, a_id, standings_map, pred_data):
     api_h = 1.3; api_a = 1.0
     if pred_data:
@@ -157,16 +155,11 @@ def calculate_advanced_math_probs(h_exp, a_exp):
         for a in range(10): prob_exact[(h, a)] = poisson_prob(h, h_exp) * poisson_prob(a, a_exp)
     
     h_win = sum(p for (h, a), p in prob_exact.items() if h > a)
-    draw = sum(p for (h, a), p in prob_exact.items() if h == a)
     a_win = sum(p for (h, a), p in prob_exact.items() if a > h)
-    
     o25 = sum(p for (h, a), p in prob_exact.items() if h+a > 2.5)
     btts = 1 - sum(p for (h, a), p in prob_exact.items() if h==0 or a==0)
     
-    return {
-        'h_win': h_win*100, 'draw': draw*100, 'a_win': a_win*100,
-        'o25': o25*100, 'btts': btts*100
-    }
+    return {'h_win': h_win*100, 'a_win': a_win*100, 'o25': o25*100, 'btts': btts*100}
 
 def calculate_kelly_stake(prob, odds):
     if odds <= 1 or prob <= 0: return 0
@@ -175,8 +168,7 @@ def calculate_kelly_stake(prob, odds):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V36.1 Unstoppable Edition (with Backup) 啟動...")
-    
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V37.0 Omni-Link Edition 啟動...")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -185,17 +177,14 @@ def main():
     
     print(f"📅 掃描範圍: {from_date} 至 {to_date}")
     cleaned_data = []
-    
-    # 預備一個變量來存儲高價值比賽，用於最後打印
     value_bets = []
 
     for lg_id, lg_name in LEAGUE_ID_MAP.items():
         print(f"   🔍 掃描 {lg_name}...")
         standings = get_league_standings(lg_id, season)
-        
         fixtures_data = call_api('fixtures', {'league': lg_id, 'season': season, 'from': from_date, 'to': to_date})
-        if not fixtures_data or not fixtures_data.get('response'): continue
         
+        if not fixtures_data or not fixtures_data.get('response'): continue
         fixtures = fixtures_data['response']
         print(f"      👉 找到 {len(fixtures)} 場比賽")
         
@@ -212,92 +201,66 @@ def main():
             h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
             sc_h = item['goals']['home']; sc_a = item['goals']['away']
 
-            # 數據獲取
             h_info = standings.get(h_id, {'rank':99, 'form':'N/A'})
             a_info = standings.get(a_id, {'rank':99, 'form':'N/A'})
             
             pred_resp = call_api('predictions', {'fixture': fix_id})
             pred_data = pred_resp['response'][0] if pred_resp and pred_resp.get('response') else None
             
-            # 核心運算
             h_exp, a_exp, src = calculate_split_expected_goals(h_id, a_id, standings, pred_data)
             probs = calculate_advanced_math_probs(h_exp, a_exp)
             
-            # 賠率與凱利
             odds_h, odds_d, odds_a = 0,0,0
-            if status_txt != '完場': odds_h, odds_d, odds_a = get_best_odds(fix_id)
+            inj_h, inj_a = 0,0
+            if status_txt != '完場':
+                odds_h, odds_d, odds_a = get_best_odds(fix_id)
+                inj_h, inj_a = get_injuries_count(fix_id, h_name, a_name)
             
-            # Value 檢測 (Edge Check)
-            val_h = ""; val_a = ""
-            edge_h = 0; edge_a = 0
-            
-            if odds_h > 0:
-                implied = 1/odds_h
-                edge_h = (probs['h_win']/100) - implied
-                if edge_h > 0.05: val_h = "💰" # 5% Edge
-                
-            if odds_a > 0:
-                implied = 1/odds_a
-                edge_a = (probs['a_win']/100) - implied
-                if edge_a > 0.05: val_a = "💰"
+            h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
 
-            # 如果有 Value，加入戰報列表
+            val_h = ""; val_a = ""
+            if odds_h > 0 and (probs['h_win']/100) > (1/odds_h)+0.05: val_h = "💰"
+            if odds_a > 0 and (probs['a_win']/100) > (1/odds_a)+0.05: val_a = "💰"
+
             if val_h or val_a:
                 pick = f"主勝 ({h_name})" if val_h else f"客勝 ({a_name})"
-                odds = odds_h if val_h else odds_a
-                edge = edge_h if val_h else edge_a
-                value_bets.append({
-                    'League': lg_name, 'Match': f"{h_name} vs {a_name}", 
-                    'Pick': pick, 'Odds': odds, 'Edge': f"{edge*100:.1f}%"
-                })
+                value_bets.append({'League': lg_name, 'Match': f"{h_name} vs {a_name}", 'Pick': pick, 'Odds': odds_h if val_h else odds_a})
 
             cleaned_data.append({
                 '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
-                '主分': sc_h, '客分': sc_a, '主排名': h_info['rank'], '客排名': a_info['rank'],
+                '主分': sc_h if sc_h is not None else "", '客分': sc_a if sc_a is not None else "",
+                '主排名': h_info['rank'], '客排名': a_info['rank'],
+                '主走勢': h_info['form'], '客走勢': a_info['form'],
                 'xG主': round(h_exp,2), 'xG客': round(a_exp,2), '數據源': src,
-                '主勝率%': round(probs['h_win']), '客勝率%': round(probs['a_win']),
-                '大2.5%': round(probs['o25']), 'BTTS%': round(probs['btts']),
-                '主賠': odds_h, '客賠': odds_a, '主Value': val_h, '客Value': val_a
+                '主勝率': round(probs['h_win']), '客勝率': round(probs['a_win']),
+                '大2.5': round(probs['o25']), 'BTTS': round(probs['btts']),
+                '主賠': odds_h, '客賠': odds_a, '主Value': val_h, '客Value': val_a,
+                '主傷': inj_h, '客傷': inj_a, 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
             })
-            
-            print(f"         ✅ {h_name} vs {a_name} | xG: {h_exp:.2f}-{a_exp:.2f} {val_h}{val_a}")
+            print(f"         ✅ {h_name} vs {a_name} | xG: {h_exp:.2f}-{a_exp:.2f}")
             time.sleep(0.1)
 
-    # ================= 數據保存與展示 =================
     if cleaned_data:
         df = pd.DataFrame(cleaned_data)
         
         # 1. 嘗試上傳 Google Sheet
-        spreadsheet = get_google_spreadsheet()
         uploaded = False
+        spreadsheet = get_google_spreadsheet()
         if spreadsheet:
             try:
                 spreadsheet.sheet1.clear()
                 spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print("\n✅ [成功] 數據已上傳至 Google Sheet！")
+                print("\n✅ Google Sheet 上傳成功")
                 uploaded = True
-            except: print("\n❌ [失敗] Google Sheet 上傳中斷")
-        else:
-            print("\n⚠️ [跳過] 未檢測到 key.json，跳過 Google Sheet 上傳")
+            except: print("\n❌ Google Sheet 上傳失敗")
+        
+        # 2. 強制保存 CSV (這就是解決黑屏的關鍵！)
+        df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
+        print(f"💾 數據已備份至: {CSV_FILENAME}")
 
-        # 2. 強制備份到 CSV (雙重保險)
-        csv_name = "football_data_backup.csv"
-        df.to_csv(csv_name, index=False, encoding='utf-8-sig')
-        print(f"💾 [備份] 數據已保存至本地文件: {csv_name}")
-
-        # 3. 控制台戰報 (直接顯示價值注項)
         if value_bets:
-            print("\n" + "="*50)
-            print("💎 今日精選 VALUE BETS (泊松模型優勢 > 5%) 💎")
-            print("="*50)
-            print(f"{'聯賽':<10} | {'比賽':<30} | {'推介':<20} | {'賠率':<6} | {'優勢'}")
-            print("-" * 80)
-            for v in value_bets:
-                print(f"{v['League']:<10} | {v['Match']:<30} | {v['Pick']:<20} | {v['Odds']:<6} | {v['Edge']}")
-            print("="*50 + "\n")
-        else:
-            print("\n今日無明顯 Value Bet，建議觀望。")
-
+            print("\n💎 精選 VALUE BETS 💎")
+            for v in value_bets: print(f"{v['League']} | {v['Match']} | {v['Pick']} @ {v['Odds']}")
     else:
         print("⚠️ 無數據")
 
