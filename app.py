@@ -7,7 +7,7 @@ import os
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
-st.set_page_config(page_title="足球AI Pro (V33.0)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V34.0 Pure API)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 =================
 st.markdown("""
@@ -35,6 +35,7 @@ st.markdown("""
     .cell-label { color: #999; font-size: 0.75rem; }
     .cell-val { color: #fff; font-weight: bold; font-size: 0.9rem; }
     .cell-val-high { color: #00ff00; font-weight: bold; font-size: 0.9rem; }
+    .cell-val-zero { color: #444; font-size: 0.9rem; } /* 新增：無數據時變暗 */
     
     .footer-box { display: flex; justify-content: space-between; margin-top: 8px; background: #16181d; padding: 8px 10px; border-radius: 6px; align-items: center; border-left: 4px solid #00b09b; }
     .sugg-text { color: #fff; font-size: 1.1rem; font-weight: bold; }
@@ -57,8 +58,16 @@ def format_odds(val):
         return f"{f:.2f}"
     except: return "-"
 
+# 新增：處理百分比顯示，如果是0就顯示 -
+def fmt_pct_display(val, threshold=50, is_o25=False):
+    v = clean_pct(val)
+    if v == 0: return "<span class='cell-val-zero'>-</span>"
+    css_class = "cell-val-high" if (v > threshold) else "cell-val"
+    if is_o25 and v > 55: css_class = "cell-val-high"
+    return f"<span class='{css_class}'>{v}%</span>"
+
 def main():
-    st.title("⚽ 足球AI Pro (V33.0 H2H Edition)")
+    st.title("⚽ 足球AI Pro (V34.0 Pure API)")
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -69,7 +78,7 @@ def main():
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
     except:
-        st.error("連接失敗")
+        st.error("連接失敗，請檢查 key.json 或 Google Sheet 名稱")
         return
 
     if df.empty:
@@ -98,14 +107,12 @@ def main():
     df = df.sort_values(by=['sort_idx', '時間'])
 
     for index, row in df.iterrows():
+        # 讀取數據
         prob_h = clean_pct(row.get('主勝率', 0))
         prob_a = clean_pct(row.get('客勝率', 0))
         prob_o25 = clean_pct(row.get('大2.5', 0))
         
-        cls_h = "cell-val-high" if prob_h > 50 else "cell-val"
-        cls_a = "cell-val-high" if prob_a > 50 else "cell-val"
-        cls_o25 = "cell-val-high" if prob_o25 > 55 else "cell-val"
-        
+        # 顯示邏輯
         score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) != '' else "VS"
         advice = row.get('推介', '暫無')
         confidence = row.get('信心', 0)
@@ -118,6 +125,7 @@ def main():
         h2h_h = row.get('H2H主', 0); h2h_d = row.get('H2H和', 0); h2h_a = row.get('H2H客', 0)
         h2h_tag = f"<span class='h2h-badge'>⚔️ {h2h_h}勝 {h2h_d}和 {h2h_a}負</span>"
 
+        # 主卡片 HTML
         card_html = ""
         card_html += f"<div class='compact-card'>"
         card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
@@ -135,54 +143,54 @@ def main():
         # Grid Matrix
         card_html += f"<div class='grid-matrix'>"
         
-        # 1. 勝率
-        card_html += f"<div class='matrix-col'><div class='matrix-header'>勝率</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>主</span><span class='{cls_h}'>{prob_h}%</span></div>"
+        # 1. 勝率 (API 原生)
+        card_html += f"<div class='matrix-col'><div class='matrix-header'>API 勝率</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>主</span>{fmt_pct_display(prob_h)}</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>和</span><span class='cell-val'>{clean_pct(row.get('和局率',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>客</span><span class='{cls_a}'>{prob_a}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>客</span>{fmt_pct_display(prob_a)}</div></div>"
         
-        # 2. 亞盤主
+        # 2. 亞盤主 (基於 API xG)
         card_html += f"<div class='matrix-col'><div class='matrix-header'>主亞盤%</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span><span class='cell-val'>{clean_pct(row.get('主平',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/-0.5</span><span class='cell-val'>{clean_pct(row.get('主0/-0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>-0.5/-1</span><span class='cell-val'>{clean_pct(row.get('主-0.5/-1',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>-1/-1.5</span><span class='cell-val'>{clean_pct(row.get('主-1/-1.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/+0.5</span><span class='cell-val'>{clean_pct(row.get('主0/+0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5/+1</span><span class='cell-val'>{clean_pct(row.get('主+0.5/+1',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1/+1.5</span><span class='cell-val'>{clean_pct(row.get('主+1/+1.5',0))}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span>{fmt_pct_display(row.get('主平',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/-0.5</span>{fmt_pct_display(row.get('主0/-0.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-0.5/-1</span>{fmt_pct_display(row.get('主-0.5/-1',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-1/-1.5</span>{fmt_pct_display(row.get('主-1/-1.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/+0.5</span>{fmt_pct_display(row.get('主0/+0.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5/+1</span>{fmt_pct_display(row.get('主+0.5/+1',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1/+1.5</span>{fmt_pct_display(row.get('主+1/+1.5',0))}</div></div>"
         
-        # 3. 亞盤客
+        # 3. 亞盤客 (基於 API xG)
         card_html += f"<div class='matrix-col'><div class='matrix-header'>客亞盤%</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span><span class='cell-val'>{clean_pct(row.get('客平',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/-0.5</span><span class='cell-val'>{clean_pct(row.get('客0/-0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>-0.5/-1</span><span class='cell-val'>{clean_pct(row.get('客-0.5/-1',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>-1/-1.5</span><span class='cell-val'>{clean_pct(row.get('客-1/-1.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/+0.5</span><span class='cell-val'>{clean_pct(row.get('客0/+0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5/+1</span><span class='cell-val'>{clean_pct(row.get('客+0.5/+1',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1/+1.5</span><span class='cell-val'>{clean_pct(row.get('客+1/+1.5',0))}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>平</span>{fmt_pct_display(row.get('客平',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/-0.5</span>{fmt_pct_display(row.get('客0/-0.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-0.5/-1</span>{fmt_pct_display(row.get('客-0.5/-1',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>-1/-1.5</span>{fmt_pct_display(row.get('客-1/-1.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>0/+0.5</span>{fmt_pct_display(row.get('客0/+0.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+0.5/+1</span>{fmt_pct_display(row.get('客+0.5/+1',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>+1/+1.5</span>{fmt_pct_display(row.get('客+1/+1.5',0))}</div></div>"
         
-        # 4. 全場大小/進球
+        # 4. 全場大小/進球 (基於 API xG)
         card_html += f"<div class='matrix-col'><div class='matrix-header'>全場/進球</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>FTS主</span><span class='cell-val'>{clean_pct(row.get('FTS主',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>FTS客</span><span class='cell-val'>{clean_pct(row.get('FTS客',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>BTTS</span><span class='cell-val'>{clean_pct(row.get('BTTS',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>大0.5</span><span class='cell-val'>{clean_pct(row.get('大0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>大1.5</span><span class='cell-val'>{clean_pct(row.get('大1.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>大2.5</span><span class='{cls_o25}'>{prob_o25}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>大3.5</span><span class='cell-val'>{clean_pct(row.get('大3.5',0))}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>FTS主</span>{fmt_pct_display(row.get('FTS主',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>FTS客</span>{fmt_pct_display(row.get('FTS客',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>BTTS</span>{fmt_pct_display(row.get('BTTS',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大0.5</span>{fmt_pct_display(row.get('大0.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大1.5</span>{fmt_pct_display(row.get('大1.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大2.5</span>{fmt_pct_display(prob_o25, 55, True)}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>大3.5</span>{fmt_pct_display(row.get('大3.5',0))}</div></div>"
         
         # 5. 半場大小
         card_html += f"<div class='matrix-col'><div class='matrix-header'>半場大小</div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>H0.5</span><span class='cell-val'>{clean_pct(row.get('HT0.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>H1.5</span><span class='cell-val'>{clean_pct(row.get('HT1.5',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>H2.5</span><span class='cell-val'>{clean_pct(row.get('HT2.5',0))}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>H0.5</span>{fmt_pct_display(row.get('HT0.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>H1.5</span>{fmt_pct_display(row.get('HT1.5',0))}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>H2.5</span>{fmt_pct_display(row.get('HT2.5',0))}</div></div>"
         
         # 6. 賠率/凱利
         card_html += f"<div class='matrix-col'><div class='matrix-header'>賠率/凱利</div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>主賠</span><span style='color:#00e5ff;'>{format_odds(row.get('主賠'))}</span></div>"
         card_html += f"<div class='matrix-cell'><span class='cell-label'>客賠</span><span style='color:#00e5ff;'>{format_odds(row.get('客賠'))}</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>K主</span><span class='cell-val'>{clean_pct(row.get('凱利主',0))}%</span></div>"
-        card_html += f"<div class='matrix-cell'><span class='cell-label'>K客</span><span class='cell-val'>{clean_pct(row.get('凱利客',0))}%</span></div></div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>K主</span>{fmt_pct_display(row.get('凱利主',0), 0)}</div>"
+        card_html += f"<div class='matrix-cell'><span class='cell-label'>K客</span>{fmt_pct_display(row.get('凱利客',0), 0)}</div></div>"
         
         card_html += f"</div>" # End Grid
         
