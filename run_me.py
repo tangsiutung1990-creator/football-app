@@ -6,6 +6,7 @@ import gspread
 from datetime import datetime, timedelta
 import pytz
 from oauth2client.service_account import ServiceAccountCredentials
+import os
 
 # ================= 設定區 =================
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
@@ -36,7 +37,14 @@ def call_api(endpoint, params=None):
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+        if os.path.exists("key.json"):
+            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+        else:
+            # 如果找不到 key.json，嘗試從環境變數讀取 (適用於 Streamlit Cloud 等環境)
+            # 你需要確保 key.json 文件存在於同一目錄下
+            print("⚠️ 找不到 key.json，請確保該文件存在。")
+            return None
+            
         client = gspread.authorize(creds)
         return client.open(GOOGLE_SHEET_NAME)
     except Exception as e:
@@ -55,9 +63,12 @@ def get_league_standings(league_id, season):
         return standings_map
 
     try:
-        standings_list = data['response'][0]['league']['standings']
+        # 處理不同聯賽結構 (部分聯賽有多個小組)
+        standings_response = data['response'][0]['league']['standings']
         all_teams = []
-        for group in standings_list:
+        
+        # 扁平化所有分組
+        for group in standings_response:
             all_teams.extend(group)
             
         for team in all_teams:
@@ -265,7 +276,7 @@ def main():
     utc_now = datetime.now(pytz.utc)
     from_date = (utc_now - timedelta(days=1)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    season = 2025
+    season = 2025 # 請確保賽季 ID 正確
     
     print(f"📅 掃描範圍: {from_date} 至 {to_date}")
     cleaned_data = []
