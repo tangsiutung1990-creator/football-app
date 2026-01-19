@@ -114,7 +114,7 @@ def main():
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
     except:
-        st.error("連接失敗")
+        st.error("連接失敗，請檢查 key.json 或 Google Sheet 名稱")
         return
 
     if df.empty:
