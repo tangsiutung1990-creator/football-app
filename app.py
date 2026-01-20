@@ -9,9 +9,9 @@ from datetime import datetime
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.7 Max)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.8 Debug)", page_icon="⚽", layout="wide")
 
-# ================= CSS (高級暗黑風格) =================
+# ================= CSS =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
@@ -40,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據加載 =================
+# ================= 數據加載 (底層重構) =================
 @st.cache_data(ttl=300)
 def load_data():
     df = pd.DataFrame()
@@ -53,41 +53,45 @@ def load_data():
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
-        data = sheet.get_all_records()
-        df = pd.DataFrame(data)
-        src = "Cloud"
+        
+        # 【核心修改】改用 get_all_values() 抓取原始列表，再手動轉 DataFrame
+        # 這比 get_all_records() 穩定得多，不會因為 Header 有空格而掛掉
+        raw_data = sheet.get_all_values()
+        if raw_data and len(raw_data) > 1:
+            headers = raw_data[0]
+            rows = raw_data[1:]
+            df = pd.DataFrame(rows, columns=headers)
+            src = "Cloud (Raw)"
     except:
         if os.path.exists(CSV_FILENAME):
             df = pd.read_csv(CSV_FILENAME)
             src = "Local"
             
-    # 定義所有必須存在的欄位，確保不缺欄
+    # 補全欄位
     req = [
         '聯賽','時間','狀態','主隊','客隊','主分','客分','xG主','xG客',
         '主勝率','和率','客勝率','主Value','和Value','客Value',
         '全場大0.5','全場大1.5','全場大2.5','全場大3.5','半場大0.5','半場大1.5',
         'BTTS機率','主先入球率','亞盤主','亞盤客','亞盤盤口', '主排名', '客排名', '數據源',
-        '主賠', '和賠', '客賠', '主傷', '客傷'
+        '主賠', '和賠', '客賠'
     ]
     
     if df.empty:
         df = pd.DataFrame(columns=req)
     else:
-        # 檢查缺失欄位並補全
         for c in req:
             if c not in df.columns: df[c] = ""
             
     return df, src
 
 def safe_fmt(val, is_pct=False):
-    """安全格式化函數：將任意輸入轉為適合顯示的字串"""
     try:
         if val is None: return "-"
         s = str(val).strip()
         if s == "" or s.lower() == "nan" or s == "-": return "-"
         f = float(s.replace('%',''))
-        if is_pct: return f"{int(f)}%"
         if f == 0: return "-"
+        if is_pct: return f"{int(f)}%"
         return f"{f:.2f}"
     except: return "-"
 
@@ -102,7 +106,7 @@ def get_cls(val):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.7 Max)")
+    st.title("⚽ 足球AI Pro (V40.8 Debug)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
@@ -110,12 +114,16 @@ def main():
 
     df, src = load_data()
     if df.empty:
-        st.warning(f"⚠️ 暫無數據 (來源: {src})。請等待 run_me.py 運行。")
+        st.warning(f"⚠️ 暫無數據 (來源: {src})")
         return
 
-    # 篩選區
+    # === 側邊欄 ===
     with st.sidebar:
-        st.header("🔍 篩選條件")
+        st.header("🔍 篩選")
+        
+        # 顯示原始數據開關 (調試神器)
+        show_raw = st.checkbox("🐞 顯示原始數據 (Debug)")
+        
         status_list = ["全部", "未開賽", "進行中", "完場", "取消/延期"]
         sel_status = st.selectbox("狀態", status_list)
         
@@ -123,9 +131,7 @@ def main():
         if sel_status == "完場":
             st.info("📅 請選擇完場日期")
             try:
-                # 嘗試解析日期，如果失敗則用今天
-                dates = pd.to_datetime(df['時間'], errors='coerce').dt.strftime('%Y-%m-%d').dropna().unique()
-                unique_dates = sorted(list(dates))
+                unique_dates = sorted(list(set(df['時間'].astype(str).str[:10])))
                 if unique_dates:
                     sel_date = st.selectbox("日期", unique_dates, index=len(unique_dates)-1)
                 else:
@@ -147,6 +153,11 @@ def main():
                 df = df[df['狀態'] == sel_status]
         if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
 
+    # === Debug 顯示 ===
+    if show_raw:
+        st.subheader("📊 原始數據表 (Debug Mode)")
+        st.dataframe(df)
+
     st.caption(f"來源: {src} | 共 {len(df)} 場")
 
     try:
@@ -154,8 +165,8 @@ def main():
         df = df.sort_values(by=['sort', '時間'])
     except: pass
 
+    # === 卡片渲染 ===
     for idx, row in df.iterrows():
-        # 準備顯示變數 (全部經過 safe_fmt 處理)
         ph = safe_fmt(row.get('主勝率'), True)
         pd_prob = safe_fmt(row.get('和率'), True)
         pa = safe_fmt(row.get('客勝率'), True)
@@ -165,7 +176,6 @@ def main():
         ah_line = str(row.get('亞盤盤口')) if row.get('亞盤盤口') else '平手'
         s_cls = 'status-live' if str(row.get('狀態'))=='進行中' else 'status-fin'
         
-        # HTML 構造
         html = f"""
 <div class="compact-card">
 <div class="match-header">
