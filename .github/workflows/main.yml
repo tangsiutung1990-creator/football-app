@@ -2,11 +2,9 @@ name: Football Data Auto-Update
 
 # 設定觸發條件
 on:
-  # 1. 定時運行：每 1 小時運行一次
-  # cron 表達式語法: '分 時 日 月 週'
-  # '0 * * * *' 代表每小時的第 0 分鐘執行
   schedule:
-    - cron: '0 * * * *'
+    # 這裡設定為每 6 小時運行一次 (UTC 時間)
+    - cron: '0 */6 * * *'
   
   # 2. 手動運行：允許你在 GitHub Actions 頁面按按鈕手動觸發
   workflow_dispatch:
