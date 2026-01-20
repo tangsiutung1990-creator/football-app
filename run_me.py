@@ -16,7 +16,7 @@ BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-# 完整標準欄位 (App 將依賴這些順序)
+# 完整欄位定義
 FULL_COLUMNS = [
     '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
     '主排名', '客排名', '主走勢', '客走勢',
@@ -169,7 +169,7 @@ def calc_probs(xg_h, xg_a):
     return h_win*100, draw*100, a_win*100
 
 def main():
-    print("🚀 V40.8 TEST MODE (Force String + 1 Match)")
+    print("🚀 V40.8 TEST MODE (Force String Export)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
@@ -221,7 +221,7 @@ def main():
                 ah_display = odds.get('ah_str', '')
                 if not ah_display and odds.get('ah_h', 0) > 0: ah_display = "有盤口"
 
-                print(f"✅ OK: {h_name} v {a_name} | Odds: {odds['h']}/{odds['a']} | AH: {ah_display}")
+                print(f"✅ OK: {h_name} v {a_name} | Odds: {odds['h']}")
 
                 data_list.append({
                     '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
@@ -247,7 +247,6 @@ def main():
 
     if data_list:
         df = pd.DataFrame(data_list)
-        # 強制重置索引和列
         df = df.reindex(columns=FULL_COLUMNS)
     else:
         df = pd.DataFrame(columns=FULL_COLUMNS)
@@ -260,7 +259,7 @@ def main():
     if sheet:
         try:
             sheet.sheet1.clear()
-            # 【關鍵】強制全部轉為 string，防止 gspread 誤判 0 為空
+            # 【關鍵】強制全部轉為 string，確保 gspread 寫入 0 時不會變成空值
             df_str = df.fillna('').astype(str)
             if df_str.empty:
                 sheet.sheet1.update(range_name='A1', values=[FULL_COLUMNS])
