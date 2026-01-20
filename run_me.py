@@ -15,8 +15,8 @@ BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-# 定義標準欄位 (確保無論有無數據，Google Sheet 都有正確的標題)
-COLS_STANDARD = [
+# 【新增】完整欄位定義，確保即使無數據也能生成正確格式
+FULL_COLUMNS = [
     '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
     '主排名', '客排名', '主走勢', '客走勢',
     '主Value', '客Value', 'xG主', 'xG客', '數據源',
@@ -25,6 +25,7 @@ COLS_STANDARD = [
     '主傷', '客傷', 'H2H主', 'H2H和', 'H2H客'
 ]
 
+# HKJC 常見聯賽 ID 對照表
 LEAGUE_ID_MAP = {
     39: '英超', 40: '英冠', 41: '英甲', 140: '西甲', 141: '西乙',
     135: '意甲', 78: '德甲', 61: '法甲', 88: '荷甲', 94: '葡超',
@@ -56,7 +57,8 @@ def get_google_spreadsheet():
              creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         elif os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        else: return None
+        else:
+            return None
         client = gspread.authorize(creds)
         return client.open(GOOGLE_SHEET_NAME)
     except: return None
@@ -173,7 +175,7 @@ def main():
     # 掃描前後 3 天 (配合 6 小時更新)
     from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    season = 2025 # 確保這是你需要的賽季年份
+    season = 2025 # 確保這是你需要的賽季年份 (部分聯賽可能是 2024 或 2025)
     
     print(f"📅 掃描範圍: {from_date} 至 {to_date}")
     cleaned_data = []
@@ -246,16 +248,19 @@ def main():
             print(f"         ✅ {h_name} vs {a_name}")
             time.sleep(0.1)
 
-    # 【重要修復】無論有無數據，都確保上傳表格標題
+    # 【重要修復】無論有無數據，都確保創建一個 DataFrame
+    # 這樣可以防止 app.py 因為讀不到欄位而崩潰
     if cleaned_data:
         df = pd.DataFrame(cleaned_data)
-        df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
-        print(f"\n💾 數據已備份至: {CSV_FILENAME}")
+        print(f"\n💾 成功抓取 {len(df)} 筆數據")
     else:
-        # 創建空 DataFrame 但包含所有必要標題
-        df = pd.DataFrame(columns=COLS_STANDARD)
-        df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
-        print("⚠️ 無比賽數據，已重置表格標題")
+        # 如果沒有比賽，建立一個「空」的 DataFrame，但包含所有正確的欄位
+        df = pd.DataFrame(columns=FULL_COLUMNS)
+        print("\n⚠️ 本次無比賽數據，建立空表頭以防崩潰")
+
+    # 備份 CSV
+    df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
+    print(f"💾 數據已備份至: {CSV_FILENAME}")
 
     # 上傳至 Google Sheet
     spreadsheet = get_google_spreadsheet()
@@ -264,7 +269,13 @@ def main():
             spreadsheet.sheet1.clear()
             # 將 NaN 轉為空字串，防止 API 報錯
             df_str = df.fillna('').astype(str)
-            spreadsheet.sheet1.update(range_name='A1', values=[df_str.columns.values.tolist()] + df_str.values.tolist())
+            
+            # 如果是空表，至少上傳第一行(標題)
+            if df_str.empty:
+                spreadsheet.sheet1.update(range_name='A1', values=[FULL_COLUMNS])
+            else:
+                spreadsheet.sheet1.update(range_name='A1', values=[df_str.columns.values.tolist()] + df_str.values.tolist())
+            
             print("✅ Google Sheet 上傳成功")
         except Exception as e:
             print(f"❌ Google Sheet 上傳失敗: {e}")
