@@ -32,12 +32,9 @@ FULL_COLUMNS = [
 ]
 
 LEAGUE_ID_MAP = {
-    39: '英超', 40: '英冠', 41: '英甲', 140: '西甲', 141: '西乙',
-    135: '意甲', 78: '德甲', 61: '法甲', 88: '荷甲', 94: '葡超',
-    144: '比甲', 179: '蘇超', 203: '土超', 119: '丹超', 113: '瑞典超',
-    103: '挪超', 98: '日職', 292: '韓K1', 188: '澳職', 253: '美職',
-    262: '墨超', 71: '巴甲', 128: '阿甲', 265: '智甲',
-    2: '歐聯', 3: '歐霸'
+    39: '英超', 40: '英冠', 140: '西甲', 135: '意甲', 78: '德甲', 61: '法甲', 
+    88: '荷甲', 94: '葡超', 179: '蘇超', 98: '日職', 292: '韓K1', 
+    188: '澳職', 253: '美職', 2: '歐聯', 3: '歐霸'
 }
 
 def call_api(endpoint, params=None):
@@ -55,26 +52,21 @@ def format_ah_line(val_str):
         if not nums: return str(val_str)
         f = float(nums[0])
         if f == 0: return "平手"
-        rem = abs(f) % 1
-        base = int(abs(f))
-        sign = "-" if f < 0 else "+"
-        if rem == 0.25:
-            return f"{sign}{base}/{sign}{base + 0.5}" if base != 0 else f"0/{sign}0.5"
-        elif rem == 0.75:
-            return f"{sign}{base + 0.5}/{sign}{base + 1}"
-        elif rem == 0.5:
-            return f"{sign}{base+0.5}"
+        rem = abs(f) % 1; base = int(abs(f)); sign = "-" if f < 0 else "+"
+        if rem == 0.25: return f"{sign}{base}/{sign}{base + 0.5}" if base != 0 else f"0/{sign}0.5"
+        elif rem == 0.75: return f"{sign}{base + 0.5}/{sign}{base + 1}"
+        elif rem == 0.5: return f"{sign}{base+0.5}"
         return f"{sign}{base}"
     except: return str(val_str)
 
 def get_detailed_odds(fixture_id):
-    data = call_api('odds', {'fixture': fixture_id})
+    # 初始化所有欄位，確保不為 None
     res = {'h':0,'d':0,'a':0,'ah_h':0,'ah_a':0,'ah_str':'','o05':0,'o15':0,'o25':0,'o35':0,'ht_o05':0,'ht_o15':0,'btts_yes':0,'first_h':0}
+    data = call_api('odds', {'fixture': fixture_id})
     
     if not data or not data.get('response'): return res
     
     try:
-        # 遍歷所有博彩公司，拼湊數據
         for bk in data['response'][0]['bookmakers']:
             for bet in bk['bets']:
                 if bet['id'] == 1 and res['h'] == 0:
@@ -177,10 +169,11 @@ def calc_probs(xg_h, xg_a):
     return h_win*100, draw*100, a_win*100
 
 def main():
-    print("🚀 V40.6 TEST MODE (Single Match with Diagnostic)")
+    print("🚀 V40.7 DIAGNOSTIC MODE (Single Match Stop)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
+    # 掃描範圍
     from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     season = utc_now.year if utc_now.month > 7 else utc_now.year - 1
@@ -208,6 +201,7 @@ def main():
                 h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
                 h_name = item['teams']['home']['name']; a_name = item['teams']['away']['name']
                 
+                # 初始化變數
                 odds = {'h':0,'d':0,'a':0}
                 inj_h=0; inj_a=0
                 
@@ -229,11 +223,8 @@ def main():
                 ah_display = odds.get('ah_str', '')
                 if not ah_display and odds.get('ah_h', 0) > 0: ah_display = "有盤口"
 
-                # === 診斷輸出 ===
-                print(f"📊 診斷數據: {h_name} vs {a_name}")
-                print(f"   賠率: 主{odds.get('h')} 和{odds.get('d')} 客{odds.get('a')}")
-                print(f"   亞盤: {ah_display} ({odds.get('ah_h')}/{odds.get('ah_a')})")
-                print(f"   大小: 2.5球賠率 {odds.get('o25')}")
+                print(f"   MATCH FOUND: {h_name} vs {a_name}")
+                print(f"   DEBUG ODDS: {odds}")
 
                 data_list.append({
                     '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
@@ -262,11 +253,12 @@ def main():
                 continue
             time.sleep(0.1)
 
+    # 無論有無數據，強制生成空表以防崩潰
     if data_list:
         df = pd.DataFrame(data_list)
     else:
         df = pd.DataFrame(columns=FULL_COLUMNS)
-        print("⚠️ No data found.")
+        print("⚠️ No data found, saving empty template.")
         
     df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
     
