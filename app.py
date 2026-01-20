@@ -3,249 +3,230 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
+from datetime import datetime
 
 # ================= 設定區 =================
-# 必須與 run_me.py 的設定一致
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V38.1 Eco)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.0 Max)", page_icon="⚽", layout="wide")
 
-# ================= CSS 優化 (暗黑風格 - 保持原樣) =================
+# ================= CSS =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
-    [data-testid="stSidebar"] { min-width: 200px !important; max-width: 250px !important; }
+    [data-testid="stSidebar"] { min-width: 220px !important; }
     
-    .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 10px; font-family: 'Arial', sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    .compact-card { 
+        background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-bottom: 12px; 
+        font-family: 'Arial', sans-serif; box-shadow: 0 4px 6px rgba(0,0,0,0.3); 
+    }
     
-    .match-header { display: flex; justify-content: space-between; color: #888; font-size: 0.8rem; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    .match-header { display: flex; justify-content: space-between; color: #aaa; font-size: 0.8rem; border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 8px; }
+    .status-live { color: #ff5252; font-weight: bold; }
+    .status-fin { color: #aaa; }
     
-    .content-row { display: grid; grid-template-columns: 7fr 3fr; align-items: center; margin-bottom: 10px; }
-    .teams-area { text-align: left; display: flex; flex-direction: column; justify-content: center; }
+    .team-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .team-name { font-weight: bold; font-size: 1.1rem; color: #fff; display: flex; align-items: center; gap: 5px; }
+    .score { font-size: 1.2rem; font-weight: bold; color: #00e5ff; }
     
-    /* 隊名樣式 */
-    .team-name { font-weight: bold; font-size: 1.15rem; color: #fff; margin-bottom: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; } 
+    /* 數據網格 */
+    .grid-box { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 10px; background: #111; padding: 5px; border-radius: 5px; }
+    .grid-item { text-align: center; border-right: 1px solid #333; }
+    .grid-item:last-child { border-right: none; }
+    .grid-label { font-size: 0.7rem; color: #888; display: block; }
+    .grid-val { font-size: 0.85rem; color: #eee; font-weight: bold; }
+    .high-val { color: #00e676; }
     
-    /* 排名標章 */
-    .rank-badge { background: #555; color: #fff; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; border: 1px solid #777; }
-    .rank-top { background: #ff9800; color: #000; border: 1px solid #ff9800; }
-    .rank-bot { background: #d32f2f; color: #fff; border: 1px solid #d32f2f; }
-    
-    /* 走勢圓點 */
-    .team-sub { font-size: 0.75rem; color: #aaa; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px;}
-    .form-dots { display: flex; gap: 3px; align-items: center; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
-    .dot-W { background-color: #00e676; }
-    .dot-D { background-color: #ffeb3b; }
-    .dot-L { background-color: #ff5252; }
-    .dot-N { background-color: #555; }
-    
-    /* Value 標籤 (金色) */
-    .val-badge { color: #000; background: #ffd700; font-weight: bold; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; margin-left: 5px; box-shadow: 0 0 5px rgba(255, 215, 0, 0.5); border: 1px solid #e6c200; }
+    /* 亞盤專區 */
+    .ah-box { background: #222; padding: 4px; border-radius: 4px; margin-top: 5px; display: flex; justify-content: space-around; font-size: 0.8rem; color: #ccc; }
+    .ah-val { color: #ffd700; font-weight: bold; }
 
-    /* 比分與 xG */
-    .score-area { text-align: right; display: flex; flex-direction: column; align-items: flex-end; }
-    .score-main { font-size: 2.0rem; font-weight: bold; color: #00ffea; letter-spacing: 2px; line-height: 1; }
-    .xg-sub { font-size: 0.7rem; color: #888; margin-top: 4px; border: 1px solid #444; padding: 1px 4px; border-radius: 4px; background: #222; }
-    
-    /* 其他標籤 */
-    .inj-badge { color: #ff4b4b; font-weight: bold; font-size: 0.75rem; border: 1px solid #ff4b4b; padding: 0 4px; border-radius: 3px; }
-    .h2h-badge { color: #ffd700; font-weight: bold; font-size: 0.75rem; background: #333; padding: 0 4px; border-radius: 3px; }
-    
-    /* 數據矩陣 */
-    .grid-matrix { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 8px; text-align: center; }
-    .matrix-col { background: #222; padding: 2px; border-radius: 4px; border: 1px solid #333; display: flex; flex-direction: column; }
-    .matrix-header { color: #ff9800; font-weight: bold; font-size: 0.75rem; margin-bottom: 2px; border-bottom: 1px solid #444; padding-bottom: 1px; }
-    .matrix-cell { display: flex; justify-content: space-between; padding: 0 4px; align-items: center; line-height: 1.4; }
-    .cell-val { color: #fff; font-weight: bold; font-size: 0.9rem; }
-    .cell-val-high { color: #00ff00; font-weight: bold; font-size: 0.9rem; }
-    .cell-val-zero { color: #444; font-size: 0.9rem; }
+    /* 大小球表格 */
+    .ou-table { width: 100%; font-size: 0.75rem; color: #ccc; margin-top: 5px; border-collapse: collapse; }
+    .ou-table td { border: 1px solid #333; padding: 2px 4px; text-align: center; }
+    .ou-head { background: #333; font-weight: bold; }
+
+    .val-badge { background: #ffd700; color: #000; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 輔助函數 =================
-def clean_pct(val):
-    if pd.isna(val) or val == '' or str(val) == 'nan': return 0
-    try:
-        f = float(str(val).replace('%', ''))
-        return int(f)
-    except: return 0
-
-def format_odds(val):
-    try:
-        f = float(val)
-        if f <= 1: return "-"
-        return f"{f:.2f}"
-    except: return "-"
-
-def fmt_pct_display(val, threshold=50, is_o25=False):
-    v = clean_pct(val)
-    if v == 0: return "<span class='cell-val-zero'>-</span>"
-    css_class = "cell-val-high" if (v > threshold) else "cell-val"
-    if is_o25 and v > 55: css_class = "cell-val-high"
-    return f"<span class='{css_class}'>{v}%</span>"
-
-def render_form_dots(form_str):
-    if not form_str or str(form_str) == 'nan' or form_str == 'N/A' or form_str == '?????': 
-        return "" 
-    html = "<div class='form-dots'>"
-    for char in str(form_str)[-5:]:
-        cls = "dot-N"
-        if char == 'W': cls = "dot-W"
-        elif char == 'D': cls = "dot-D"
-        elif char == 'L': cls = "dot-L"
-        html += f"<span class='dot {cls}'></span>"
-    html += "</div>"
-    return html
-
-def render_rank_badge(rank):
-    if str(rank) == '?' or str(rank) == 'nan':
-        return "<span class='rank-badge'>#?</span>"
-    try:
-        r = int(rank)
-        cls = "rank-badge"
-        if r <= 4: cls += " rank-top" # 前4名高亮
-        if r >= 18: cls += " rank-bot" # 降級區警示
-        return f"<span class='{cls}'>#{r}</span>"
-    except: return ""
-
+# ================= 數據加載 =================
 def load_data():
     df = pd.DataFrame()
-    source = "無"
-    
-    # 1. 優先嘗試 Google Sheet
+    src = "無"
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        # 兼容 GitHub Actions (Secrets) 與本地 key.json
         if "gcp_service_account" in st.secrets:
-             creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
-        elif os.path.exists("key.json"):
-            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         else:
-            return pd.DataFrame(), "無 Key"
-
+            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        source = "Google Cloud"
-        
-    except: pass
-
-    # 2. 如果 Google Sheet 失敗，讀取本地 CSV
-    if df.empty and os.path.exists(CSV_FILENAME):
-        try:
+        src = "Cloud"
+    except:
+        if os.path.exists(CSV_FILENAME):
             df = pd.read_csv(CSV_FILENAME)
-            source = "Local Backup (CSV)"
-        except: pass
-    
-    # 【關鍵新增】防止崩潰的保底邏輯
-    # 如果 DataFrame 存在但缺少關鍵欄位，自動補上空字串
-    # 這能解決「KeyError」導致程式崩潰的問題
-    EXPECTED_COLS = [
-        '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
-        '主排名', '客排名', '主走勢', '客走勢',
-        '主Value', '客Value', 'xG主', 'xG客', '數據源',
-        '主勝率', '客勝率', '大2.5', 'BTTS',
-        '主賠', '客賠',
-        '主傷', '客傷', 'H2H主', 'H2H和', 'H2H客'
+            src = "Local"
+            
+    # 補全欄位
+    req = [
+        '聯賽','時間','狀態','主隊','客隊','主分','客分','xG主','xG客',
+        '主勝率','和率','客勝率','主Value','和Value','客Value',
+        '全場大0.5','全場大1.5','全場大2.5','全場大3.5','半場大0.5','半場大1.5',
+        'BTTS機率','主先入球率','亞盤主','亞盤客','亞盤盤口'
     ]
-    
-    # 如果讀進來的表是空的，或者列不全，我們確保它至少有這些列
     if not df.empty:
-        for col in EXPECTED_COLS:
-            if col not in df.columns:
-                df[col] = "" # 補上空值
-                
-    return df, source
+        for c in req:
+            if c not in df.columns: df[c] = ""
+            
+    return df, src
+
+def safe_fmt(val, is_pct=False):
+    try:
+        if val == "" or val is None: return "-"
+        f = float(str(val).replace('%',''))
+        if is_pct: return f"{int(f)}%"
+        return f"{f:.2f}"
+    except: return "-"
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V38.1 Eco)")
+    st.title("⚽ 足球AI Pro (V40.0 Max)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
         st.rerun()
 
-    df, source = load_data()
-
+    df, src = load_data()
     if df.empty:
-        st.warning(f"⚠️ 暫無數據 (來源: {source})。請確認 run_me.py 是否已運行。")
+        st.warning("⚠️ 暫無數據")
         return
 
-    st.success(f"✅ 數據來源: {source} | 場次: {len(df)} | 模式: 省流高效 (3日範圍)")
-
-    # 側邊欄篩選
-    st.sidebar.header("🔍 篩選")
-    if '聯賽' in df.columns:
+    # === 篩選區 ===
+    with st.sidebar:
+        st.header("🔍 篩選條件")
+        
+        # 狀態篩選 (新增取消/延期)
+        status_list = ["全部", "未開賽", "進行中", "完場", "取消/延期"]
+        sel_status = st.selectbox("狀態", status_list)
+        
+        # 完場日期篩選
+        sel_date = None
+        if sel_status == "完場":
+            st.info("📅 完場賽事請選擇日期")
+            sel_date = st.date_input("選擇日期", datetime.now())
+            
         leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
-        sel_lg = st.sidebar.selectbox("聯賽:", leagues)
+        sel_lg = st.selectbox("聯賽", leagues)
+
+        # 應用篩選
+        if sel_status != "全部":
+            if sel_status == "取消/延期":
+                df = df[df['狀態'].astype(str).str.contains("取消|延期")]
+            elif sel_status == "完場":
+                df = df[df['狀態'] == "完場"]
+                if sel_date:
+                    df = df[df['時間'].astype(str).str.startswith(str(sel_date))]
+            else:
+                df = df[df['狀態'] == sel_status]
+                
         if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
 
-    status_filter = st.sidebar.radio("狀態:", ["全部", "未開賽", "進行中", "完場"])
-    if status_filter == "未開賽": df = df[df['狀態'] == '未開賽']
-    elif status_filter == "進行中": df = df[df['狀態'] == '進行中']
-    elif status_filter == "完場": df = df[df['狀態'] == '完場']
+    st.caption(f"來源: {src} | 共 {len(df)} 場")
 
-    # 排序：進行中 > 未開賽 > 完場
-    df['sort_idx'] = df['狀態'].apply(lambda x: 0 if x == '進行中' else 1 if x=='未開賽' else 2)
-    df = df.sort_values(by=['sort_idx', '時間'])
+    # 排序
+    df['sort'] = df['狀態'].apply(lambda x: 0 if x=="進行中" else 1 if x=="未開賽" else 2)
+    df = df.sort_values(by=['sort', '時間'])
 
-    for index, row in df.iterrows():
-        # 讀取數值
-        prob_h = clean_pct(row.get('主勝率', 0))
-        prob_a = clean_pct(row.get('客勝率', 0))
-        prob_o25 = clean_pct(row.get('大2.5', 0))
+    # === 卡片渲染 ===
+    for idx, row in df.iterrows():
+        # 基本數據
+        ph = safe_fmt(row.get('主勝率'), True)
+        pd_prob = safe_fmt(row.get('和率'), True)
+        pa = safe_fmt(row.get('客勝率'), True)
         
-        score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) != '' and str(row.get('主分')) != 'nan' else "VS"
+        # 突發勝率 (和局)
+        val_h = "💰" if str(row.get('主Value'))=='💰' else ""
+        val_d = "💰" if str(row.get('和Value'))=='💰' else ""
+        val_a = "💰" if str(row.get('客Value'))=='💰' else ""
         
-        # 渲染標籤
-        rank_h = render_rank_badge(row.get('主排名', '?'))
-        rank_a = render_rank_badge(row.get('客排名', '?'))
-        form_h = render_form_dots(row.get('主走勢', '?????'))
-        form_a = render_form_dots(row.get('客走勢', '?????'))
+        # 亞盤 (使用 run_me.py 的盤口，或顯示賠率)
+        ah_line = row.get('亞盤盤口', '平手盤')
+        # 這裡做一個簡單的轉換顯示
+        # 如果 user 想要具體的 0/-0.5，需在 run_me.py 處理，這裡顯示值
         
-        # 修正：使用正確的變數名以匹配 HTML f-string
-        # 之前的 backup 這裡有變數名稱 mismatch
-        val_h = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('主Value')) == '💰' else ""
-        val_a = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('客Value')) == '💰' else ""
-        
-        inj_h = clean_pct(row.get('主傷', 0))
-        inj_a = clean_pct(row.get('客傷', 0))
-        inj_h_tag = f"<span class='inj-badge'>🚑 {inj_h}</span>" if inj_h > 0 else ""
-        inj_a_tag = f"<span class='inj-badge'>🚑 {inj_a}</span>" if inj_a > 0 else ""
-        
-        h2h_tag = f"<span class='h2h-badge'>⚔️ {row.get('H2H主')}-{row.get('H2H和')}-{row.get('H2H客')}</span>"
-        xg_txt = f"xG: {row.get('xG主',0)} - {row.get('xG客',0)} ({row.get('數據源','-')})"
-
-        # HTML 卡片構建 (完全保持原有結構)
-        card_html = f"<div class='compact-card'>"
-        card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
-        
-        card_html += f"<div class='content-row'>"
-        # 主客隊資訊
-        card_html += f"<div class='teams-area'>"
-        card_html += f"<div class='team-name'>{row.get('主隊','')} {rank_h} {inj_h_tag} {val_h}</div>"
-        card_html += f"<div class='team-sub'>{form_h} {h2h_tag}</div>"
-        card_html += f"<div class='team-name' style='margin-top:6px;'>{row.get('客隊','')} {rank_a} {inj_a_tag} {val_a}</div>"
-        card_html += f"<div class='team-sub'>{form_a}</div>"
-        card_html += f"</div>"
-        
-        # 比分與 xG
-        card_html += f"<div class='score-area'><span class='score-main'>{score_txt}</span><span class='xg-sub'>{xg_txt}</span></div>"
-        card_html += f"</div>"
-        
-        # 數據矩陣
-        card_html += f"<div class='grid-matrix'>"
-        card_html += f"<div class='matrix-col'><div class='matrix-header'>特化勝率%</div><div class='matrix-cell'><span class='cell-val'>主</span>{fmt_pct_display(prob_h)}</div><div class='matrix-cell'><span class='cell-val'>客</span>{fmt_pct_display(prob_a)}</div></div>"
-        card_html += f"<div class='matrix-col'><div class='matrix-header'>進球概率%</div><div class='matrix-cell'><span class='cell-val'>大2.5</span>{fmt_pct_display(prob_o25, 55, True)}</div><div class='matrix-cell'><span class='cell-val'>BTTS</span>{fmt_pct_display(row.get('BTTS',0))}</div></div>"
-        card_html += f"<div class='matrix-col'><div class='matrix-header'>賠率</div><div class='matrix-cell'><span class='cell-val'>主</span><span style='color:#00e5ff'>{format_odds(row.get('主賠'))}</span></div><div class='matrix-cell'><span class='cell-val'>客</span><span style='color:#00e5ff'>{format_odds(row.get('客賠'))}</span></div></div>"
-        card_html += f"<div class='matrix-col'><div class='matrix-header'>預期</div><div class='matrix-cell'><span class='cell-val'>主xG</span><span class='cell-val'>{row.get('xG主')}</span></div><div class='matrix-cell'><span class='cell-val'>客xG</span><span class='cell-val'>{row.get('xG客')}</span></div></div>"
-        card_html += f"</div>" # End Matrix
-
-        card_html += f"</div>"
-        st.markdown(card_html, unsafe_allow_html=True)
+        # HTML 構造
+        html = f"""
+<div class="compact-card">
+    <div class="match-header">
+        <span>{row.get('時間','')} | {row.get('聯賽','')}</span>
+        <span class="{ 'status-live' if row.get('狀態')=='進行中' else 'status-fin' }">{row.get('狀態','')}</span>
+    </div>
+    
+    <div class="team-row">
+        <span class="team-name">{row.get('主隊','')} {val_h}</span>
+        <span class="score">{row.get('主分','')}</span>
+    </div>
+    <div class="team-row">
+        <span class="team-name">{row.get('客隊','')} {val_a}</span>
+        <span class="score">{row.get('客分','')}</span>
+    </div>
+    
+    <div class="grid-box">
+        <div class="grid-item">
+            <span class="grid-label">主勝率</span>
+            <span class="grid-val { 'high-val' if int(str(ph).replace('%',''))>50 else '' }">{ph}</span>
+        </div>
+        <div class="grid-item">
+            <span class="grid-label">和率</span>
+            <span class="grid-val">{pd_prob} {val_d}</span>
+        </div>
+        <div class="grid-item">
+            <span class="grid-label">客勝率</span>
+            <span class="grid-val { 'high-val' if int(str(pa).replace('%',''))>50 else '' }">{pa}</span>
+        </div>
+        <div class="grid-item">
+            <span class="grid-label">BTTS</span>
+            <span class="grid-val">{safe_fmt(row.get('BTTS機率'), True)}</span>
+        </div>
+        <div class="grid-item">
+            <span class="grid-label">主先入</span>
+            <span class="grid-val">{safe_fmt(row.get('主先入球率'), True)}</span>
+        </div>
+    </div>
+    
+    <div class="ah-box">
+        <span>亞盤主: <span class="ah-val">{safe_fmt(row.get('亞盤主'))}</span></span>
+        <span>盤口: <span style="color:#fff">{ah_line}</span></span>
+        <span>亞盤客: <span class="ah-val">{safe_fmt(row.get('亞盤客'))}</span></span>
+    </div>
+    
+    <table class="ou-table">
+        <tr class="ou-head"><td>盤口</td><td>0.5</td><td>1.5</td><td>2.5</td><td>3.5</td></tr>
+        <tr>
+            <td>全場大</td>
+            <td>{safe_fmt(row.get('全場大0.5'))}</td>
+            <td>{safe_fmt(row.get('全場大1.5'))}</td>
+            <td>{safe_fmt(row.get('全場大2.5'))}</td>
+            <td>{safe_fmt(row.get('全場大3.5'))}</td>
+        </tr>
+        <tr>
+            <td>半場大</td>
+            <td>{safe_fmt(row.get('半場大0.5'))}</td>
+            <td>{safe_fmt(row.get('半場大1.5'))}</td>
+            <td colspan="2" style="color:#555">-</td>
+        </tr>
+    </table>
+    
+    <div style="text-align:right; font-size:0.7rem; color:#666; margin-top:5px;">
+        xG: {row.get('xG主')} - {row.get('xG客')} (源:{row.get('數據源')})
+    </div>
+</div>
+"""
+        st.markdown(html, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
