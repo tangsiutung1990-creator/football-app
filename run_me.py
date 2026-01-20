@@ -8,6 +8,7 @@ import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import sys
+import re
 
 # ================= 設定區 =================
 API_KEY = '6bf59594223b07234f75a8e2e2de5178' 
@@ -15,7 +16,7 @@ BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-# 完整欄位定義 (確保 Google Sheet 標題永遠正確)
+# 完整欄位定義
 FULL_COLUMNS = [
     '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
     '主排名', '客排名', '主走勢', '客走勢',
@@ -49,12 +50,10 @@ def call_api(endpoint, params=None):
         return None
     except: return None
 
-# ================= 亞盤格式轉換工具 (核心功能) =================
+# ================= 亞盤格式轉換工具 =================
 def format_ah_line(val_str):
     """將 API 的盤口數值 (如 -0.25) 轉換為顯示格式 (如 0/-0.5)"""
     try:
-        # 有些 API 返回 "Home -0.25"，先提取數字
-        import re
         nums = re.findall(r"[-+]?\d*\.\d+|[-+]?\d+", str(val_str))
         if not nums: return str(val_str)
         
@@ -62,13 +61,11 @@ def format_ah_line(val_str):
         
         if f == 0: return "平手"
         
-        # 處理 .25 和 .75 的情況
         rem = abs(f) % 1
         base = int(abs(f))
         sign = "-" if f < 0 else "+"
         
         if rem == 0.25:
-            # 例如 -0.25 -> 0/-0.5, +0.25 -> 0/+0.5
             low = base
             high = base + 0.5
             s_low = f"{sign}{low}" if low != 0 else "0"
@@ -76,7 +73,6 @@ def format_ah_line(val_str):
             return f"{s_low}/{s_high}"
             
         elif rem == 0.75:
-            # 例如 -0.75 -> -0.5/-1
             low = base + 0.5
             high = base + 1
             return f"{sign}{low}/{sign}{high}"
@@ -104,39 +100,36 @@ def get_detailed_odds(fixture_id):
     
     try:
         bks = data['response'][0]['bookmakers']
-        # 優先找 Bet365(1), 1xBet(6)
         target = next((b for b in bks if b['id'] in [1, 6, 8, 2]), bks[0] if bks else None)
         
         if target:
             for bet in target['bets']:
-                # ID 1: 獨贏 (Match Winner)
+                # ID 1: 獨贏
                 if bet['id'] == 1:
                     for v in bet['values']:
                         if v['value']=='Home': res['h'] = float(v['odd'])
                         if v['value']=='Draw': res['d'] = float(v['odd'])
                         if v['value']=='Away': res['a'] = float(v['odd'])
                 
-                # ID 4: 亞盤 (Asian Handicap)
+                # ID 4: 亞盤
                 elif bet['id'] == 4:
-                    # 抓取第一組盤口
                     if len(bet['values']) > 0:
-                        # API 結構通常是 value="Home -0.5", odd=1.9
                         label = bet['values'][0]['value']
-                        res['ah_str'] = format_ah_line(label) # 格式化盤口
+                        res['ah_str'] = format_ah_line(label)
                         res['ah_h'] = float(bet['values'][0]['odd'])
                         if len(bet['values']) > 1: res['ah_a'] = float(bet['values'][1]['odd'])
                         
-                # ID 5: 全場大小 (Goals Over/Under)
+                # ID 5: 全場大小
                 elif bet['id'] == 5:
                     for v in bet['values']:
-                        val_str = v['value'] # "Over 2.5"
+                        val_str = v['value']
                         odd = float(v['odd'])
                         if "Over 0.5" in val_str: res['o05'] = odd
                         if "Over 1.5" in val_str: res['o15'] = odd
                         if "Over 2.5" in val_str: res['o25'] = odd
                         if "Over 3.5" in val_str: res['o35'] = odd
 
-                # ID 6: 半場大小 (Goals Over/Under First Half)
+                # ID 6: 半場大小
                 elif bet['id'] == 6:
                     for v in bet['values']:
                         val_str = v['value']
@@ -148,10 +141,6 @@ def get_detailed_odds(fixture_id):
                 elif bet['id'] == 8:
                     for v in bet['values']:
                         if v['value'] == 'Yes': res['btts_yes'] = float(v['odd'])
-
-                # 嘗試抓第一球 (如果有的話，沒 ID 46 則略過)
-                # 這裡簡單處理，如果找不到就不顯示
-                pass
 
     except: pass
     return res
@@ -182,7 +171,8 @@ def get_league_standings(league_id, season):
     return standings_map
 
 def get_injuries(fix_id, h_name, a_name):
-    data = call_api('injuries', {'fixture': fixture_id})
+    # 【修復】這裡的參數名稱已經修正為 fix_id
+    data = call_api('injuries', {'fixture': fix_id})
     h=0; a=0
     if data and data.get('response'):
         for i in data['response']:
@@ -206,13 +196,11 @@ def odd_to_prob(odd):
     if odd and odd > 1: return round((1/odd)*100)
     return 0
 
-# xG 模擬計算 (修復 xG 為 0 的問題)
+# xG 模擬計算
 def calc_xg_sim(h_rank, a_rank):
-    # 基礎 xG
     base_h = 1.45
     base_a = 1.15
-    # 排名差 1 位，xG 影響 0.04
-    diff = a_rank - h_rank # 正數代表主隊排名高
+    diff = a_rank - h_rank 
     xg_h = base_h + (diff * 0.04)
     xg_a = base_a - (diff * 0.04)
     return max(0.2, round(xg_h, 2)), max(0.2, round(xg_a, 2))
@@ -233,15 +221,13 @@ def calc_probs(xg_h, xg_a):
 
 # ================= 主程式 =================
 def main():
-    print("🚀 V40.0 Ultimate Data Update (Full Features)")
+    print("🚀 V40.1 Ultimate Data Update (Fix Applied)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
-    # 3天範圍，覆蓋足夠
     from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     
-    # 自動年份
     cur_year = utc_now.year
     season = cur_year if utc_now.month > 7 else cur_year - 1
     
@@ -259,7 +245,6 @@ def main():
             status = item['fixture']['status']['short']
             t_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
             
-            # 狀態對應
             status_map = {
                 'FT': '完場', 'AET': '完場', 'PEN': '完場',
                 'NS': '未開賽',
@@ -271,36 +256,31 @@ def main():
             h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
             h_name = item['teams']['home']['name']; a_name = item['teams']['away']['name']
             
-            # 抓取數據 (取消/延期不抓)
             odds = {'h':0,'d':0,'a':0}
             inj_h=0; inj_a=0
             
             if "取消" not in status_txt and "延期" not in status_txt:
                 odds = get_detailed_odds(fix_id)
+                # 僅在未完場時抓取傷病，避免浪費額度
                 if status_txt != '完場':
                     inj_h, inj_a = get_injuries(fix_id, h_name, a_name)
 
             h2h_h, h2h_d, h2h_a = get_h2h(h_id, a_id)
             
-            # 排名與 xG
             h_rank = standings.get(h_id, {}).get('rank', 10)
             a_rank = standings.get(a_id, {}).get('rank', 10)
             
-            # 使用模擬算法填補 xG，避免數據缺失
             xg_h, xg_a = calc_xg_sim(int(h_rank) if str(h_rank).isdigit() else 10, 
                                      int(a_rank) if str(a_rank).isdigit() else 10)
 
-            # 勝率計算 (含和局)
             ph, pd_prob, pa = calc_probs(xg_h, xg_a)
             
-            # Value 計算
             val_h = "💰" if odds['h'] > 0 and (ph/100 > 1/odds['h']) else ""
             val_d = "💰" if odds['d'] > 0 and (pd_prob/100 > 1/odds['d']) else ""
             val_a = "💰" if odds['a'] > 0 and (pa/100 > 1/odds['a']) else ""
             
-            # 亞盤盤口 (如果 API 沒抓到字串，顯示賠率狀態)
             ah_display = odds.get('ah_str', '')
-            if not ah_display and odds.get('ah_h') > 0: ah_display = "有盤口"
+            if not ah_display and odds.get('ah_h', 0) > 0: ah_display = "有盤口"
 
             data_list.append({
                 '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
@@ -330,7 +310,6 @@ def main():
             })
             time.sleep(0.1)
 
-    # 數據存檔 (確保表頭正確)
     if data_list:
         df = pd.DataFrame(data_list)
     else:
@@ -339,7 +318,6 @@ def main():
     df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
     print(f"Backup saved: {len(df)} rows")
     
-    # 上傳 Google Sheet
     sheet = get_google_spreadsheet()
     if sheet:
         try:
