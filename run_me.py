@@ -16,7 +16,7 @@ BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-# 完整欄位定義
+# 【核心】這是 CSV 的標準欄位順序，run_me 和 app 必須完全一致
 FULL_COLUMNS = [
     '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
     '主排名', '客排名', '主走勢', '客走勢',
@@ -32,9 +32,12 @@ FULL_COLUMNS = [
 ]
 
 LEAGUE_ID_MAP = {
-    39: '英超', 40: '英冠', 140: '西甲', 135: '意甲', 78: '德甲', 61: '法甲', 
-    88: '荷甲', 94: '葡超', 179: '蘇超', 98: '日職', 292: '韓K1', 
-    188: '澳職', 253: '美職', 2: '歐聯', 3: '歐霸'
+    39: '英超', 40: '英冠', 41: '英甲', 140: '西甲', 141: '西乙',
+    135: '意甲', 78: '德甲', 61: '法甲', 88: '荷甲', 94: '葡超',
+    144: '比甲', 179: '蘇超', 203: '土超', 119: '丹超', 113: '瑞典超',
+    103: '挪超', 98: '日職', 292: '韓K1', 188: '澳職', 253: '美職',
+    262: '墨超', 71: '巴甲', 128: '阿甲', 265: '智甲',
+    2: '歐聯', 3: '歐霸'
 }
 
 def call_api(endpoint, params=None):
@@ -60,12 +63,9 @@ def format_ah_line(val_str):
     except: return str(val_str)
 
 def get_detailed_odds(fixture_id):
-    # 初始化所有欄位，確保不為 None
     res = {'h':0,'d':0,'a':0,'ah_h':0,'ah_a':0,'ah_str':'','o05':0,'o15':0,'o25':0,'o35':0,'ht_o05':0,'ht_o15':0,'btts_yes':0,'first_h':0}
     data = call_api('odds', {'fixture': fixture_id})
-    
     if not data or not data.get('response'): return res
-    
     try:
         for bk in data['response'][0]['bookmakers']:
             for bet in bk['bets']:
@@ -169,11 +169,10 @@ def calc_probs(xg_h, xg_a):
     return h_win*100, draw*100, a_win*100
 
 def main():
-    print("🚀 V40.7 DIAGNOSTIC MODE (Single Match Stop)")
+    print("🚀 V40.7 TEST MODE (1 Match + Forced Schema)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
-    # 掃描範圍
     from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     season = utc_now.year if utc_now.month > 7 else utc_now.year - 1
@@ -201,7 +200,6 @@ def main():
                 h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
                 h_name = item['teams']['home']['name']; a_name = item['teams']['away']['name']
                 
-                # 初始化變數
                 odds = {'h':0,'d':0,'a':0}
                 inj_h=0; inj_a=0
                 
@@ -223,9 +221,9 @@ def main():
                 ah_display = odds.get('ah_str', '')
                 if not ah_display and odds.get('ah_h', 0) > 0: ah_display = "有盤口"
 
-                print(f"   MATCH FOUND: {h_name} vs {a_name}")
-                print(f"   DEBUG ODDS: {odds}")
+                print(f"✅ Found match: {h_name} vs {a_name} (Odds H:{odds.get('h')})")
 
+                # 構建單行數據
                 data_list.append({
                     '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
                     '主分': item['goals']['home'] if item['goals']['home'] is not None else "",
@@ -244,7 +242,6 @@ def main():
                     '主傷': inj_h, '客傷': inj_a, 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
                 })
                 
-                print(f"✅ Backup saved: 1 rows (Test Mode)")
                 found_one = True 
                 break 
 
@@ -253,20 +250,23 @@ def main():
                 continue
             time.sleep(0.1)
 
-    # 無論有無數據，強制生成空表以防崩潰
+    # 【核心修復】使用 reindex 強制對齊所有欄位
+    # 這能確保即使數據有缺漏，也會填上 NaN，保證 CSV 結構正確
     if data_list:
         df = pd.DataFrame(data_list)
+        df = df.reindex(columns=FULL_COLUMNS) # 強制排序
     else:
         df = pd.DataFrame(columns=FULL_COLUMNS)
-        print("⚠️ No data found, saving empty template.")
+        print("⚠️ No data found.")
         
     df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
+    print(f"Backup saved: {len(df)} rows")
     
     sheet = get_google_spreadsheet()
     if sheet:
         try:
             sheet.sheet1.clear()
-            df_str = df.fillna('').astype(str)
+            df_str = df.fillna('').astype(str) # 轉字串防報錯
             if df_str.empty:
                 sheet.sheet1.update(range_name='A1', values=[FULL_COLUMNS])
             else:
