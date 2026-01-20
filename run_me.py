@@ -40,7 +40,6 @@ LEAGUE_ID_MAP = {
     2: '歐聯', 3: '歐霸'
 }
 
-# ================= API 連接 =================
 def call_api(endpoint, params=None):
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-apisports-key': API_KEY}
     url = f"{BASE_URL}/{endpoint}"
@@ -50,7 +49,6 @@ def call_api(endpoint, params=None):
         return None
     except: return None
 
-# ================= 亞盤格式轉換 =================
 def format_ah_line(val_str):
     try:
         nums = re.findall(r"[-+]?\d*\.\d+|[-+]?\d+", str(val_str))
@@ -69,65 +67,52 @@ def format_ah_line(val_str):
         return f"{sign}{base}"
     except: return str(val_str)
 
-# ================= 詳細賠率抓取 =================
 def get_detailed_odds(fixture_id):
     data = call_api('odds', {'fixture': fixture_id})
-    res = {
-        'h': 0, 'd': 0, 'a': 0,
-        'ah_h': 0, 'ah_a': 0, 'ah_str': '',
-        'o05': 0, 'o15': 0, 'o25': 0, 'o35': 0,
-        'ht_o05': 0, 'ht_o15': 0,
-        'btts_yes': 0, 'first_h': 0
-    }
+    res = {'h':0,'d':0,'a':0,'ah_h':0,'ah_a':0,'ah_str':'','o05':0,'o15':0,'o25':0,'o35':0,'ht_o05':0,'ht_o15':0,'btts_yes':0,'first_h':0}
     
     if not data or not data.get('response'): return res
     
     try:
-        # 遍歷所有博彩公司，填補空缺
-        bookmakers = data['response'][0]['bookmakers']
-        for bk in bookmakers:
+        # 遍歷所有博彩公司，拼湊數據
+        for bk in data['response'][0]['bookmakers']:
             for bet in bk['bets']:
-                if bet['id'] == 1 and res['h'] == 0: # 獨贏
+                if bet['id'] == 1 and res['h'] == 0:
                     for v in bet['values']:
                         if v['value']=='Home': res['h'] = float(v['odd'])
                         if v['value']=='Draw': res['d'] = float(v['odd'])
                         if v['value']=='Away': res['a'] = float(v['odd'])
-                elif bet['id'] == 4 and res['ah_str'] == '': # 亞盤
+                elif bet['id'] == 4 and res['ah_str'] == '':
                     if len(bet['values']) > 0:
-                        label = bet['values'][0]['value']
-                        res['ah_str'] = format_ah_line(label)
+                        res['ah_str'] = format_ah_line(bet['values'][0]['value'])
                         res['ah_h'] = float(bet['values'][0]['odd'])
                         if len(bet['values']) > 1: res['ah_a'] = float(bet['values'][1]['odd'])
-                elif bet['id'] == 5: # 全場大小
+                elif bet['id'] == 5:
                     for v in bet['values']:
-                        val_str = v['value']
-                        odd = float(v['odd'])
-                        if "Over 0.5" in val_str and res['o05'] == 0: res['o05'] = odd
-                        if "Over 1.5" in val_str and res['o15'] == 0: res['o15'] = odd
-                        if "Over 2.5" in val_str and res['o25'] == 0: res['o25'] = odd
-                        if "Over 3.5" in val_str and res['o35'] == 0: res['o35'] = odd
-                elif bet['id'] == 6: # 半場大小
+                        val = v['value']; odd = float(v['odd'])
+                        if "Over 0.5" in val and res['o05']==0: res['o05'] = odd
+                        if "Over 1.5" in val and res['o15']==0: res['o15'] = odd
+                        if "Over 2.5" in val and res['o25']==0: res['o25'] = odd
+                        if "Over 3.5" in val and res['o35']==0: res['o35'] = odd
+                elif bet['id'] == 6:
                     for v in bet['values']:
-                        val_str = v['value']
-                        odd = float(v['odd'])
-                        if "Over 0.5" in val_str and res['ht_o05'] == 0: res['ht_o05'] = odd
-                        if "Over 1.5" in val_str and res['ht_o15'] == 0: res['ht_o15'] = odd
-                elif bet['id'] == 8 and res['btts_yes'] == 0: # BTTS
+                        val = v['value']; odd = float(v['odd'])
+                        if "Over 0.5" in val and res['ht_o05']==0: res['ht_o05'] = odd
+                        if "Over 1.5" in val and res['ht_o15']==0: res['ht_o15'] = odd
+                elif bet['id'] == 8 and res['btts_yes']==0:
                     for v in bet['values']:
                         if v['value'] == 'Yes': res['btts_yes'] = float(v['odd'])
-                elif bet['id'] == 46 and res['first_h'] == 0: # 第一球
+                elif bet['id'] == 46 and res['first_h']==0:
                     for v in bet['values']:
                         if v['value'] == 'Home': res['first_h'] = float(v['odd'])
     except: pass
     return res
 
-# ================= 輔助工具 =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
         if "GCP_SERVICE_ACCOUNT" in os.environ:
-             creds_dict = eval(os.environ["GCP_SERVICE_ACCOUNT"])
-             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+             creds = ServiceAccountCredentials.from_json_keyfile_dict(eval(os.environ["GCP_SERVICE_ACCOUNT"]), scope)
         elif os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         else: return None
@@ -191,23 +176,20 @@ def calc_probs(xg_h, xg_a):
             else: draw += p
     return h_win*100, draw*100, a_win*100
 
-# ================= 主程式 =================
 def main():
-    print("🚀 V40.5 TEST MODE (Single Match Only)")
+    print("🚀 V40.6 TEST MODE (Single Match with Diagnostic)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
-    # 掃描範圍
     from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
     season = utc_now.year if utc_now.month > 7 else utc_now.year - 1
     
     data_list = []
-    found_one = False # 標記是否已經找到一場
+    found_one = False 
 
     for lg_id, lg_name in LEAGUE_ID_MAP.items():
-        if found_one: break # 如果已經找到一場，跳出聯賽循環
-
+        if found_one: break 
         print(f"Checking {lg_name}...")
         standings = get_league_standings(lg_id, season)
         
@@ -235,7 +217,6 @@ def main():
                         inj_h, inj_a = get_injuries(fix_id, h_name, a_name)
 
                 h2h_h, h2h_d, h2h_a = get_h2h(h_id, a_id)
-                
                 h_rank = standings.get(h_id, {}).get('rank', 10)
                 a_rank = standings.get(a_id, {}).get('rank', 10)
                 xg_h, xg_a = calc_xg_sim(int(h_rank) if str(h_rank).isdigit() else 10, int(a_rank) if str(a_rank).isdigit() else 10)
@@ -247,6 +228,12 @@ def main():
                 
                 ah_display = odds.get('ah_str', '')
                 if not ah_display and odds.get('ah_h', 0) > 0: ah_display = "有盤口"
+
+                # === 診斷輸出 ===
+                print(f"📊 診斷數據: {h_name} vs {a_name}")
+                print(f"   賠率: 主{odds.get('h')} 和{odds.get('d')} 客{odds.get('a')}")
+                print(f"   亞盤: {ah_display} ({odds.get('ah_h')}/{odds.get('ah_a')})")
+                print(f"   大小: 2.5球賠率 {odds.get('o25')}")
 
                 data_list.append({
                     '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
@@ -266,14 +253,13 @@ def main():
                     '主傷': inj_h, '客傷': inj_a, 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
                 })
                 
-                print(f"✅ Success: {h_name} vs {a_name} (Stopping now for test)")
-                found_one = True # 標記已找到
-                break # 跳出 fixture 循環
+                print(f"✅ Backup saved: 1 rows (Test Mode)")
+                found_one = True 
+                break 
 
             except Exception as e:
                 print(f"⚠️ Skip: {e}")
                 continue
-                
             time.sleep(0.1)
 
     if data_list:
@@ -283,7 +269,6 @@ def main():
         print("⚠️ No data found.")
         
     df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
-    print(f"Backup saved: {len(df)} rows")
     
     sheet = get_google_spreadsheet()
     if sheet:
