@@ -16,7 +16,7 @@ BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-# 【核心】這是 CSV 的標準欄位順序，run_me 和 app 必須完全一致
+# 完整標準欄位 (App 將依賴這些順序)
 FULL_COLUMNS = [
     '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
     '主排名', '客排名', '主走勢', '客走勢',
@@ -169,7 +169,7 @@ def calc_probs(xg_h, xg_a):
     return h_win*100, draw*100, a_win*100
 
 def main():
-    print("🚀 V40.7 TEST MODE (1 Match + Forced Schema)")
+    print("🚀 V40.8 TEST MODE (Force String + 1 Match)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
@@ -221,9 +221,8 @@ def main():
                 ah_display = odds.get('ah_str', '')
                 if not ah_display and odds.get('ah_h', 0) > 0: ah_display = "有盤口"
 
-                print(f"✅ Found match: {h_name} vs {a_name} (Odds H:{odds.get('h')})")
+                print(f"✅ OK: {h_name} v {a_name} | Odds: {odds['h']}/{odds['a']} | AH: {ah_display}")
 
-                # 構建單行數據
                 data_list.append({
                     '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
                     '主分': item['goals']['home'] if item['goals']['home'] is not None else "",
@@ -241,23 +240,18 @@ def main():
                     '亞盤主': odds.get('ah_h', 0), '亞盤客': odds.get('ah_a', 0), '亞盤盤口': ah_display,
                     '主傷': inj_h, '客傷': inj_a, 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
                 })
-                
                 found_one = True 
                 break 
-
-            except Exception as e:
-                print(f"⚠️ Skip: {e}")
-                continue
+            except: continue
             time.sleep(0.1)
 
-    # 【核心修復】使用 reindex 強制對齊所有欄位
-    # 這能確保即使數據有缺漏，也會填上 NaN，保證 CSV 結構正確
     if data_list:
         df = pd.DataFrame(data_list)
-        df = df.reindex(columns=FULL_COLUMNS) # 強制排序
+        # 強制重置索引和列
+        df = df.reindex(columns=FULL_COLUMNS)
     else:
         df = pd.DataFrame(columns=FULL_COLUMNS)
-        print("⚠️ No data found.")
+        print("⚠️ No data.")
         
     df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
     print(f"Backup saved: {len(df)} rows")
@@ -266,13 +260,14 @@ def main():
     if sheet:
         try:
             sheet.sheet1.clear()
-            df_str = df.fillna('').astype(str) # 轉字串防報錯
+            # 【關鍵】強制全部轉為 string，防止 gspread 誤判 0 為空
+            df_str = df.fillna('').astype(str)
             if df_str.empty:
                 sheet.sheet1.update(range_name='A1', values=[FULL_COLUMNS])
             else:
                 sheet.sheet1.update(range_name='A1', values=[df_str.columns.values.tolist()] + df_str.values.tolist())
             print("✅ Google Sheet Upload success")
-        except: print("❌ Upload failed")
+        except Exception as e: print(f"❌ Upload failed: {e}")
 
 if __name__ == "__main__":
     main()
