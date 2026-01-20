@@ -61,10 +61,7 @@ def format_ah_line(val_str):
         base = int(abs(f))
         sign = "-" if f < 0 else "+"
         if rem == 0.25:
-            low = base
-            s_low = f"{sign}{low}" if low != 0 else "0"
-            s_high = f"{sign}{base + 0.5}"
-            return f"{s_low}/{s_high}"
+            return f"{sign}{base}/{sign}{base + 0.5}" if base != 0 else f"0/{sign}0.5"
         elif rem == 0.75:
             return f"{sign}{base + 0.5}/{sign}{base + 1}"
         elif rem == 0.5:
@@ -72,7 +69,7 @@ def format_ah_line(val_str):
         return f"{sign}{base}"
     except: return str(val_str)
 
-# ================= 詳細賠率抓取 (增強版) =================
+# ================= 詳細賠率抓取 =================
 def get_detailed_odds(fixture_id):
     data = call_api('odds', {'fixture': fixture_id})
     res = {
@@ -86,29 +83,22 @@ def get_detailed_odds(fixture_id):
     if not data or not data.get('response'): return res
     
     try:
-        # 策略：遍歷所有博彩公司，填補空缺的數據
-        # 這能解決「某家公司沒開亞盤就顯示空白」的問題
+        # 遍歷所有博彩公司，填補空缺
         bookmakers = data['response'][0]['bookmakers']
-        
         for bk in bookmakers:
             for bet in bk['bets']:
-                # ID 1: 獨贏 (優先取 Bet365(1) 或 1xBet(6) 的，如果已經有了就不覆蓋，除非是 0)
-                if bet['id'] == 1 and res['h'] == 0:
+                if bet['id'] == 1 and res['h'] == 0: # 獨贏
                     for v in bet['values']:
                         if v['value']=='Home': res['h'] = float(v['odd'])
                         if v['value']=='Draw': res['d'] = float(v['odd'])
                         if v['value']=='Away': res['a'] = float(v['odd'])
-                
-                # ID 4: 亞盤 (只要找到一個有盤口的就用)
-                elif bet['id'] == 4 and res['ah_str'] == '':
+                elif bet['id'] == 4 and res['ah_str'] == '': # 亞盤
                     if len(bet['values']) > 0:
                         label = bet['values'][0]['value']
                         res['ah_str'] = format_ah_line(label)
                         res['ah_h'] = float(bet['values'][0]['odd'])
                         if len(bet['values']) > 1: res['ah_a'] = float(bet['values'][1]['odd'])
-                        
-                # ID 5: 全場大小 (累計抓取)
-                elif bet['id'] == 5:
+                elif bet['id'] == 5: # 全場大小
                     for v in bet['values']:
                         val_str = v['value']
                         odd = float(v['odd'])
@@ -116,25 +106,18 @@ def get_detailed_odds(fixture_id):
                         if "Over 1.5" in val_str and res['o15'] == 0: res['o15'] = odd
                         if "Over 2.5" in val_str and res['o25'] == 0: res['o25'] = odd
                         if "Over 3.5" in val_str and res['o35'] == 0: res['o35'] = odd
-
-                # ID 6: 半場大小
-                elif bet['id'] == 6:
+                elif bet['id'] == 6: # 半場大小
                     for v in bet['values']:
                         val_str = v['value']
                         odd = float(v['odd'])
                         if "Over 0.5" in val_str and res['ht_o05'] == 0: res['ht_o05'] = odd
                         if "Over 1.5" in val_str and res['ht_o15'] == 0: res['ht_o15'] = odd
-                        
-                # ID 8: BTTS
-                elif bet['id'] == 8 and res['btts_yes'] == 0:
+                elif bet['id'] == 8 and res['btts_yes'] == 0: # BTTS
                     for v in bet['values']:
                         if v['value'] == 'Yes': res['btts_yes'] = float(v['odd'])
-                        
-                # ID 46: 第一球
-                elif bet['id'] == 46 and res['first_h'] == 0:
+                elif bet['id'] == 46 and res['first_h'] == 0: # 第一球
                     for v in bet['values']:
                         if v['value'] == 'Home': res['first_h'] = float(v['odd'])
-
     except: pass
     return res
 
@@ -164,7 +147,6 @@ def get_league_standings(league_id, season):
     return standings_map
 
 def get_injuries(fix_id, h_name, a_name):
-    # 【已修復】使用正確的參數名稱 fix_id
     data = call_api('injuries', {'fixture': fix_id})
     h=0; a=0
     if data and data.get('response'):
@@ -211,20 +193,21 @@ def calc_probs(xg_h, xg_a):
 
 # ================= 主程式 =================
 def main():
-    print("🚀 V40.4 Ultimate Data Update (Robust Mode)")
+    print("🚀 V40.5 TEST MODE (Single Match Only)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
-    # 掃描前後 3 天
+    # 掃描範圍
     from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    
-    cur_year = utc_now.year
-    season = cur_year if utc_now.month > 7 else cur_year - 1
+    season = utc_now.year if utc_now.month > 7 else utc_now.year - 1
     
     data_list = []
+    found_one = False # 標記是否已經找到一場
 
     for lg_id, lg_name in LEAGUE_ID_MAP.items():
+        if found_one: break # 如果已經找到一場，跳出聯賽循環
+
         print(f"Checking {lg_name}...")
         standings = get_league_standings(lg_id, season)
         
@@ -232,18 +215,12 @@ def main():
         if not fixtures or not fixtures.get('response'): continue
         
         for item in fixtures['response']:
-            # 【容錯層】單場錯誤不影響整體
             try:
                 fix_id = item['fixture']['id']
                 status = item['fixture']['status']['short']
                 t_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
                 
-                status_map = {
-                    'FT': '完場', 'AET': '完場', 'PEN': '完場',
-                    'NS': '未開賽',
-                    '1H': '進行中', 'HT': '進行中', '2H': '進行中', 'LIVE': '進行中',
-                    'PST': '延期', 'CANC': '取消', 'ABD': '取消'
-                }
+                status_map = {'FT':'完場', 'NS':'未開賽', '1H':'進行中', 'HT':'進行中', '2H':'進行中', 'LIVE':'進行中', 'PST':'延期', 'CANC':'取消', 'ABD':'取消'}
                 status_txt = status_map.get(status, status)
 
                 h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
@@ -255,17 +232,13 @@ def main():
                 if "取消" not in status_txt and "延期" not in status_txt:
                     odds = get_detailed_odds(fix_id)
                     if status_txt != '完場':
-                        # 【關鍵修復】這裡使用了正確的 fix_id
                         inj_h, inj_a = get_injuries(fix_id, h_name, a_name)
 
                 h2h_h, h2h_d, h2h_a = get_h2h(h_id, a_id)
                 
                 h_rank = standings.get(h_id, {}).get('rank', 10)
                 a_rank = standings.get(a_id, {}).get('rank', 10)
-                
-                xg_h, xg_a = calc_xg_sim(int(h_rank) if str(h_rank).isdigit() else 10, 
-                                         int(a_rank) if str(a_rank).isdigit() else 10)
-
+                xg_h, xg_a = calc_xg_sim(int(h_rank) if str(h_rank).isdigit() else 10, int(a_rank) if str(a_rank).isdigit() else 10)
                 ph, pd_prob, pa = calc_probs(xg_h, xg_a)
                 
                 val_h = "💰" if odds['h'] > 0 and (ph/100 > 1/odds['h']) else ""
@@ -282,38 +255,32 @@ def main():
                     '主排名': h_rank, '客排名': a_rank,
                     '主走勢': standings.get(h_id, {}).get('form', ''),
                     '客走勢': standings.get(a_id, {}).get('form', ''),
-                    
                     '主Value': val_h, '和Value': val_d, '客Value': val_a,
                     'xG主': xg_h, 'xG客': xg_a, '數據源': 'AI模擬',
-                    
                     '主勝率': int(ph), '和率': int(pd_prob), '客勝率': int(pa),
-                    
-                    'BTTS機率': odd_to_prob(odds.get('btts_yes', 0)),
-                    '主先入球率': odd_to_prob(odds.get('first_h', 0)),
-                    
-                    '全場大0.5': odds.get('o05', 0), '全場大1.5': odds.get('o15', 0),
-                    '全場大2.5': odds.get('o25', 0), '全場大3.5': odds.get('o35', 0),
+                    'BTTS機率': odd_to_prob(odds.get('btts_yes', 0)), '主先入球率': odd_to_prob(odds.get('first_h', 0)),
+                    '全場大0.5': odds.get('o05', 0), '全場大1.5': odds.get('o15', 0), '全場大2.5': odds.get('o25', 0), '全場大3.5': odds.get('o35', 0),
                     '半場大0.5': odds.get('ht_o05', 0), '半場大1.5': odds.get('ht_o15', 0),
-                    
                     '主賠': odds['h'], '和賠': odds['d'], '客賠': odds['a'],
                     '亞盤主': odds.get('ah_h', 0), '亞盤客': odds.get('ah_a', 0), '亞盤盤口': ah_display,
-                    
-                    '主傷': inj_h, '客傷': inj_a,
-                    'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
+                    '主傷': inj_h, '客傷': inj_a, 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
                 })
+                
+                print(f"✅ Success: {h_name} vs {a_name} (Stopping now for test)")
+                found_one = True # 標記已找到
+                break # 跳出 fixture 循環
+
             except Exception as e:
-                # 即使某一場錯了，也不要停，繼續下一場
-                print(f"⚠️ Skip match {item.get('fixture',{}).get('id')}: {e}")
+                print(f"⚠️ Skip: {e}")
                 continue
                 
             time.sleep(0.1)
 
-    # 【強制生成】確保 CSV 和 Google Sheet 永遠有內容，防止 App 崩潰
     if data_list:
         df = pd.DataFrame(data_list)
     else:
         df = pd.DataFrame(columns=FULL_COLUMNS)
-        print("⚠️ No data collected, saving empty structure.")
+        print("⚠️ No data found.")
         
     df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
     print(f"Backup saved: {len(df)} rows")
@@ -328,7 +295,7 @@ def main():
             else:
                 sheet.sheet1.update(range_name='A1', values=[df_str.columns.values.tolist()] + df_str.values.tolist())
             print("✅ Google Sheet Upload success")
-        except Exception as e: print(f"❌ Upload failed: {e}")
+        except: print("❌ Upload failed")
 
 if __name__ == "__main__":
     main()
