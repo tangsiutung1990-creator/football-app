@@ -11,7 +11,7 @@ CSV_FILENAME = "football_data_backup.csv"
 
 st.set_page_config(page_title="足球AI Pro (V38.1 Eco)", page_icon="⚽", layout="wide")
 
-# ================= CSS 優化 (暗黑風格 - 保持原樣) =================
+# ================= CSS 優化 (暗黑風格) =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
@@ -117,26 +117,22 @@ def load_data():
     # 1. 優先嘗試 Google Sheet
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        # 兼容 GitHub Actions (Secrets) 與本地 key.json
-        if "gcp_service_account" in st.secrets:
-             creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
-        elif os.path.exists("key.json"):
+        if os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         else:
-            return pd.DataFrame(), "無 Key"
-
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         source = "Google Cloud"
         
-        # 簡單檢查數據
+        # 簡單檢查數據是否完整，如果不完整則降級到 CSV
         if '主Value' not in df.columns:
             df = pd.DataFrame() 
     except: pass
 
-    # 2. 如果 Google Sheet 失敗，讀取本地 CSV
+    # 2. 如果 Google Sheet 失敗或格式不對，讀取本地 CSV
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
@@ -152,7 +148,7 @@ def main():
     df, source = load_data()
 
     if df.empty:
-        st.error(f"❌ 無法加載數據。請確保已運行 'run_me.py'。(目前來源狀態: {source})")
+        st.error("❌ 無法加載數據。請確保已運行 'run_me.py' 且生成了 CSV 文件。")
         return
 
     st.success(f"✅ 數據來源: {source} | 場次: {len(df)} | 模式: 省流高效 (3日範圍)")
@@ -187,9 +183,9 @@ def main():
         form_h = render_form_dots(row.get('主走勢', '?????'))
         form_a = render_form_dots(row.get('客走勢', '?????'))
         
-        # 修正變數名稱以匹配下方 f-string 的調用
-        val_h_tag = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('主Value')) == '💰' else ""
-        val_a_tag = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('客Value')) == '💰' else ""
+        # Value 標籤 (只要欄位裡是 '💰' 就顯示)
+        val_h = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('主Value')) == '💰' else ""
+        val_a = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('客Value')) == '💰' else ""
         
         inj_h = clean_pct(row.get('主傷', 0))
         inj_a = clean_pct(row.get('客傷', 0))
@@ -199,16 +195,16 @@ def main():
         h2h_tag = f"<span class='h2h-badge'>⚔️ {row.get('H2H主')}-{row.get('H2H和')}-{row.get('H2H客')}</span>"
         xg_txt = f"xG: {row.get('xG主',0)} - {row.get('xG客',0)} ({row.get('數據源','-')})"
 
-        # HTML 卡片構建 (完全保持原有結構)
+        # HTML 卡片構建
         card_html = f"<div class='compact-card'>"
         card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
         
         card_html += f"<div class='content-row'>"
         # 主客隊資訊
         card_html += f"<div class='teams-area'>"
-        card_html += f"<div class='team-name'>{row.get('主隊','')} {rank_h} {inj_h_tag} {val_h_tag}</div>"
+        card_html += f"<div class='team-name'>{row.get('主隊','')} {rank_h} {inj_h_tag} {val_h}</div>"
         card_html += f"<div class='team-sub'>{form_h} {h2h_tag}</div>"
-        card_html += f"<div class='team-name' style='margin-top:6px;'>{row.get('客隊','')} {rank_a} {inj_a_tag} {val_a_tag}</div>"
+        card_html += f"<div class='team-name' style='margin-top:6px;'>{row.get('客隊','')} {rank_a} {inj_a_tag} {val_a}</div>"
         card_html += f"<div class='team-sub'>{form_a}</div>"
         card_html += f"</div>"
         
