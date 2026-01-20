@@ -9,7 +9,7 @@ from datetime import datetime
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.6 Max)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.7 Max)", page_icon="⚽", layout="wide")
 
 # ================= CSS (高級暗黑風格) =================
 st.markdown("""
@@ -65,23 +65,22 @@ def load_data():
         '聯賽','時間','狀態','主隊','客隊','主分','客分','xG主','xG客',
         '主勝率','和率','客勝率','主Value','和Value','客Value',
         '全場大0.5','全場大1.5','全場大2.5','全場大3.5','半場大0.5','半場大1.5',
-        'BTTS機率','主先入球率','亞盤主','亞盤客','亞盤盤口', '主排名', '客排名'
+        'BTTS機率','主先入球率','亞盤主','亞盤客','亞盤盤口', '主排名', '客排名', '數據源'
     ]
-    if not df.empty:
+    
+    if df.empty:
+        df = pd.DataFrame(columns=req)
+    else:
         for c in req:
             if c not in df.columns: df[c] = ""
-    else:
-        df = pd.DataFrame(columns=req)
             
     return df, src
 
 def safe_fmt(val, is_pct=False):
-    """將任意數據安全轉換為字符串，防止報錯"""
     try:
         if val is None: return "-"
         s = str(val).strip()
         if s == "" or s.lower() == "nan" or s == "-": return "-"
-        # 移除可能存在的 % 號
         f = float(s.replace('%',''))
         if f == 0: return "-"
         if is_pct: return f"{int(f)}%"
@@ -89,7 +88,6 @@ def safe_fmt(val, is_pct=False):
     except: return "-"
 
 def get_cls(val):
-    """安全地判斷數值是否高亮"""
     try:
         if val is None: return ""
         s = str(val).replace('%','').replace('-','0').strip()
@@ -100,7 +98,7 @@ def get_cls(val):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.6 Max)")
+    st.title("⚽ 足球AI Pro (V40.7 Max)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
@@ -159,6 +157,7 @@ def main():
         ah_line = str(row.get('亞盤盤口')) if row.get('亞盤盤口') else '平手'
         s_cls = 'status-live' if str(row.get('狀態'))=='進行中' else 'status-fin'
         
+        # HTML 構造 (無縮排，防止顯示錯亂)
         html = f"""
 <div class="compact-card">
 <div class="match-header">
