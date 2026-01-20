@@ -9,7 +9,7 @@ from datetime import datetime
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.4 Max)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.5 Max)", page_icon="⚽", layout="wide")
 
 # ================= CSS (高級暗黑風格) =================
 st.markdown("""
@@ -40,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據加載 (自動補欄) =================
+# ================= 數據加載 =================
 @st.cache_data(ttl=300)
 def load_data():
     df = pd.DataFrame()
@@ -61,12 +61,11 @@ def load_data():
             df = pd.read_csv(CSV_FILENAME)
             src = "Local"
             
-    # 補全所有可能缺失的欄位
     req = [
         '聯賽','時間','狀態','主隊','客隊','主分','客分','xG主','xG客',
         '主勝率','和率','客勝率','主Value','和Value','客Value',
         '全場大0.5','全場大1.5','全場大2.5','全場大3.5','半場大0.5','半場大1.5',
-        'BTTS機率','主先入球率','亞盤主','亞盤客','亞盤盤口', '主排名', '客排名', '數據源'
+        'BTTS機率','主先入球率','亞盤主','亞盤客','亞盤盤口', '主排名', '客排名'
     ]
     if not df.empty:
         for c in req:
@@ -88,7 +87,6 @@ def safe_fmt(val, is_pct=False):
     except: return "-"
 
 def get_cls(val):
-    """安全地判斷數值是否高亮，絕對防崩潰"""
     try:
         if val is None: return ""
         s = str(val).replace('%','').replace('-','0').strip()
@@ -99,7 +97,7 @@ def get_cls(val):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.4 Max)")
+    st.title("⚽ 足球AI Pro (V40.5 Max)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
@@ -107,13 +105,11 @@ def main():
 
     df, src = load_data()
     if df.empty:
-        st.warning(f"⚠️ 暫無數據 (來源: {src})。請等待 run_me.py 運行完成。")
+        st.warning(f"⚠️ 暫無數據 (來源: {src})。請等待 run_me.py 運行。")
         return
 
-    # === 篩選區 ===
     with st.sidebar:
         st.header("🔍 篩選條件")
-        
         status_list = ["全部", "未開賽", "進行中", "完場", "取消/延期"]
         sel_status = st.selectbox("狀態", status_list)
         
@@ -132,7 +128,6 @@ def main():
         leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
         sel_lg = st.selectbox("聯賽", leagues)
 
-        # 應用篩選
         if sel_status != "全部":
             if sel_status == "取消/延期":
                 df = df[df['狀態'].astype(str).str.contains("取消|延期", na=False)]
@@ -142,31 +137,25 @@ def main():
                     df = df[df['時間'].astype(str).str.startswith(str(sel_date), na=False)]
             else:
                 df = df[df['狀態'] == sel_status]
-                
         if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
 
     st.caption(f"來源: {src} | 共 {len(df)} 場")
 
-    # 排序
     try:
         df['sort'] = df['狀態'].apply(lambda x: 0 if str(x)=="進行中" else 1 if str(x)=="未開賽" else 2)
         df = df.sort_values(by=['sort', '時間'])
     except: pass
 
-    # === 卡片渲染 ===
     for idx, row in df.iterrows():
         ph = safe_fmt(row.get('主勝率'), True)
         pd_prob = safe_fmt(row.get('和率'), True)
         pa = safe_fmt(row.get('客勝率'), True)
-        
         val_h = "<span class='val-badge'>💰</span>" if str(row.get('主Value'))=='💰' else ""
         val_d = "<span class='val-badge'>💰</span>" if str(row.get('和Value'))=='💰' else ""
         val_a = "<span class='val-badge'>💰</span>" if str(row.get('客Value'))=='💰' else ""
-        
         ah_line = str(row.get('亞盤盤口')) if row.get('亞盤盤口') else '平手'
         s_cls = 'status-live' if str(row.get('狀態'))=='進行中' else 'status-fin'
         
-        # 這裡的 HTML 生成是絕對安全的，所有變數都經過 safe_fmt 處理
         html = f"""
 <div class="compact-card">
 <div class="match-header">
@@ -182,26 +171,11 @@ def main():
 <span class="score">{row.get('客分','')}</span>
 </div>
 <div class="grid-box">
-<div class="grid-item">
-<span class="grid-label">主勝率</span>
-<span class="grid-val {get_cls(ph)}">{ph}</span>
-</div>
-<div class="grid-item">
-<span class="grid-label">和率</span>
-<span class="grid-val">{pd_prob} {val_d}</span>
-</div>
-<div class="grid-item">
-<span class="grid-label">客勝率</span>
-<span class="grid-val {get_cls(pa)}">{pa}</span>
-</div>
-<div class="grid-item">
-<span class="grid-label">BTTS</span>
-<span class="grid-val">{safe_fmt(row.get('BTTS機率'), True)}</span>
-</div>
-<div class="grid-item">
-<span class="grid-label">主先入</span>
-<span class="grid-val">{safe_fmt(row.get('主先入球率'), True)}</span>
-</div>
+<div class="grid-item"><span class="grid-label">主勝率</span><span class="grid-val {get_cls(ph)}">{ph}</span></div>
+<div class="grid-item"><span class="grid-label">和率</span><span class="grid-val">{pd_prob} {val_d}</span></div>
+<div class="grid-item"><span class="grid-label">客勝率</span><span class="grid-val {get_cls(pa)}">{pa}</span></div>
+<div class="grid-item"><span class="grid-label">BTTS</span><span class="grid-val">{safe_fmt(row.get('BTTS機率'), True)}</span></div>
+<div class="grid-item"><span class="grid-label">主先入</span><span class="grid-val">{safe_fmt(row.get('主先入球率'), True)}</span></div>
 </div>
 <div class="ah-box">
 <span>亞盤主: <span class="ah-val">{safe_fmt(row.get('亞盤主'))}</span></span>
@@ -210,23 +184,10 @@ def main():
 </div>
 <table class="ou-table">
 <tr class="ou-head"><td>盤口</td><td>0.5</td><td>1.5</td><td>2.5</td><td>3.5</td></tr>
-<tr>
-<td>全場大</td>
-<td>{safe_fmt(row.get('全場大0.5'))}</td>
-<td>{safe_fmt(row.get('全場大1.5'))}</td>
-<td>{safe_fmt(row.get('全場大2.5'))}</td>
-<td>{safe_fmt(row.get('全場大3.5'))}</td>
-</tr>
-<tr>
-<td>半場大</td>
-<td>{safe_fmt(row.get('半場大0.5'))}</td>
-<td>{safe_fmt(row.get('半場大1.5'))}</td>
-<td colspan="2" style="color:#555">-</td>
-</tr>
+<tr><td>全場大</td><td>{safe_fmt(row.get('全場大0.5'))}</td><td>{safe_fmt(row.get('全場大1.5'))}</td><td>{safe_fmt(row.get('全場大2.5'))}</td><td>{safe_fmt(row.get('全場大3.5'))}</td></tr>
+<tr><td>半場大</td><td>{safe_fmt(row.get('半場大0.5'))}</td><td>{safe_fmt(row.get('半場大1.5'))}</td><td colspan="2" style="color:#555">-</td></tr>
 </table>
-<div style="text-align:right; font-size:0.7rem; color:#666; margin-top:5px;">
-xG: {row.get('xG主','-')} - {row.get('xG客','-')} (源:{row.get('數據源','-')})
-</div>
+<div style="text-align:right; font-size:0.7rem; color:#666; margin-top:5px;">xG: {row.get('xG主','-')} - {row.get('xG客','-')} (源:{row.get('數據源','-')})</div>
 </div>
 """
         st.markdown(html, unsafe_allow_html=True)
