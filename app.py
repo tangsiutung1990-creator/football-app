@@ -9,7 +9,7 @@ from datetime import datetime
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.1 Max)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.2 Max)", page_icon="⚽", layout="wide")
 
 # ================= CSS (高級暗黑風格) =================
 st.markdown("""
@@ -99,7 +99,7 @@ def safe_fmt(val, is_pct=False):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.1 Max)")
+    st.title("⚽ 足球AI Pro (V40.2 Max)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
