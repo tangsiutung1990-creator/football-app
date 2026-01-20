@@ -171,7 +171,7 @@ def get_league_standings(league_id, season):
     return standings_map
 
 def get_injuries(fix_id, h_name, a_name):
-    # 【修復】這裡的參數名稱已經修正為 fix_id
+    # 【已修復】變數名稱 fix_id
     data = call_api('injuries', {'fixture': fix_id})
     h=0; a=0
     if data and data.get('response'):
@@ -221,7 +221,7 @@ def calc_probs(xg_h, xg_a):
 
 # ================= 主程式 =================
 def main():
-    print("🚀 V40.1 Ultimate Data Update (Fix Applied)")
+    print("🚀 V40.2 Ultimate Data Update (Fix Applied)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
@@ -261,7 +261,6 @@ def main():
             
             if "取消" not in status_txt and "延期" not in status_txt:
                 odds = get_detailed_odds(fix_id)
-                # 僅在未完場時抓取傷病，避免浪費額度
                 if status_txt != '完場':
                     inj_h, inj_a = get_injuries(fix_id, h_name, a_name)
 
