@@ -9,7 +9,7 @@ from datetime import datetime
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.2 Max)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.3 Max)", page_icon="⚽", layout="wide")
 
 # ================= CSS (高級暗黑風格) =================
 st.markdown("""
@@ -30,7 +30,7 @@ st.markdown("""
     .team-name { font-weight: bold; font-size: 1.1rem; color: #fff; display: flex; align-items: center; gap: 5px; }
     .score { font-size: 1.2rem; font-weight: bold; color: #00e5ff; }
     
-    /* 數據網格 (5欄) */
+    /* 數據網格 */
     .grid-box { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 10px; background: #111; padding: 5px; border-radius: 5px; }
     .grid-item { text-align: center; border-right: 1px solid #333; }
     .grid-item:last-child { border-right: none; }
@@ -54,7 +54,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據加載 (自動補欄) =================
+# ================= 數據加載 =================
 @st.cache_data(ttl=300)
 def load_data():
     df = pd.DataFrame()
@@ -75,7 +75,7 @@ def load_data():
             df = pd.read_csv(CSV_FILENAME)
             src = "Local"
             
-    # 補全欄位
+    # 補全欄位 (確保不會因為少欄位報錯)
     req = [
         '聯賽','時間','狀態','主隊','客隊','主分','客分','xG主','xG客',
         '主勝率','和率','客勝率','主Value','和Value','客Value',
@@ -97,9 +97,17 @@ def safe_fmt(val, is_pct=False):
         return f"{f:.2f}"
     except: return "-"
 
+def get_cls(val):
+    """安全地判斷數值是否高亮"""
+    try:
+        if str(val) == "-" or val is None: return ""
+        v = int(str(val).replace('%','').replace('-','0'))
+        return 'high-val' if v > 50 else ''
+    except: return ""
+
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.2 Max)")
+    st.title("⚽ 足球AI Pro (V40.3 Max)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
@@ -107,7 +115,7 @@ def main():
 
     df, src = load_data()
     if df.empty:
-        st.warning(f"⚠️ 暫無數據 (來源: {src})")
+        st.warning(f"⚠️ 暫無數據 (來源: {src})。請等待 run_me.py 運行完成。")
         return
 
     # === 篩選區 ===
@@ -178,7 +186,7 @@ def main():
 <div class="grid-box">
 <div class="grid-item">
 <span class="grid-label">主勝率</span>
-<span class="grid-val { 'high-val' if int(str(ph).replace('%','').replace('-','0'))>50 else '' }">{ph}</span>
+<span class="grid-val {get_cls(ph)}">{ph}</span>
 </div>
 <div class="grid-item">
 <span class="grid-label">和率</span>
@@ -186,7 +194,7 @@ def main():
 </div>
 <div class="grid-item">
 <span class="grid-label">客勝率</span>
-<span class="grid-val { 'high-val' if int(str(pa).replace('%','').replace('-','0'))>50 else '' }">{pa}</span>
+<span class="grid-val {get_cls(pa)}">{pa}</span>
 </div>
 <div class="grid-item">
 <span class="grid-label">BTTS</span>
