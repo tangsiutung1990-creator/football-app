@@ -100,6 +100,7 @@ def get_detailed_odds(fixture_id):
     
     try:
         bks = data['response'][0]['bookmakers']
+        # 優先找 Bet365(1), 1xBet(6)
         target = next((b for b in bks if b['id'] in [1, 6, 8, 2]), bks[0] if bks else None)
         
         if target:
@@ -142,6 +143,11 @@ def get_detailed_odds(fixture_id):
                     for v in bet['values']:
                         if v['value'] == 'Yes': res['btts_yes'] = float(v['odd'])
 
+                # ID 46: 第一球
+                elif bet['id'] == 46:
+                    for v in bet['values']:
+                        if v['value'] == 'Home': res['first_h'] = float(v['odd'])
+
     except: pass
     return res
 
@@ -171,7 +177,7 @@ def get_league_standings(league_id, season):
     return standings_map
 
 def get_injuries(fix_id, h_name, a_name):
-    # 【已修復】變數名稱 fix_id
+    # 【已修復】將 fixture_id 改為 fix_id
     data = call_api('injuries', {'fixture': fix_id})
     h=0; a=0
     if data and data.get('response'):
@@ -221,7 +227,7 @@ def calc_probs(xg_h, xg_a):
 
 # ================= 主程式 =================
 def main():
-    print("🚀 V40.2 Ultimate Data Update (Fix Applied)")
+    print("🚀 V40.2 Ultimate Data Update (Crash Fixed)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
