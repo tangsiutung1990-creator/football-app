@@ -40,8 +40,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據加載 (底層重構) =================
-@st.cache_data(ttl=300)
+# ================= 數據加載 (底層重構: 使用 get_all_values) =================
+# ttl=0 確保每次都從 Google Sheet 拉最新數據，不緩存
+@st.cache_data(ttl=0)
 def load_data():
     df = pd.DataFrame()
     src = "無"
@@ -54,14 +55,13 @@ def load_data():
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         
-        # 【核心修改】改用 get_all_values() 抓取原始列表，再手動轉 DataFrame
-        # 這比 get_all_records() 穩定得多，不會因為 Header 有空格而掛掉
+        # 【核心修改】直接抓取所有原始值，這是最穩定的方法
         raw_data = sheet.get_all_values()
         if raw_data and len(raw_data) > 1:
             headers = raw_data[0]
             rows = raw_data[1:]
             df = pd.DataFrame(rows, columns=headers)
-            src = "Cloud (Raw)"
+            src = "Cloud"
     except:
         if os.path.exists(CSV_FILENAME):
             df = pd.read_csv(CSV_FILENAME)
@@ -108,20 +108,23 @@ def get_cls(val):
 def main():
     st.title("⚽ 足球AI Pro (V40.8 Debug)")
     
-    if st.button("🔄 刷新數據"):
-        st.cache_data.clear()
-        st.rerun()
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🗑️ 清除緩存"):
+            st.cache_data.clear()
+            st.rerun()
+    with col2:
+        if st.button("🔄 刷新數據"):
+            st.rerun()
 
     df, src = load_data()
     if df.empty:
         st.warning(f"⚠️ 暫無數據 (來源: {src})")
         return
 
-    # === 側邊欄 ===
     with st.sidebar:
         st.header("🔍 篩選")
-        
-        # 顯示原始數據開關 (調試神器)
+        # 顯示原始數據開關
         show_raw = st.checkbox("🐞 顯示原始數據 (Debug)")
         
         status_list = ["全部", "未開賽", "進行中", "完場", "取消/延期"]
@@ -165,7 +168,6 @@ def main():
         df = df.sort_values(by=['sort', '時間'])
     except: pass
 
-    # === 卡片渲染 ===
     for idx, row in df.iterrows():
         ph = safe_fmt(row.get('主勝率'), True)
         pd_prob = safe_fmt(row.get('和率'), True)
@@ -176,6 +178,7 @@ def main():
         ah_line = str(row.get('亞盤盤口')) if row.get('亞盤盤口') else '平手'
         s_cls = 'status-live' if str(row.get('狀態'))=='進行中' else 'status-fin'
         
+        # HTML 結構 (確保無縮排)
         html = f"""
 <div class="compact-card">
 <div class="match-header">
