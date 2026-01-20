@@ -11,7 +11,7 @@ CSV_FILENAME = "football_data_backup.csv"
 
 st.set_page_config(page_title="足球AI Pro (V38.1 Eco)", page_icon="⚽", layout="wide")
 
-# ================= CSS 優化 (暗黑風格) =================
+# ================= CSS 優化 (暗黑風格 - 保持原樣) =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
@@ -117,38 +117,61 @@ def load_data():
     # 1. 優先嘗試 Google Sheet
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        if os.path.exists("key.json"):
+        # 兼容 GitHub Actions (Secrets) 與本地 key.json
+        if "gcp_service_account" in st.secrets:
+             creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+        elif os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         else:
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+            return pd.DataFrame(), "無 Key"
+
         client = gspread.authorize(creds)
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         source = "Google Cloud"
         
-        # 簡單檢查數據是否完整，如果不完整則降級到 CSV
-        if '主Value' not in df.columns:
-            df = pd.DataFrame() 
     except: pass
 
-    # 2. 如果 Google Sheet 失敗或格式不對，讀取本地 CSV
+    # 2. 如果 Google Sheet 失敗，讀取本地 CSV
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
             source = "Local Backup (CSV)"
         except: pass
-        
+    
+    # 【關鍵新增】防止崩潰的保底邏輯
+    # 如果 DataFrame 存在但缺少關鍵欄位，自動補上空字串
+    # 這能解決「KeyError」導致程式崩潰的問題
+    EXPECTED_COLS = [
+        '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
+        '主排名', '客排名', '主走勢', '客走勢',
+        '主Value', '客Value', 'xG主', 'xG客', '數據源',
+        '主勝率', '客勝率', '大2.5', 'BTTS',
+        '主賠', '客賠',
+        '主傷', '客傷', 'H2H主', 'H2H和', 'H2H客'
+    ]
+    
+    # 如果讀進來的表是空的，或者列不全，我們確保它至少有這些列
+    if not df.empty:
+        for col in EXPECTED_COLS:
+            if col not in df.columns:
+                df[col] = "" # 補上空值
+                
     return df, source
 
 # ================= 主程式 =================
 def main():
     st.title("⚽ 足球AI Pro (V38.1 Eco)")
     
+    if st.button("🔄 刷新數據"):
+        st.cache_data.clear()
+        st.rerun()
+
     df, source = load_data()
 
     if df.empty:
-        st.error("❌ 無法加載數據。請確保已運行 'run_me.py' 且生成了 CSV 文件。")
+        st.warning(f"⚠️ 暫無數據 (來源: {source})。請確認 run_me.py 是否已運行。")
         return
 
     st.success(f"✅ 數據來源: {source} | 場次: {len(df)} | 模式: 省流高效 (3日範圍)")
@@ -183,7 +206,8 @@ def main():
         form_h = render_form_dots(row.get('主走勢', '?????'))
         form_a = render_form_dots(row.get('客走勢', '?????'))
         
-        # Value 標籤 (只要欄位裡是 '💰' 就顯示)
+        # 修正：使用正確的變數名以匹配 HTML f-string
+        # 之前的 backup 這裡有變數名稱 mismatch
         val_h = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('主Value')) == '💰' else ""
         val_a = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('客Value')) == '💰' else ""
         
@@ -195,7 +219,7 @@ def main():
         h2h_tag = f"<span class='h2h-badge'>⚔️ {row.get('H2H主')}-{row.get('H2H和')}-{row.get('H2H客')}</span>"
         xg_txt = f"xG: {row.get('xG主',0)} - {row.get('xG客',0)} ({row.get('數據源','-')})"
 
-        # HTML 卡片構建
+        # HTML 卡片構建 (完全保持原有結構)
         card_html = f"<div class='compact-card'>"
         card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
         
