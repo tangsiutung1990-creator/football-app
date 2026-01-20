@@ -9,7 +9,7 @@ from datetime import datetime
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.0 Max)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.1 Max)", page_icon="⚽", layout="wide")
 
 # ================= CSS (高級暗黑風格) =================
 st.markdown("""
@@ -17,18 +17,15 @@ st.markdown("""
     .stApp { background-color: #0e1117; }
     [data-testid="stSidebar"] { min-width: 240px !important; }
     
-    /* 卡片主體 */
     .compact-card { 
         background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-bottom: 12px; 
         font-family: 'Arial', sans-serif; box-shadow: 0 4px 6px rgba(0,0,0,0.3); 
     }
     
-    /* 頭部 */
     .match-header { display: flex; justify-content: space-between; color: #aaa; font-size: 0.8rem; border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 8px; }
     .status-live { color: #ff5252; font-weight: bold; animation: pulse 1.5s infinite; }
     .status-fin { color: #aaa; }
     
-    /* 隊伍列 */
     .team-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     .team-name { font-weight: bold; font-size: 1.1rem; color: #fff; display: flex; align-items: center; gap: 5px; }
     .score { font-size: 1.2rem; font-weight: bold; color: #00e5ff; }
@@ -50,7 +47,6 @@ st.markdown("""
     .ou-table td { border: 1px solid #333; padding: 2px 4px; text-align: center; }
     .ou-head { background: #333; font-weight: bold; color: #fff; }
 
-    /* 標籤 */
     .val-badge { background: #ffd700; color: #000; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; font-weight: bold; }
     .rank-badge { background: #444; color: #fff; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; }
     
@@ -79,7 +75,7 @@ def load_data():
             df = pd.read_csv(CSV_FILENAME)
             src = "Local"
             
-    # 補全欄位，防止報錯
+    # 補全欄位
     req = [
         '聯賽','時間','狀態','主隊','客隊','主分','客分','xG主','xG客',
         '主勝率','和率','客勝率','主Value','和Value','客Value',
@@ -103,7 +99,7 @@ def safe_fmt(val, is_pct=False):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.0 Max)")
+    st.title("⚽ 足球AI Pro (V40.1 Max)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
@@ -118,15 +114,12 @@ def main():
     with st.sidebar:
         st.header("🔍 篩選條件")
         
-        # 狀態篩選 (新增取消/延期)
         status_list = ["全部", "未開賽", "進行中", "完場", "取消/延期"]
         sel_status = st.selectbox("狀態", status_list)
         
-        # 完場日期篩選 (你的需求：已完場顯示篩選日期)
         sel_date = None
         if sel_status == "完場":
             st.info("📅 請選擇完場日期")
-            # 獲取數據中所有日期供選擇，預設今天
             unique_dates = sorted(list(set(df['時間'].astype(str).str[:10])))
             if unique_dates:
                 sel_date = st.selectbox("日期", unique_dates, index=len(unique_dates)-1)
@@ -151,26 +144,21 @@ def main():
 
     st.caption(f"來源: {src} | 共 {len(df)} 場")
 
-    # 排序：進行中 > 未開賽 > 完場
+    # 排序
     df['sort'] = df['狀態'].apply(lambda x: 0 if x=="進行中" else 1 if x=="未開賽" else 2)
     df = df.sort_values(by=['sort', '時間'])
 
-    # === 卡片渲染 (HTML 左對齊) ===
+    # === 卡片渲染 ===
     for idx, row in df.iterrows():
-        # 基本數據
         ph = safe_fmt(row.get('主勝率'), True)
         pd_prob = safe_fmt(row.get('和率'), True)
         pa = safe_fmt(row.get('客勝率'), True)
         
-        # 突發勝率 (和局)
         val_h = "<span class='val-badge'>💰</span>" if str(row.get('主Value'))=='💰' else ""
         val_d = "<span class='val-badge'>💰</span>" if str(row.get('和Value'))=='💰' else ""
         val_a = "<span class='val-badge'>💰</span>" if str(row.get('客Value'))=='💰' else ""
         
-        # 亞盤 (從 run_me.py 獲取已格式化的盤口，如 0/-0.5)
         ah_line = row.get('亞盤盤口', '平手')
-        
-        # 狀態樣式
         s_cls = 'status-live' if row.get('狀態')=='進行中' else 'status-fin'
         
         html = f"""
