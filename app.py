@@ -8,6 +8,7 @@ import time
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 
+# 必須是第一個 Streamlit 命令
 st.set_page_config(page_title="足球AI Pro (V38.1 Live)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 (暗黑高級質感) =================
@@ -68,6 +69,23 @@ def load_data_from_gsheet():
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
+        
+        # ===【防崩潰修復】===
+        # 確保所有關鍵欄位都存在，如果不存在則補上空值
+        required_cols = [
+            '聯賽', '時間', '狀態', '主隊', '客隊', 
+            '主分', '客分', '主排名', '客排名', '主走勢', '客走勢',
+            '主Value', '客Value', 'xG主', 'xG客', 
+            '主勝率', '客勝率', '大2.5', 'BTTS', '主賠', '客賠'
+        ]
+        
+        if df.empty:
+            return pd.DataFrame(columns=required_cols), "數據表為空"
+
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = "" # 補上空欄位防止 KeyError
+                
         return df, "Google Cloud"
     except Exception as e:
         return None, str(e)
@@ -102,19 +120,26 @@ def main():
 
     df, source = load_data_from_gsheet()
 
-    if df is None or df.empty:
+    if df is None:
         st.error(f"❌ 無法讀取數據。錯誤詳情: {source}")
-        st.info("💡 提示: 請確認 `run_me.py` 已經成功運行並上傳數據到 Google Sheet。")
-        st.info("💡 提示: 請確認 Streamlit Secrets 中的 `gcp_service_account` 設定正確。")
         return
 
-    # 數據處理
-    df['sort_idx'] = df['狀態'].apply(lambda x: 0 if '進行中' in str(x) else 1 if '未開賽' in str(x) else 2)
-    df = df.sort_values(by=['sort_idx', '時間'])
+    if df.empty:
+        st.warning("⚠️ 數據表目前是空的。請等待 `run_me.py` 完成更新。")
+        return
+
+    # 數據處理：排序 (進行中 > 未開賽 > 完場)
+    try:
+        df['sort_idx'] = df['狀態'].apply(lambda x: 0 if '進行中' in str(x) else 1 if '未開賽' in str(x) else 2)
+        df = df.sort_values(by=['sort_idx', '時間'])
+    except:
+        st.warning("⚠️ 狀態排序時發生輕微錯誤，顯示未排序數據。")
 
     # 側邊欄
     with st.sidebar:
         st.header("🔍 賽事篩選")
+        
+        # 聯賽篩選 (確保轉為字串避免錯誤)
         leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
         sel_lg = st.selectbox("選擇聯賽", leagues)
         if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
@@ -122,14 +147,20 @@ def main():
         # 顯示 Value Bet
         st.markdown("---")
         st.subheader("💎 今日精選")
-        val_bets = df[(df['主Value'] == '💰') | (df['客Value'] == '💰')]
-        if not val_bets.empty:
-            for _, r in val_bets.iterrows():
-                pick = r['主隊'] if r['主Value'] == '💰' else r['客隊']
-                odds = r['主賠'] if r['主Value'] == '💰' else r['客賠']
-                st.markdown(f"**{r['聯賽']}**: {pick} @{odds}")
-        else:
-            st.markdown("暫無高價值推薦")
+        
+        # 【關鍵修復】這裡使用了安全過濾，即使欄位是空的也不會報錯
+        try:
+            val_bets = df[(df['主Value'].astype(str) == '💰') | (df['客Value'].astype(str) == '💰')]
+            
+            if not val_bets.empty:
+                for _, r in val_bets.iterrows():
+                    pick = r['主隊'] if str(r['主Value']) == '💰' else r['客隊']
+                    odds = r['主賠'] if str(r['主Value']) == '💰' else r['客賠']
+                    st.markdown(f"**{r['聯賽']}**: {pick} @{format_odds(odds)}")
+            else:
+                st.markdown("暫無高價值推薦")
+        except Exception as e:
+            st.error(f"篩選推薦時出錯: {e}")
 
     st.caption(f"數據來源: {source} | 場次: {len(df)} | 更新: {time.strftime('%H:%M:%S')}")
 
@@ -144,25 +175,25 @@ def main():
         html = f"""
         <div class="compact-card">
             <div class="match-header">
-                <span>{row['時間']} | {row['聯賽']}</span>
-                <span class="{status_cls}">{row['狀態']}</span>
+                <span>{row.get('時間','')} | {row.get('聯賽','')}</span>
+                <span class="{status_cls}">{row.get('狀態','')}</span>
             </div>
             <div class="content-row">
                 <div>
                     <div class="team-name">
-                        {row['主隊']} <span class="rank-badge">#{row.get('主排名','-')}</span>
+                        {row.get('主隊','')} <span class="rank-badge">#{row.get('主排名','-')}</span>
                         {render_form(row.get('主走勢'))}
-                        {'<span style="color:#ffd700">💰</span>' if row.get('主Value')=='💰' else ''}
+                        {'<span style="color:#ffd700">💰</span>' if str(row.get('主Value'))=='💰' else ''}
                     </div>
                     <div class="team-name">
-                        {row['客隊']} <span class="rank-badge">#{row.get('客排名','-')}</span>
+                        {row.get('客隊','')} <span class="rank-badge">#{row.get('客排名','-')}</span>
                         {render_form(row.get('客走勢'))}
-                        {'<span style="color:#ffd700">💰</span>' if row.get('客Value')=='💰' else ''}
+                        {'<span style="color:#ffd700">💰</span>' if str(row.get('客Value'))=='💰' else ''}
                     </div>
                 </div>
                 <div style="text-align:right;">
-                    <div class="score-main">{row['主分']} - {row['客分']}</div>
-                    <span class="xg-sub">xG: {row['xG主']} - {row['xG客']}</span>
+                    <div class="score-main">{row.get('主分','')} - {row.get('客分','')}</div>
+                    <span class="xg-sub">xG: {row.get('xG主',0)} - {row.get('xG客',0)}</span>
                 </div>
             </div>
             
