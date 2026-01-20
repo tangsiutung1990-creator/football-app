@@ -15,7 +15,16 @@ BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-# HKJC 常見聯賽 ID 對照表
+# 定義標準欄位 (確保無論有無數據，Google Sheet 都有正確的標題)
+COLS_STANDARD = [
+    '時間', '聯賽', '主隊', '客隊', '狀態', '主分', '客分',
+    '主排名', '客排名', '主走勢', '客走勢',
+    '主Value', '客Value', 'xG主', 'xG客', '數據源',
+    '主勝率', '客勝率', '大2.5', 'BTTS',
+    '主賠', '客賠',
+    '主傷', '客傷', 'H2H主', 'H2H和', 'H2H客'
+]
+
 LEAGUE_ID_MAP = {
     39: '英超', 40: '英冠', 41: '英甲', 140: '西甲', 141: '西乙',
     135: '意甲', 78: '德甲', 61: '法甲', 88: '荷甲', 94: '葡超',
@@ -31,7 +40,6 @@ def call_api(endpoint, params=None):
     url = f"{BASE_URL}/{endpoint}"
     try:
         response = requests.get(url, headers=headers, params=params, timeout=15)
-        # 檢查是否超過額度
         if response.status_code == 429:
             print("❌ API 請求過多 (Rate Limit Reached)！請稍後再試。")
             return None
@@ -43,16 +51,12 @@ def call_api(endpoint, params=None):
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        # 優先檢查環境變數 (適用於 GitHub Actions)
         if "GCP_SERVICE_ACCOUNT" in os.environ:
              creds_dict = eval(os.environ["GCP_SERVICE_ACCOUNT"])
              creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        # 本地檢查
         elif os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        else:
-            return None
-            
+        else: return None
         client = gspread.authorize(creds)
         return client.open(GOOGLE_SHEET_NAME)
     except: return None
@@ -118,10 +122,6 @@ def safe_float(val):
     try: return float(val) if val is not None else 0.0
     except: return 0.0
 
-def clean_percent_str(val_str):
-    try: return int(float(str(val_str).replace('%', '')))
-    except: return 0
-
 # ================= 數學核心 =================
 def calculate_split_expected_goals(h_id, a_id, standings_map, pred_data):
     api_h = 1.3; api_a = 1.0
@@ -170,10 +170,10 @@ def main():
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     utc_now = datetime.now(pytz.utc)
     
-    # 保持前後3天，這對於6小時一次的更新頻率是非常足夠且安全的
+    # 掃描前後 3 天 (配合 6 小時更新)
     from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
     to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    season = 2025 # 確認當前賽季
+    season = 2025 # 確保這是你需要的賽季年份
     
     print(f"📅 掃描範圍: {from_date} 至 {to_date}")
     cleaned_data = []
@@ -217,7 +217,7 @@ def main():
             odds_h, odds_d, odds_a = 0,0,0
             inj_h, inj_a = 0,0
             
-            # 如果不是完場，才去抓賠率和傷病 (節省 API)
+            # 未完場才抓詳細數據，省流
             if not is_finished:
                 odds_h, odds_d, odds_a = get_best_odds(fix_id)
                 inj_h, inj_a = get_injuries_count(fix_id, h_name, a_name)
@@ -246,23 +246,28 @@ def main():
             print(f"         ✅ {h_name} vs {a_name}")
             time.sleep(0.1)
 
+    # 【重要修復】無論有無數據，都確保上傳表格標題
     if cleaned_data:
         df = pd.DataFrame(cleaned_data)
         df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
         print(f"\n💾 數據已備份至: {CSV_FILENAME}")
-
-        spreadsheet = get_google_spreadsheet()
-        if spreadsheet:
-            try:
-                spreadsheet.sheet1.clear()
-                # 將 NaN 轉為空字串，防止 API 報錯
-                df_str = df.fillna('').astype(str)
-                spreadsheet.sheet1.update(range_name='A1', values=[df_str.columns.values.tolist()] + df_str.values.tolist())
-                print("✅ Google Sheet 上傳成功")
-            except Exception as e:
-                print(f"❌ Google Sheet 上傳失敗: {e}")
     else:
-        print("⚠️ 無數據")
+        # 創建空 DataFrame 但包含所有必要標題
+        df = pd.DataFrame(columns=COLS_STANDARD)
+        df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
+        print("⚠️ 無比賽數據，已重置表格標題")
+
+    # 上傳至 Google Sheet
+    spreadsheet = get_google_spreadsheet()
+    if spreadsheet:
+        try:
+            spreadsheet.sheet1.clear()
+            # 將 NaN 轉為空字串，防止 API 報錯
+            df_str = df.fillna('').astype(str)
+            spreadsheet.sheet1.update(range_name='A1', values=[df_str.columns.values.tolist()] + df_str.values.tolist())
+            print("✅ Google Sheet 上傳成功")
+        except Exception as e:
+            print(f"❌ Google Sheet 上傳失敗: {e}")
 
 if __name__ == "__main__":
     main()
