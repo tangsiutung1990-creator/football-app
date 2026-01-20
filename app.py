@@ -9,7 +9,7 @@ from datetime import datetime
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.5 Max)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V40.6 Max)", page_icon="⚽", layout="wide")
 
 # ================= CSS (高級暗黑風格) =================
 st.markdown("""
@@ -40,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據加載 =================
+# ================= 數據加載 (自動補欄) =================
 @st.cache_data(ttl=300)
 def load_data():
     df = pd.DataFrame()
@@ -76,17 +76,20 @@ def load_data():
     return df, src
 
 def safe_fmt(val, is_pct=False):
+    """將任意數據安全轉換為字符串，防止報錯"""
     try:
         if val is None: return "-"
         s = str(val).strip()
         if s == "" or s.lower() == "nan" or s == "-": return "-"
+        # 移除可能存在的 % 號
         f = float(s.replace('%',''))
-        if is_pct: return f"{int(f)}%"
         if f == 0: return "-"
+        if is_pct: return f"{int(f)}%"
         return f"{f:.2f}"
     except: return "-"
 
 def get_cls(val):
+    """安全地判斷數值是否高亮"""
     try:
         if val is None: return ""
         s = str(val).replace('%','').replace('-','0').strip()
@@ -97,7 +100,7 @@ def get_cls(val):
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.5 Max)")
+    st.title("⚽ 足球AI Pro (V40.6 Max)")
     
     if st.button("🔄 刷新數據"):
         st.cache_data.clear()
