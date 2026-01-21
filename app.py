@@ -10,96 +10,82 @@ import pytz
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (精選版)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro", page_icon="⚽", layout="wide")
 
-# ================= CSS 優化 (字體放大 + 空間收窄) =================
+# ================= CSS 極致優化 =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
     
-    /* 縮小 Sidebar 頂部空白 */
-    .css-1d391kg { padding-top: 1rem; }
+    /* 縮小頂部 */
+    .block-container { padding-top: 1rem; padding-bottom: 2rem; }
+    
+    /* 狀態按鈕優化 (st.pills) */
+    div[data-testid="stPills"] { gap: 4px; }
     
     .compact-card { 
         background-color: #1a1c24; 
         border: 1px solid #333; 
-        border-radius: 8px; 
-        padding: 5px 10px; /* 減少上下內邊距 */
-        margin-bottom: 8px; /* 減少卡片間距 */
+        border-radius: 6px; 
+        padding: 4px 8px; /* 極窄內距 */
+        margin-bottom: 6px; 
         font-family: 'Arial', sans-serif; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
     }
     
     .match-header { 
         display: flex; 
         justify-content: space-between; 
-        color: #aaa; 
-        font-size: 0.85rem; /* 字體加大 */
-        margin-bottom: 4px; 
+        color: #999; 
+        font-size: 0.9rem; 
+        margin-bottom: 2px; 
         border-bottom: 1px solid #333; 
-        padding-bottom: 2px; 
     }
     
     .content-row { 
         display: grid; 
         grid-template-columns: 6fr 4fr; 
         align-items: center; 
-        margin-bottom: 6px; 
+        margin-bottom: 4px; 
     }
-    
-    .teams-area { text-align: left; }
     
     .team-name { 
         font-weight: bold; 
-        font-size: 1.2rem; /* 隊名字體加大 */
+        font-size: 1.25rem; /* 大字體 */
         color: #fff; 
-        margin-bottom: 2px; 
-        display: flex; 
-        align-items: center; 
-        gap: 6px; 
+        line-height: 1.2;
     } 
     
     .team-sub { 
-        font-size: 0.85rem; /* 副標題加大 */
+        font-size: 0.85rem; 
         color: #bbb; 
-        display: flex; 
-        gap: 8px; 
-        align-items: center; 
+        margin-top: 2px;
     }
     
-    .rank-badge { 
-        background: #444; 
-        color: #eee; 
-        font-size: 0.75rem; 
-        padding: 1px 5px; 
-        border-radius: 3px; 
-    }
-    
-    .score-area { text-align: right; }
-    .score-main { font-size: 2.0rem; font-weight: bold; color: #00ffea; line-height: 1.1; }
-    .score-sub { font-size: 0.8rem; color: #888; }
+    .score-main { font-size: 2.2rem; font-weight: bold; color: #00ffea; line-height: 1; text-align: right; }
+    .score-sub { font-size: 0.85rem; color: #888; text-align: right; }
 
-    /* 網格矩陣優化：字體大、間距小 */
+    /* 矩陣優化 */
     .grid-matrix { 
         display: grid; 
         grid-template-columns: repeat(4, 1fr); 
-        gap: 1px; /* 極窄間距 */
-        font-size: 0.85rem; /* 數據字體加大 */
+        gap: 0px; /* 無間距 */
         margin-top: 4px; 
-        text-align: center; 
+        background: #222;
+        border-radius: 4px;
+        overflow: hidden;
     }
     
     .matrix-col { 
-        background: #222; 
-        padding: 2px 4px; 
-        border-radius: 2px; 
-        border: 1px solid #333; 
+        padding: 2px; 
+        border-right: 1px solid #333; 
     }
+    .matrix-col:last-child { border-right: none; }
     
     .matrix-header { 
         color: #ff9800; 
-        font-size: 0.8rem; /* 標題字體 */
+        font-size: 0.85rem; 
         font-weight: bold;
+        text-align: center;
         border-bottom: 1px solid #444; 
         margin-bottom: 2px;
     }
@@ -107,30 +93,23 @@ st.markdown("""
     .matrix-cell { 
         display: flex; 
         justify-content: space-between; 
-        padding: 1px 0; /* 減少行高 */
+        padding: 0 4px; 
         color: #ddd; 
+        font-size: 0.95rem; /* 數據字體加大 */
+        line-height: 1.4;
     }
     
-    .matrix-label { color: #999; margin-right: 4px; }
+    .matrix-label { color: #888; font-size: 0.8rem; margin-right: 2px; }
     
     .cell-high { color: #00ff00; font-weight: bold; }
     .cell-mid { color: #ffff00; }
+    .val-icon { font-size: 0.8rem; }
     
-    .section-title { 
-        color: #fff; 
-        font-size: 1.3rem; 
-        border-left: 5px solid #00ffea; 
-        padding-left: 10px; 
-        margin: 15px 0 10px 0; 
-        font-weight: bold;
-    }
-    
-    /* 狀態標籤 */
-    .status-live { color: #ff4b4b; font-weight: bold; animation: pulse 2s infinite; }
+    .status-live { color: #ff4b4b; font-weight: bold; }
     .status-ft { color: #00ffea; }
-    .status-ns { color: #888; }
     
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    /* 修正 Sidebar */
+    section[data-testid="stSidebar"] { width: 250px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -166,7 +145,7 @@ def load_data():
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
-            source = "CSV"
+            source = "Local"
         except: pass
     return df, source
 
@@ -178,11 +157,10 @@ def render_match_card(row):
     
     score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) not in ['','nan'] else "VS"
     xg_txt = f"xG: {row.get('xG主',0)} - {row.get('xG客',0)}"
-    
     status = row.get('狀態')
-    status_cls = "status-live" if status == '進行中' else ("status-ft" if status == '完場' else "status-ns")
+    status_cls = "status-live" if status == '進行中' else ("status-ft" if status == '完場' else "")
     
-    # 亞盤數據
+    # 亞盤
     ah_pick = row.get('亞盤', '-')
     ah_prob = row.get('亞盤率', 0)
     
@@ -194,9 +172,9 @@ def render_match_card(row):
         </div>
         <div class='content-row'>
             <div class='teams-area'>
-                <div class='team-name'>{row.get('主隊')} <span class='rank-badge'>#{row.get('主排名','?')}</span></div>
-                <div class='team-name'>{row.get('客隊')} <span class='rank-badge'>#{row.get('客排名','?')}</span></div>
-                <div class='team-sub'>H2H: {row.get('H2H主')}-{row.get('H2H和')}-{row.get('H2H客')} | 源: {row.get('數據源')}</div>
+                <div class='team-name'>{row.get('主隊')} <small style='color:#666; font-size:0.8rem'>#{row.get('主排名')}</small></div>
+                <div class='team-name'>{row.get('客隊')} <small style='color:#666; font-size:0.8rem'>#{row.get('客排名')}</small></div>
+                <div class='team-sub'>H2H: {row.get('H2H主')}-{row.get('H2H和')}-{row.get('H2H客')}</div>
             </div>
             <div class='score-area'>
                 <div class='score-main'>{score_txt}</div>
@@ -205,28 +183,28 @@ def render_match_card(row):
         </div>
         <div class='grid-matrix'>
             <div class='matrix-col'>
-                <div class='matrix-header'>勝平負</div>
-                <div class='matrix-cell'><span class='matrix-label'>主</span>{fmt_pct(prob_h)}</div>
-                <div class='matrix-cell'><span class='matrix-label'>和</span>{fmt_pct(prob_d)}</div>
-                <div class='matrix-cell'><span class='matrix-label'>客</span>{fmt_pct(prob_a)}</div>
+                <div class='matrix-header'>勝平負 (1x2)</div>
+                <div class='matrix-cell'><span class='matrix-label'>主</span>{fmt_pct(prob_h)} {row.get('主Value','')}</div>
+                <div class='matrix-cell'><span class='matrix-label'>和</span>{fmt_pct(prob_d)} {row.get('和Value','')}</div>
+                <div class='matrix-cell'><span class='matrix-label'>客</span>{fmt_pct(prob_a)} {row.get('客Value','')}</div>
             </div>
             <div class='matrix-col'>
                 <div class='matrix-header'>全場進球</div>
                 <div class='matrix-cell'><span class='matrix-label'>>0.5</span>{fmt_pct(row.get('大0.5'), 90)}</div>
-                <div class='matrix-cell'><span class='matrix-label'>>1.5</span>{fmt_pct(row.get('大1.5'), 70)}</div>
                 <div class='matrix-cell'><span class='matrix-label'>>2.5</span>{fmt_pct(row.get('大2.5'), 55)}</div>
+                <div class='matrix-cell'><span class='matrix-label'>>3.5</span>{fmt_pct(row.get('大3.5'), 40)}</div>
             </div>
             <div class='matrix-col'>
                 <div class='matrix-header'>半場/BTTS</div>
-                <div class='matrix-cell'><span class='matrix-label'>半>0.5</span>{fmt_pct(row.get('半大0.5'), 65)}</div>
-                <div class='matrix-cell'><span class='matrix-label'>半>1.5</span>{fmt_pct(row.get('半大1.5'), 30)}</div>
+                <div class='matrix-cell'><span class='matrix-label'>半>1.5</span>{fmt_pct(row.get('半大1.5'), 35)}</div>
                 <div class='matrix-cell'><span class='matrix-label'>雙進</span>{fmt_pct(row.get('BTTS'), 55)}</div>
+                <div class='matrix-cell' style='color:#888; font-size:0.8rem'>-</div>
             </div>
             <div class='matrix-col'>
                 <div class='matrix-header'>亞盤分析</div>
-                <div class='matrix-cell' style='justify-content:center; color:#ffd700; font-weight:bold;'>{ah_pick}</div>
+                <div class='matrix-cell' style='justify-content:center; color:#ffd700; font-weight:bold; font-size:0.9rem'>{ah_pick}</div>
                 <div class='matrix-cell'><span class='matrix-label'>機率</span>{fmt_pct(ah_prob, 55)}</div>
-                <div class='matrix-cell'><span class='matrix-label'>Value</span>{row.get('主Value')}{row.get('客Value')}</div>
+                <div class='matrix-cell' style='justify-content:right; font-size:0.7rem; color:#666'>源: {row.get('數據源')}</div>
             </div>
         </div>
     </div>
@@ -235,74 +213,50 @@ def render_match_card(row):
 
 # ================= 主程式 =================
 def main():
-    # === 側邊欄篩選區 (Top Left) ===
+    # === 側邊欄篩選區 ===
     st.sidebar.title("🛠️ 賽事篩選")
     
     df, source = load_data()
     
     if df.empty:
-        st.error("❌ 尚未讀取到數據，請先運行後端腳本。")
+        st.error("❌ 無數據，請運行後端。")
         return
 
-    hk_tz = pytz.timezone('Asia/Hong_Kong')
-    now = datetime.now(hk_tz)
+    # 狀態篩選 (使用 Pills 一按即選)
+    st.sidebar.markdown("### 狀態")
+    all_statuses = ['進行中', '未開賽', '完場', '延期']
+    # 預設選中 '進行中' 和 '未開賽'
+    selected_statuses = st.sidebar.pills("選擇狀態", all_statuses, default=['進行中', '未開賽'], selection_mode="multi")
     
-    # 狀態篩選
-    all_statuses = ['未開賽', '進行中', '完場', '延期/取消']
-    selected_statuses = st.sidebar.multiselect(
-        "選擇賽事狀態", 
-        all_statuses, 
-        default=['未開賽', '進行中'] # 預設不顯示已完場，保持頁面乾淨
-    )
-    
-    # 日期篩選 (自動讀取數據中的日期)
-    if '日期' in df.columns:
-        available_dates = sorted(df['日期'].unique().tolist())
-        selected_dates = st.sidebar.multiselect("選擇日期", available_dates, default=available_dates)
-    else:
-        selected_dates = []
-
     # 聯賽篩選
     if '聯賽' in df.columns:
+        st.sidebar.markdown("### 聯賽")
         all_leagues = sorted(df['聯賽'].unique().tolist())
         selected_leagues = st.sidebar.multiselect("選擇聯賽", all_leagues, default=all_leagues)
+    else: selected_leagues = []
 
     # === 主頁面 ===
-    st.title("⚽ 足球AI Pro")
-    st.caption(f"數據源: {source} | 更新於: {now.strftime('%H:%M')}")
+    hk_tz = pytz.timezone('Asia/Hong_Kong')
+    now = datetime.now(hk_tz)
+    st.caption(f"數據源: {source} | 更新: {now.strftime('%H:%M')}")
 
-    # 數據過濾邏輯
+    # 過濾邏輯
     filtered_df = df.copy()
-    
     if selected_statuses:
         filtered_df = filtered_df[filtered_df['狀態'].isin(selected_statuses)]
-    
-    if selected_dates and '日期' in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df['日期'].isin(selected_dates)]
-        
-    if selected_leagues and '聯賽' in filtered_df.columns:
+    if selected_leagues:
         filtered_df = filtered_df[filtered_df['聯賽'].isin(selected_leagues)]
 
-    # 排序：進行中 -> 未開賽 (按時間) -> 完場
-    # 為了排序方便，這裡做一個簡單的權重映射
-    status_order = {'進行中': 0, '未開賽': 1, '完場': 2, '延期/取消': 3}
-    filtered_df['status_rank'] = filtered_df['狀態'].map(status_order)
-    
-    # 先按狀態排，再按時間排
+    # 排序：進行中 > 未開賽 > 完場
+    status_order = {'進行中': 0, '未開賽': 1, '完場': 2, '延期': 3}
+    filtered_df['status_rank'] = filtered_df['狀態'].map(status_order).fillna(4)
     filtered_df = filtered_df.sort_values(by=['status_rank', '時間'])
 
-    # 顯示結果
     if not filtered_df.empty:
-        count = len(filtered_df)
-        st.markdown(f"<div class='section-title'>📋 賽事列表 ({count} 場)</div>", unsafe_allow_html=True)
         for _, row in filtered_df.iterrows():
             render_match_card(row)
     else:
-        st.info("🔍 根據目前的篩選條件，沒有找到賽事。請嘗試調整左側篩選器。")
-
-    # Raw Data View
-    with st.expander("查看原始表格數據"):
-        st.dataframe(filtered_df)
+        st.info("暫無符合條件的賽事")
 
 if __name__ == "__main__":
     main()
