@@ -14,21 +14,20 @@ import streamlit as st
 # API Key 獲取順序: 1. Streamlit Secrets  2. 環境變數
 API_KEY = None
 
-# 嘗試從 Streamlit Secrets 讀取
+# 嘗試從 Streamlit Secrets 讀取 (本地開發或 Streamlit Cloud)
 try:
     if "api" in st.secrets and "key" in st.secrets["api"]:
         API_KEY = st.secrets["api"]["key"]
 except FileNotFoundError:
-    pass # 本地運行且沒有 .streamlit/secrets.toml 時會報錯，忽略
+    pass # 無 secrets.toml 文件
 
-# 如果 Secrets 沒讀到，嘗試環境變數
+# 如果 Secrets 沒讀到，嘗試環境變數 (適用於 GitHub Actions / Docker)
 if not API_KEY:
     API_KEY = os.getenv("FOOTBALL_API_KEY")
 
 if not API_KEY:
-    print("❌ 錯誤: 未找到 API Key。請配置 .streamlit/secrets.toml 或設置環境變數 FOOTBALL_API_KEY")
-    # 為了防止空 Key 發送請求，這裡選擇中止或讓用戶知道
-    # sys.exit(1) 
+    # 這裡僅打印警告，不強制退出，避免 Build 直接紅燈 (除非你希望沒 Key 就報錯)
+    print("⚠️ 警告: 未找到 API Key。請配置 secrets.toml 或環境變數 FOOTBALL_API_KEY")
 
 BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -57,10 +56,14 @@ def call_api(endpoint, params=None):
         
         if response.status_code == 200:
             data = response.json()
-            # 檢查業務層面的錯誤
             if data.get("errors"):
-                print(f"⚠️ API 返回錯誤: {data['errors']}")
-                return None
+                # 有些 errors 其實只是警告，不一定需要 None，視情況而定
+                print(f"⚠️ API 返回信息: {data['errors']}")
+                if isinstance(data['errors'], list) and len(data['errors']) > 0:
+                     return None
+                # 如果 errors 是 dict (例如 rate limit)，通常 key 是錯誤類型
+                if isinstance(data['errors'], dict) and data['errors'].get('rateLimit'):
+                    return None
             return data
             
         elif response.status_code == 429:
@@ -78,14 +81,20 @@ def call_api(endpoint, params=None):
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        # 優先從 st.secrets 讀取 (雲端部署模式)
-        if "gcp_service_account" in st.secrets:
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-        # 本地模式 fallback
-        elif os.path.exists("key.json"):
+        creds = None
+        # 嘗試從 secrets 讀取
+        try:
+            if "gcp_service_account" in st.secrets:
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        except:
+            pass
+            
+        # 如果 secrets 失敗，嘗試本地文件
+        if not creds and os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        else:
-            print("⚠️ 未找到 Google Credentials (st.secrets 或 key.json)")
+            
+        if not creds:
+            print("⚠️ 未找到 Google Credentials (st.secrets 或 key.json)，跳過上傳")
             return None
             
         client = gspread.authorize(creds)
@@ -113,7 +122,6 @@ def get_league_standings(league_id, season):
                 'away_stats': {'played': a_s['played'], 'avg_goals_for': a_s['goals']['for']/(a_s['played'] or 1), 'avg_goals_against': a_s['goals']['against']/(a_s['played'] or 1)}
             }
     except Exception as e:
-        print(f"⚠️ 解析積分榜失敗: {e}")
         pass
     return standings_map
 
@@ -144,7 +152,6 @@ def get_best_odds(fixture_id):
     
     try:
         bks = data['response'][0]['bookmakers']
-        # 優先尋找主流公司
         target = next((b for b in bks if b['id'] in [1, 6, 8, 2]), bks[0] if bks else None)
         if target:
             bet = next((b for b in target['bets'] if b['name'] == 'Match Winner'), None)
@@ -156,7 +163,7 @@ def get_best_odds(fixture_id):
                     if o['value'] == 'Away': a = float(o['odd'])
                 return h, d, a
     except Exception:
-        pass # 賠率解析失敗允許靜默，返回 0,0,0
+        pass
     return 0, 0, 0
 
 def safe_float(val):
@@ -207,39 +214,39 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.1 Eco-Mode (省流版) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.1 Eco-Mode (今日賽事版) 啟動...")
     if not API_KEY:
-        print("⚠️ 警告: 缺少 API Key，程序可能無法正常工作。")
+        print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
-    utc_now = datetime.now(pytz.utc)
+    # 獲取香港時間的當前時間
+    hk_now = datetime.now(hk_tz)
     
-    # 優化策略: 3天範圍 (前後各3天)
-    from_date = (utc_now - timedelta(days=3)).strftime('%Y-%m-%d')
-    to_date = (utc_now + timedelta(days=3)).strftime('%Y-%m-%d')
-    season = 2025 # 請每年確認
+    # 【修改重點】鎖定為香港時間的「今天」
+    today_str = hk_now.strftime('%Y-%m-%d')
+    from_date = today_str
+    to_date = today_str
     
-    print(f"📅 掃描範圍: {from_date} 至 {to_date}")
+    season = 2025
+    
+    print(f"📅 掃描範圍: {from_date} (Only Today)")
     cleaned_data = []
     value_bets = []
 
     for lg_id, lg_name in LEAGUE_ID_MAP.items():
-        print(f"   🔍 掃描 {lg_name}...")
+        # print(f"   🔍 掃描 {lg_name}...") # 減少 Log 噪音
         standings = get_league_standings(lg_id, season)
         
-        # 獲取賽程
         fixtures_data = call_api('fixtures', {'league': lg_id, 'season': season, 'from': from_date, 'to': to_date})
         
         if not fixtures_data or not fixtures_data.get('response'): 
-            print("      👉 無賽事")
             continue
             
         fixtures = fixtures_data['response']
-        print(f"      👉 找到 {len(fixtures)} 場比賽")
+        print(f"   ⚽ {lg_name}: 找到 {len(fixtures)} 場")
         
         for item in fixtures:
             fix_id = item['fixture']['id']
-            # 轉換時間
             t_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
             status = item['fixture']['status']['short']
             
@@ -255,19 +262,15 @@ def main():
             h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
             sc_h = item['goals']['home']; sc_a = item['goals']['away']
 
-            # 獲取排名
             h_info = standings.get(h_id, {'rank': '?', 'form': '?????'})
             a_info = standings.get(a_id, {'rank': '?', 'form': '?????'})
             
-            # 預測數據
             pred_resp = call_api('predictions', {'fixture': fix_id})
             pred_data = pred_resp['response'][0] if pred_resp and pred_resp.get('response') else None
             
-            # 計算核心概率
             h_exp, a_exp, src = calculate_split_expected_goals(h_id, a_id, standings, pred_data)
             probs = calculate_advanced_math_probs(h_exp, a_exp)
             
-            # API 請求優化: 完場比賽不抓賠率和傷病
             odds_h, odds_d, odds_a = 0,0,0
             inj_h, inj_a = 0,0
             
@@ -277,7 +280,6 @@ def main():
             
             h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
 
-            # Value Bet 判斷
             val_h = ""; val_a = ""
             if odds_h > 0:
                 implied_h = 1/odds_h
@@ -303,25 +305,22 @@ def main():
                 '主傷': inj_h, '客傷': inj_a, 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
             })
             
-            print(f"         ✅ {h_name} vs {a_name} | xG: {h_exp:.2f}-{a_exp:.2f} {val_h}{val_a}")
-            time.sleep(0.1) # 短暫休眠防止過快
+            print(f"         ✅ {h_name} vs {a_name}")
+            time.sleep(0.1)
 
     if cleaned_data:
         df = pd.DataFrame(cleaned_data)
         
-        # 保存 CSV (本地備份)
         try:
             df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
             print(f"\n💾 數據已備份至: {CSV_FILENAME}")
         except Exception as e:
             print(f"❌ CSV 保存失敗: {e}")
 
-        # 上傳 Google Sheet
         spreadsheet = get_google_spreadsheet()
         if spreadsheet:
             try:
                 spreadsheet.sheet1.clear()
-                # 確保全是字串以避免格式問題
                 spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print("✅ Google Sheet 上傳成功")
             except Exception as e: 
@@ -331,7 +330,7 @@ def main():
             print("\n💎 精選 VALUE BETS 💎")
             for v in value_bets: print(f"{v['League']} | {v['Match']} | {v['Pick']} @ {v['Odds']}")
     else:
-        print("⚠️ 本次運行無數據獲取")
+        print("⚠️ 今天暫無賽事數據")
 
 if __name__ == "__main__":
     main()
