@@ -3,6 +3,8 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
+from datetime import datetime
+import pytz
 
 # ================= 設定區 =================
 # 必須與 run_me.py 的設定一致
@@ -10,7 +12,7 @@ GOOGLE_SHEET_NAME = "數據上傳"
 CSV_FILENAME = "football_data_backup.csv" 
 
 # Page Config 必須是第一個 st 命令
-st.set_page_config(page_title="足球AI Pro (V38.1 Eco)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (今日賽事)", page_icon="⚽", layout="wide")
 
 # ================= CSS 優化 (暗黑風格) =================
 st.markdown("""
@@ -88,7 +90,6 @@ def fmt_pct_display(val, threshold=50, is_o25=False):
     return f"<span class='{css_class}'>{v}%</span>"
 
 def render_form_dots(form_str):
-    # 處理各種空值情況
     if not form_str or str(form_str) == 'nan' or form_str == 'N/A' or form_str == '?????': 
         return "" 
     html = "<div class='form-dots'>"
@@ -107,8 +108,8 @@ def render_rank_badge(rank):
     try:
         r = int(rank)
         cls = "rank-badge"
-        if r <= 4: cls += " rank-top" # 前4名高亮
-        if r >= 18: cls += " rank-bot" # 降級區警示
+        if r <= 4: cls += " rank-top" 
+        if r >= 18: cls += " rank-bot" 
         return f"<span class='{cls}'>#{r}</span>"
     except: return ""
 
@@ -116,55 +117,50 @@ def load_data():
     df = pd.DataFrame()
     source = "無"
     
-    # 1. 優先嘗試 Google Sheet (從 st.secrets 讀取)
+    # 嘗試載入數據，並增加容錯
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         
-        # 安全載入 Credentials
+        # 優先從 st.secrets 讀取
+        creds = None
         if "gcp_service_account" in st.secrets:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-            client = gspread.authorize(creds)
-            sheet = client.open(GOOGLE_SHEET_NAME).sheet1
-            data = sheet.get_all_records()
-            df = pd.DataFrame(data)
-            source = "Google Cloud (Secrets)"
         elif os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+            
+        if creds:
             client = gspread.authorize(creds)
             sheet = client.open(GOOGLE_SHEET_NAME).sheet1
             data = sheet.get_all_records()
             df = pd.DataFrame(data)
-            source = "Google Cloud (Local Key)"
-        
-        # 簡單檢查數據是否完整，如果不完整則降級到 CSV
-        if not df.empty and '主Value' not in df.columns:
-            df = pd.DataFrame() 
-    except Exception as e:
-        # 開發時可以 print(e) debug
+            source = "Google Cloud"
+    except Exception:
         pass
 
-    # 2. 如果 Google Sheet 失敗或格式不對，讀取本地 CSV
+    # Fallback to CSV
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
-            source = "Local Backup (CSV)"
+            source = "Local CSV"
         except: pass
         
     return df, source
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V38.1 Eco)")
+    st.title("⚽ 足球AI Pro (今日賽事)")
     
     df, source = load_data()
 
     if df.empty:
-        st.error("❌ 無法加載數據。請確保已運行 'run_me.py' 且生成了 CSV 文件，或檢查 Google Sheet 連接。")
+        st.error("❌ 無法加載數據。請運行 'run_me.py' 抓取今日數據。")
         return
 
-    st.success(f"✅ 數據來源: {source} | 場次: {len(df)} | 模式: 省流高效 (3日範圍)")
+    # 計算今日日期
+    hk_today = datetime.now(pytz.timezone('Asia/Hong_Kong')).strftime('%Y-%m-%d')
+    st.info(f"📅 顯示日期: {hk_today} (來源: {source}) | 總場次: {len(df)}")
 
-    # 側邊欄篩選
+    # 側邊欄
     st.sidebar.header("🔍 篩選")
     if '聯賽' in df.columns:
         leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
@@ -176,8 +172,6 @@ def main():
     elif status_filter == "進行中": df = df[df['狀態'] == '進行中']
     elif status_filter == "完場": df = df[df['狀態'] == '完場']
 
-    # 排序：進行中 > 未開賽 > 完場
-    # 確保 '狀態' 列存在
     if '狀態' in df.columns:
         df['sort_idx'] = df['狀態'].apply(lambda x: 0 if x == '進行中' else 1 if x=='未開賽' else 2)
         df = df.sort_values(by=['sort_idx', '時間'])
@@ -190,13 +184,11 @@ def main():
         
         score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) != '' and str(row.get('主分')) != 'nan' else "VS"
         
-        # 渲染標籤
         rank_h = render_rank_badge(row.get('主排名', '?'))
         rank_a = render_rank_badge(row.get('客排名', '?'))
         form_h = render_form_dots(row.get('主走勢', '?????'))
         form_a = render_form_dots(row.get('客走勢', '?????'))
         
-        # Value 標籤 (只要欄位裡是 '💰' 就顯示)
         val_h_tag = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('主Value')) == '💰' else ""
         val_a_tag = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('客Value')) == '💰' else ""
         
@@ -208,12 +200,10 @@ def main():
         h2h_tag = f"<span class='h2h-badge'>⚔️ {row.get('H2H主')}-{row.get('H2H和')}-{row.get('H2H客')}</span>"
         xg_txt = f"xG: {row.get('xG主',0)} - {row.get('xG客',0)} ({row.get('數據源','-')})"
 
-        # HTML 卡片構建
         card_html = f"<div class='compact-card'>"
         card_html += f"<div class='match-header'><span>{row.get('時間','')} | {row.get('聯賽','')}</span><span>{row.get('狀態','')}</span></div>"
         
         card_html += f"<div class='content-row'>"
-        # 主客隊資訊
         card_html += f"<div class='teams-area'>"
         card_html += f"<div class='team-name'>{row.get('主隊','')} {rank_h} {inj_h_tag} {val_h_tag}</div>"
         card_html += f"<div class='team-sub'>{form_h} {h2h_tag}</div>"
@@ -221,17 +211,15 @@ def main():
         card_html += f"<div class='team-sub'>{form_a}</div>"
         card_html += f"</div>"
         
-        # 比分與 xG
         card_html += f"<div class='score-area'><span class='score-main'>{score_txt}</span><span class='xg-sub'>{xg_txt}</span></div>"
         card_html += f"</div>"
         
-        # 數據矩陣
         card_html += f"<div class='grid-matrix'>"
         card_html += f"<div class='matrix-col'><div class='matrix-header'>特化勝率%</div><div class='matrix-cell'><span class='cell-val'>主</span>{fmt_pct_display(prob_h)}</div><div class='matrix-cell'><span class='cell-val'>客</span>{fmt_pct_display(prob_a)}</div></div>"
         card_html += f"<div class='matrix-col'><div class='matrix-header'>進球概率%</div><div class='matrix-cell'><span class='cell-val'>大2.5</span>{fmt_pct_display(prob_o25, 55, True)}</div><div class='matrix-cell'><span class='cell-val'>BTTS</span>{fmt_pct_display(row.get('BTTS',0))}</div></div>"
         card_html += f"<div class='matrix-col'><div class='matrix-header'>賠率</div><div class='matrix-cell'><span class='cell-val'>主</span><span style='color:#00e5ff'>{format_odds(row.get('主賠'))}</span></div><div class='matrix-cell'><span class='cell-val'>客</span><span style='color:#00e5ff'>{format_odds(row.get('客賠'))}</span></div></div>"
         card_html += f"<div class='matrix-col'><div class='matrix-header'>預期</div><div class='matrix-cell'><span class='cell-val'>主xG</span><span class='cell-val'>{row.get('xG主')}</span></div><div class='matrix-cell'><span class='cell-val'>客xG</span><span class='cell-val'>{row.get('xG客')}</span></div></div>"
-        card_html += f"</div>" # End Matrix
+        card_html += f"</div>" 
 
         card_html += f"</div>"
         st.markdown(card_html, unsafe_allow_html=True)
