@@ -1,219 +1,250 @@
+
 import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
-from datetime import datetime
+
+# ================= 語言設定 (Translations) =================
+LANGUAGES = {
+    "繁體中文": {
+        "title": "足球AI Pro (V38.1 Eco)",
+        "sidebar_filter": "🔍 篩選",
+        "league_label": "聯賽:",
+        "status_label": "狀態:",
+        "all": "全部",
+        "not_started": "未開賽",
+        "live": "進行中",
+        "completed": "完場",
+        "data_source": "數據來源",
+        "matches_count": "場次",
+        "mode_desc": "模式: 省流高效 (3日範圍)",
+        "load_error": "❌ 無法加載數據。請確保已運行 'run_me.py' 且生成了 CSV 文件。",
+        "matrix_win_rate": "特化勝率%",
+        "matrix_goals": "進球概率%",
+        "matrix_odds": "賠率",
+        "matrix_expected": "預期",
+        "home": "主",
+        "away": "客",
+        "over25": "大2.5",
+        "btts": "BTTS",
+        "lang_label": "語言 / Language"
+    },
+    "简体中文": {
+        "title": "足球AI Pro (V38.1 Eco)",
+        "sidebar_filter": "🔍 筛选",
+        "league_label": "联赛:",
+        "status_label": "状态:",
+        "all": "全部",
+        "not_started": "未开赛",
+        "live": "进行中",
+        "completed": "完场",
+        "data_source": "数据来源",
+        "matches_count": "场次",
+        "mode_desc": "模式: 省流高效 (3日范围)",
+        "load_error": "❌ 无法加载数据。请确保已运行 'run_me.py' 且生成了 CSV 文件。",
+        "matrix_win_rate": "特化胜率%",
+        "matrix_goals": "进球概率%",
+        "matrix_odds": "赔率",
+        "matrix_expected": "预期",
+        "home": "主",
+        "away": "客",
+        "over25": "大2.5",
+        "btts": "BTTS",
+        "lang_label": "语言 / Language"
+    }
+}
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-st.set_page_config(page_title="足球AI Pro (V40.8 Debug)", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="足球AI Pro (V38.1 Eco)", page_icon="⚽", layout="wide")
 
-# ================= CSS =================
+# ================= CSS 優化 (暗黑風格) =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
-    [data-testid="stSidebar"] { min-width: 240px !important; }
-    .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-bottom: 12px; font-family: 'Arial', sans-serif; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-    .match-header { display: flex; justify-content: space-between; color: #aaa; font-size: 0.8rem; border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 8px; }
-    .status-live { color: #ff5252; font-weight: bold; animation: pulse 1.5s infinite; }
-    .status-fin { color: #aaa; }
-    .team-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-    .team-name { font-weight: bold; font-size: 1.1rem; color: #fff; display: flex; align-items: center; gap: 5px; }
-    .score { font-size: 1.2rem; font-weight: bold; color: #00e5ff; }
-    .grid-box { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 10px; background: #111; padding: 5px; border-radius: 5px; }
-    .grid-item { text-align: center; border-right: 1px solid #333; }
-    .grid-item:last-child { border-right: none; }
-    .grid-label { font-size: 0.7rem; color: #888; display: block; }
-    .grid-val { font-size: 0.85rem; color: #eee; font-weight: bold; }
-    .high-val { color: #00e676; }
-    .ah-box { background: #222; padding: 4px; border-radius: 4px; margin-top: 5px; display: flex; justify-content: space-around; font-size: 0.8rem; color: #ccc; }
-    .ah-val { color: #ffd700; font-weight: bold; }
-    .ou-table { width: 100%; font-size: 0.75rem; color: #ccc; margin-top: 5px; border-collapse: collapse; }
-    .ou-table td { border: 1px solid #333; padding: 2px 4px; text-align: center; }
-    .ou-head { background: #333; font-weight: bold; color: #fff; }
-    .val-badge { background: #ffd700; color: #000; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; font-weight: bold; }
-    .rank-badge { background: #444; color: #fff; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem; }
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+    [data-testid="stSidebar"] { min-width: 200px !important; max-width: 250px !important; }
+    
+    .compact-card { background-color: #1a1c24; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 10px; font-family: 'Arial', sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    
+    .match-header { display: flex; justify-content: space-between; color: #888; font-size: 0.8rem; margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    
+    .content-row { display: grid; grid-template-columns: 7fr 3fr; align-items: center; margin-bottom: 10px; }
+    .teams-area { text-align: left; display: flex; flex-direction: column; justify-content: center; }
+    
+    /* 隊名樣式 */
+    .team-name { font-weight: bold; font-size: 1.15rem; color: #fff; margin-bottom: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; } 
+    
+    /* 排名標章 */
+    .rank-badge { background: #555; color: #fff; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; border: 1px solid #777; }
+    .rank-top { background: #ff9800; color: #000; border: 1px solid #ff9800; }
+    .rank-bot { background: #d32f2f; color: #fff; border: 1px solid #d32f2f; }
+    
+    /* 走勢圓點 */
+    .team-sub { font-size: 0.75rem; color: #aaa; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px;}
+    .form-dots { display: flex; gap: 3px; align-items: center; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
+    .dot-W { background-color: #00e676; }
+    .dot-D { background-color: #ffeb3b; }
+    .dot-L { background-color: #ff5252; }
+    .dot-N { background-color: #555; }
+    
+    /* Value 標籤 (金色) */
+    .val-badge { color: #000; background: #ffd700; font-weight: bold; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; margin-left: 5px; box-shadow: 0 0 5px rgba(255, 215, 0, 0.5); border: 1px solid #e6c200; }
+
+    /* 比分與 xG */
+    .score-area { text-align: right; display: flex; flex-direction: column; align-items: flex-end; }
+    .score-main { font-size: 2.0rem; font-weight: bold; color: #00ffea; letter-spacing: 2px; line-height: 1; }
+    .xg-sub { font-size: 0.7rem; color: #888; margin-top: 4px; border: 1px solid #444; padding: 1px 4px; border-radius: 4px; background: #222; }
+    
+    /* 其他標籤 */
+    .inj-badge { color: #ff4b4b; font-weight: bold; font-size: 0.75rem; border: 1px solid #ff4b4b; padding: 0 4px; border-radius: 3px; }
+    .h2h-badge { color: #ffd700; font-weight: bold; font-size: 0.75rem; background: #333; padding: 0 4px; border-radius: 3px; }
+    
+    /* 數據矩陣 */
+    .grid-matrix { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; font-size: 0.75rem; margin-top: 8px; text-align: center; }
+    .matrix-col { background: #222; padding: 2px; border-radius: 4px; border: 1px solid #333; display: flex; flex-direction: column; }
+    .matrix-header { color: #ff9800; font-weight: bold; font-size: 0.75rem; margin-bottom: 2px; border-bottom: 1px solid #444; padding-bottom: 1px; }
+    .matrix-cell { display: flex; justify-content: space-between; padding: 0 4px; align-items: center; line-height: 1.4; }
+    .cell-val { color: #fff; font-weight: bold; font-size: 0.9rem; }
+    .cell-val-high { color: #00ff00; font-weight: bold; font-size: 0.9rem; }
+    .cell-val-zero { color: #444; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 數據加載 (底層重構: 使用 get_all_values) =================
-# ttl=0 確保每次都從 Google Sheet 拉最新數據，不緩存
-@st.cache_data(ttl=0)
-def load_data():
-    df = pd.DataFrame()
-    src = "無"
+# ================= 輔助函數 =================
+def clean_pct(val):
+    if pd.isna(val) or val == '' or str(val) == 'nan': return 0
     try:
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        if "gcp_service_account" in st.secrets:
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
-        else:
-            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        client = gspread.authorize(creds)
-        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
-        
-        # 【核心修改】直接抓取所有原始值，這是最穩定的方法
-        raw_data = sheet.get_all_values()
-        if raw_data and len(raw_data) > 1:
-            headers = raw_data[0]
-            rows = raw_data[1:]
-            df = pd.DataFrame(rows, columns=headers)
-            src = "Cloud"
-    except:
-        if os.path.exists(CSV_FILENAME):
-            df = pd.read_csv(CSV_FILENAME)
-            src = "Local"
-            
-    # 補全欄位
-    req = [
-        '聯賽','時間','狀態','主隊','客隊','主分','客分','xG主','xG客',
-        '主勝率','和率','客勝率','主Value','和Value','客Value',
-        '全場大0.5','全場大1.5','全場大2.5','全場大3.5','半場大0.5','半場大1.5',
-        'BTTS機率','主先入球率','亞盤主','亞盤客','亞盤盤口', '主排名', '客排名', '數據源',
-        '主賠', '和賠', '客賠'
-    ]
-    
-    if df.empty:
-        df = pd.DataFrame(columns=req)
-    else:
-        for c in req:
-            if c not in df.columns: df[c] = ""
-            
-    return df, src
+        f = float(str(val).replace('%', ''))
+        return int(f)
+    except: return 0
 
-def safe_fmt(val, is_pct=False):
+def format_odds(val):
     try:
-        if val is None: return "-"
-        s = str(val).strip()
-        if s == "" or s.lower() == "nan" or s == "-": return "-"
-        f = float(s.replace('%',''))
-        if f == 0: return "-"
-        if is_pct: return f"{int(f)}%"
+        f = float(val)
+        if f <= 1: return "-"
         return f"{f:.2f}"
     except: return "-"
 
-def get_cls(val):
+def fmt_pct_display(val, threshold=50, is_o25=False):
+    v = clean_pct(val)
+    if v == 0: return "<span class='cell-val-zero'>-</span>"
+    css_class = "cell-val-high" if (v > threshold) else "cell-val"
+    if is_o25 and v > 55: css_class = "cell-val-high"
+    return f"<span class='{css_class}'>{v}%</span>"
+
+def render_form_dots(form_str):
+    if not form_str or str(form_str) == 'nan' or form_str == 'N/A' or form_str == '?????': 
+        return "" 
+    html = "<div class='form-dots'>"
+    for char in str(form_str)[-5:]:
+        cls = "dot-N"
+        if char == 'W': cls = "dot-W"
+        elif char == 'D': cls = "dot-D"
+        elif char == 'L': cls = "dot-L"
+        html += f"<span class='dot {cls}'></span>"
+    html += "</div>"
+    return html
+
+def render_rank_badge(rank):
+    if str(rank) == '?' or str(rank) == 'nan':
+        return "<span class='rank-badge'>#?</span>"
     try:
-        if val is None: return ""
-        s = str(val).replace('%','').replace('-','0').strip()
-        if not s: return ""
-        v = float(s)
-        return 'high-val' if v > 50 else ''
+        r = int(rank)
+        cls = "rank-badge"
+        if r <= 4: cls += " rank-top" 
+        if r >= 18: cls += " rank-bot" 
+        return f"<span class='{cls}'>#{r}</span>"
     except: return ""
+
+def load_data():
+    df = pd.DataFrame()
+    source = "無"
+    
+    try:
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        if os.path.exists("key.json"):
+            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+        else:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        client = gspread.authorize(creds)
+        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+        source = "Google Cloud"
+        
+        if '主Value' not in df.columns:
+            df = pd.DataFrame() 
+    except: pass
+
+    if df.empty and os.path.exists(CSV_FILENAME):
+        try:
+            df = pd.read_csv(CSV_FILENAME)
+            source = "Local Backup (CSV)"
+        except: pass
+        
+    return df, source
 
 # ================= 主程式 =================
 def main():
-    st.title("⚽ 足球AI Pro (V40.8 Debug)")
-    
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("🗑️ 清除緩存"):
-            st.cache_data.clear()
-            st.rerun()
-    with col2:
-        if st.button("🔄 刷新數據"):
-            st.rerun()
+    # 語言切換
+    selected_lang = st.sidebar.selectbox("語言 / Language", list(LANGUAGES.keys()))
+    t = LANGUAGES[selected_lang]
 
-    df, src = load_data()
+    st.title(t["title"])
+    
+    df, source = load_data()
+
     if df.empty:
-        st.warning(f"⚠️ 暫無數據 (來源: {src})")
+        st.error(t["load_error"])
         return
 
-    with st.sidebar:
-        st.header("🔍 篩選")
-        # 顯示原始數據開關
-        show_raw = st.checkbox("🐞 顯示原始數據 (Debug)")
+    st.success(f"✅ {t['data_source']}: {source} | {t['matches_count']}: {len(df)} | {t['mode_desc']}")
+
+    # 側邊欄篩選
+    st.sidebar.header(t["sidebar_filter"])
+    if '聯賽' in df.columns:
+        leagues = [t["all"]] + sorted(list(set(df['聯賽'].astype(str))))
+        sel_lg = st.sidebar.selectbox(t["league_label"], leagues)
+        if sel_lg != t["all"]: df = df[df['聯賽'] == sel_lg]
+
+    status_options = {
+        t["all"]: "全部",
+        t["not_started"]: "未開賽",
+        t["live"]: "進行中",
+        t["completed"]: "完場"
+    }
+    status_filter_label = st.sidebar.radio(t["status_label"], list(status_options.keys()))
+    status_val = status_options[status_filter_label]
+    
+    if status_val != "全部":
+        df = df[df['狀態'] == status_val]
+
+    # 排序：進行中 > 未開賽 > 完場
+    df['sort_idx'] = df['狀態'].apply(lambda x: 0 if x == '進行中' else 1 if x=='未開賽' else 2)
+    df = df.sort_values(by=['sort_idx', '時間'])
+
+    for index, row in df.iterrows():
+        # 讀取數值
+        prob_h = clean_pct(row.get('主勝率', 0))
+        prob_a = clean_pct(row.get('客勝率', 0))
+        prob_o25 = clean_pct(row.get('大2.5', 0))
         
-        status_list = ["全部", "未開賽", "進行中", "完場", "取消/延期"]
-        sel_status = st.selectbox("狀態", status_list)
+        score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) != '' and str(row.get('主分')) != 'nan' else "VS"
         
-        sel_date = None
-        if sel_status == "完場":
-            st.info("📅 請選擇完場日期")
-            try:
-                unique_dates = sorted(list(set(df['時間'].astype(str).str[:10])))
-                if unique_dates:
-                    sel_date = st.selectbox("日期", unique_dates, index=len(unique_dates)-1)
-                else:
-                    sel_date = st.date_input("日期", datetime.now())
-            except:
-                sel_date = st.date_input("日期", datetime.now())
-            
-        leagues = ["全部"] + sorted(list(set(df['聯賽'].astype(str))))
-        sel_lg = st.selectbox("聯賽", leagues)
-
-        if sel_status != "全部":
-            if sel_status == "取消/延期":
-                df = df[df['狀態'].astype(str).str.contains("取消|延期", na=False)]
-            elif sel_status == "完場":
-                df = df[df['狀態'] == "完場"]
-                if sel_date:
-                    df = df[df['時間'].astype(str).str.startswith(str(sel_date), na=False)]
-            else:
-                df = df[df['狀態'] == sel_status]
-        if sel_lg != "全部": df = df[df['聯賽'] == sel_lg]
-
-    # === Debug 顯示 ===
-    if show_raw:
-        st.subheader("📊 原始數據表 (Debug Mode)")
-        st.dataframe(df)
-
-    st.caption(f"來源: {src} | 共 {len(df)} 場")
-
-    try:
-        df['sort'] = df['狀態'].apply(lambda x: 0 if str(x)=="進行中" else 1 if str(x)=="未開賽" else 2)
-        df = df.sort_values(by=['sort', '時間'])
-    except: pass
-
-    for idx, row in df.iterrows():
-        ph = safe_fmt(row.get('主勝率'), True)
-        pd_prob = safe_fmt(row.get('和率'), True)
-        pa = safe_fmt(row.get('客勝率'), True)
-        val_h = "<span class='val-badge'>💰</span>" if str(row.get('主Value'))=='💰' else ""
-        val_d = "<span class='val-badge'>💰</span>" if str(row.get('和Value'))=='💰' else ""
-        val_a = "<span class='val-badge'>💰</span>" if str(row.get('客Value'))=='💰' else ""
-        ah_line = str(row.get('亞盤盤口')) if row.get('亞盤盤口') else '平手'
-        s_cls = 'status-live' if str(row.get('狀態'))=='進行中' else 'status-fin'
+        # 渲染標籤
+        rank_h = render_rank_badge(row.get('主排名', '?'))
+        rank_a = render_rank_badge(row.get('客排名', '?'))
+        form_h = render_form_dots(row.get('主走勢', '?????'))
+        form_a = render_form_dots(row.get('客走勢', '?????'))
         
-        # HTML 結構 (確保無縮排)
-        html = f"""
-<div class="compact-card">
-<div class="match-header">
-<span>{row.get('時間','-')} | {row.get('聯賽','-')}</span>
-<span class="{s_cls}">{row.get('狀態','-')}</span>
-</div>
-<div class="team-row">
-<span class="team-name">{row.get('主隊','-')} <span class="rank-badge">#{row.get('主排名','-')}</span> {val_h}</span>
-<span class="score">{row.get('主分','')}</span>
-</div>
-<div class="team-row">
-<span class="team-name">{row.get('客隊','-')} <span class="rank-badge">#{row.get('客排名','-')}</span> {val_a}</span>
-<span class="score">{row.get('客分','')}</span>
-</div>
-<div class="grid-box">
-<div class="grid-item"><span class="grid-label">主勝率</span><span class="grid-val {get_cls(ph)}">{ph}</span></div>
-<div class="grid-item"><span class="grid-label">和率</span><span class="grid-val">{pd_prob} {val_d}</span></div>
-<div class="grid-item"><span class="grid-label">客勝率</span><span class="grid-val {get_cls(pa)}">{pa}</span></div>
-<div class="grid-item"><span class="grid-label">BTTS</span><span class="grid-val">{safe_fmt(row.get('BTTS機率'), True)}</span></div>
-<div class="grid-item"><span class="grid-label">主先入</span><span class="grid-val">{safe_fmt(row.get('主先入球率'), True)}</span></div>
-</div>
-<div class="ah-box">
-<span>亞盤主: <span class="ah-val">{safe_fmt(row.get('亞盤主'))}</span></span>
-<span>盤口: <span style="color:#fff">{ah_line}</span></span>
-<span>亞盤客: <span class="ah-val">{safe_fmt(row.get('亞盤客'))}</span></span>
-</div>
-<table class="ou-table">
-<tr class="ou-head"><td>盤口</td><td>0.5</td><td>1.5</td><td>2.5</td><td>3.5</td></tr>
-<tr><td>全場大</td><td>{safe_fmt(row.get('全場大0.5'))}</td><td>{safe_fmt(row.get('全場大1.5'))}</td><td>{safe_fmt(row.get('全場大2.5'))}</td><td>{safe_fmt(row.get('全場大3.5'))}</td></tr>
-<tr><td>半場大</td><td>{safe_fmt(row.get('半場大0.5'))}</td><td>{safe_fmt(row.get('半場大1.5'))}</td><td colspan="2" style="color:#555">-</td></tr>
-</table>
-<div style="text-align:right; font-size:0.7rem; color:#666; margin-top:5px;">xG: {row.get('xG主','-')} - {row.get('xG客','-')} (源:{row.get('數據源','-')})</div>
-</div>
-"""
-        st.markdown(html, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    main()
+        # Value 標籤
+        val_h = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('主Value')) == '💰' else ""
+        val_a = f"<span class='val-badge'>💰 VALUE</span>" if str(row.get('客Value')) == '💰' else ""
+        
+        inj_h = clean_pct(row.get('主傷', 0))
+        inj_a = clean_pct(row.get('客傷', 0))
+        inj_h_tag = f"<span class='inj-badge'>🚑 {inj_h}</span>" if inj_h > 0 else
