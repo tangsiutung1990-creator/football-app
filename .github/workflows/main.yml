@@ -1,12 +1,11 @@
 name: Football Data Auto-Update
 
-# 設定觸發條件
 on:
   schedule:
     # 這裡設定為每 6 小時運行一次 (UTC 時間)
     - cron: '0 */6 * * *'
   
-  # 2. 手動運行：允許你在 GitHub Actions 頁面按按鈕手動觸發
+  # 手動運行
   workflow_dispatch:
 
 jobs:
@@ -18,21 +17,24 @@ jobs:
     - name: Checkout content
       uses: actions/checkout@v3
 
-    # 第二步：設定 Python 環境 (使用 3.9)
+    # 第二步：設定 Python 環境
     - name: Set up Python 3.9
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
 
     # 第三步：安裝必要的庫
+    # 修改：直接讀取 requirements.txt，確保安裝 streamlit
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests pandas google-auth oauth2client gspread pytz
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        # 額外確保 requests 和其他庫存在 (雙重保險)
+        pip install requests pandas google-auth oauth2client gspread pytz streamlit
 
     # 第四步：執行主程式
-    # 注意：這裡不需要安裝 streamlit，因為 run_me.py 已經移除了對它的依賴
     - name: Run Data Updater
       run: python run_me.py
-      # 如果你的 key.json 是透過 GitHub Secrets 寫入的，可以在這裡添加步驟生成它
-      # 如果你直接把 key.json 放上去(雖然不推薦但可行)，則直接運行即可
+      env:
+        # 如果你有設置 GitHub Secrets，這裡可以傳入
+        FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
