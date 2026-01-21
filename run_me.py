@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import os
-import sys
 import streamlit as st
 
 # ================= 設定區 =================
@@ -161,19 +160,61 @@ def poisson_prob(k, lam):
     if lam <= 0: return 0
     return (math.pow(lam, k) * math.exp(-lam)) / math.factorial(k)
 
-def calculate_asian_handicap(h_xg, a_xg):
+def calculate_ah_probability(prob_exact, handicap_line, team='home'):
+    """
+    計算亞盤勝率
+    handicap_line: 相對於主隊的讓球 (例如 -0.5, +0.5)
+    """
+    win_prob = 0
+    # 遍歷矩陣中所有可能的比分 (h, a)
+    for (h, a), prob in prob_exact.items():
+        # 亞盤計算邏輯：主隊得分 + 讓球 > 客隊得分
+        if team == 'home':
+            if (h + handicap_line) > a:
+                win_prob += prob
+            elif (h + handicap_line) == a:
+                # 走盤情況，這裡暫時不計入勝率，或者可以算一半，這裡算輸贏盤所以不加
+                pass
+        else:
+            # 客隊視角：客隊得分 - 讓球 > 主隊得分 (或者說 客隊得分 + (讓球*-1) > 主隊)
+            # 這裡簡化：如果盤口是 主-0.5，相當於 客+0.5
+            if (a - handicap_line) > h:
+                win_prob += prob
+                
+    return win_prob
+
+def calculate_asian_handicap_data(h_xg, a_xg, prob_exact):
     diff = h_xg - a_xg
-    # 簡單的映射邏輯：xG 差距對應盤口
-    if diff >= 2.0: return "主 -2.0"
-    elif diff >= 1.5: return "主 -1.5"
-    elif diff >= 1.0: return "主 -1.0"
-    elif diff >= 0.5: return "主 -0.5"
-    elif diff >= 0.2: return "主 -0/0.5"
-    elif diff > -0.2: return "平手 (0)"
-    elif diff > -0.5: return "客 -0/0.5"
-    elif diff > -1.0: return "客 -0.5"
-    elif diff > -1.5: return "客 -1.0"
-    else: return "客 -1.5"
+    pick = ""
+    line = 0.0
+    
+    # 決定盤口和方向
+    if diff >= 1.8: line = -1.5; pick = "主 -1.5"
+    elif diff >= 1.3: line = -1.0; pick = "主 -1.0"
+    elif diff >= 0.8: line = -0.5; pick = "主 -0.5"
+    elif diff >= 0.3: line = -0.25; pick = "主 -0/0.5" # 0.25 較難計算精確勝率，這裡近似
+    elif diff > -0.3: line = 0.0; pick = "平手 (0)"
+    elif diff > -0.8: line = 0.25; pick = "客 -0/0.5" # 實際是主 +0.25
+    elif diff > -1.3: line = 0.5; pick = "客 -0.5"     # 實際是主 +0.5
+    elif diff > -1.8: line = 1.0; pick = "客 -1.0"     # 實際是主 +1.0
+    else: line = 1.5; pick = "客 -1.5"                 # 實際是主 +1.5
+
+    # 計算該推薦盤口的理論勝率
+    # 這裡 line 始終是相對於主隊的。例如選 "客 -0.5"，意味著主隊是 +0.5
+    # 若 pick 是客隊，我們計算客隊贏盤率
+    
+    target_team = 'home'
+    calc_line = line
+    
+    if "客" in pick:
+        target_team = 'away'
+        # 如果顯示客 -0.5，代表數學上是 主 +0.5。
+        # 在 calculate_ah_probability 中，若 team='away'，handicap_line 仍傳入主隊視角的讓球值
+        # 例如 pick "客 -0.5" -> 主 +0.5 -> calc_line = 0.5
+        pass
+    
+    prob = calculate_ah_probability(prob_exact, calc_line, target_team)
+    return pick, prob * 100
 
 def calculate_advanced_math_probs(h_exp, a_exp):
     prob_exact = {}
@@ -201,20 +242,21 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     ht_o05 = sum(p for (h, a), p in ht_prob_exact.items() if h+a > 0.5)
     ht_o15 = sum(p for (h, a), p in ht_prob_exact.items() if h+a > 1.5)
 
-    # 亞盤建議
-    ah_pick = calculate_asian_handicap(h_exp, a_exp)
+    # 亞盤建議與機率
+    ah_pick, ah_prob = calculate_asian_handicap_data(h_exp, a_exp, prob_exact)
 
     return {
         'h_win': h_win*100, 'draw': draw*100, 'a_win': a_win*100,
         'o05': o05*100, 'o15': o15*100, 'o25': o25*100, 'o35': o35*100,
         'ht_o05': ht_o05*100, 'ht_o15': ht_o15*100,
         'btts': btts*100,
-        'ah_pick': ah_pick
+        'ah_pick': ah_pick,
+        'ah_prob': ah_prob
     }
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.1 Eco-Mode (昨日+今日版) 啟動...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.2 數據更新程序啟動...")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
@@ -242,10 +284,19 @@ def main():
             fix_id = item['fixture']['id']
             match_date_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d')
             t_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
-            status = item['fixture']['status']['short']
+            status_short = item['fixture']['status']['short']
             
-            is_finished = status in ['FT','AET','PEN']
-            status_txt = '完場' if is_finished else ('進行中' if status in ['1H','2H','HT','LIVE'] else '未開賽')
+            # 狀態分類邏輯
+            if status_short in ['FT', 'AET', 'PEN']:
+                status_txt = '完場'
+            elif status_short in ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE']:
+                status_txt = '進行中'
+            elif status_short in ['NS', 'TBD']:
+                status_txt = '未開賽'
+            elif status_short in ['PST', 'CANC', 'ABD', 'AWD', 'WO']:
+                status_txt = '延期/取消'
+            else:
+                status_txt = '未開賽'
 
             h_name = item['teams']['home']['name']; a_name = item['teams']['away']['name']
             h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
@@ -261,9 +312,8 @@ def main():
             probs = calculate_advanced_math_probs(h_exp, a_exp)
             
             odds_h, odds_d, odds_a = 0,0,0
-            # 完場比賽通常不需要賠率，但為了記錄可以保留，這裡為了省流：如果是昨天的且已完場，可以跳過賠率
-            # 但使用者可能想看歷史賠率，所以這裡保留邏輯，只在未開賽時必定抓
-            if not is_finished:
+            # 只在未開賽或進行中抓取賠率，完場的可以跳過以節省請求
+            if status_txt != '完場':
                 odds_h, odds_d, odds_a = get_best_odds(fix_id)
             
             h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
@@ -275,7 +325,7 @@ def main():
                 if (probs['a_win']/100) > (1/odds_a): val_a = "💰"
 
             cleaned_data.append({
-                '日期': match_date_str, # 用於篩選
+                '日期': match_date_str, 
                 '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
                 '主分': sc_h if sc_h is not None else "", '客分': sc_a if sc_a is not None else "",
                 '主排名': h_info['rank'], '客排名': a_info['rank'],
@@ -283,16 +333,20 @@ def main():
                 '主Value': val_h, '客Value': val_a,
                 'xG主': round(h_exp,2), 'xG客': round(a_exp,2), '數據源': src,
                 '主勝率': round(probs['h_win']), '和率': round(probs['draw']), '客勝率': round(probs['a_win']),
-                '大0.5': round(probs['o05']), '大1.5': round(probs['o15']), 
-                '大2.5': round(probs['o25']), '大3.5': round(probs['o35']),
-                '半大0.5': round(probs['ht_o05']), '半大1.5': round(probs['ht_o15']),
+                '大0.5': round(probs['o05']), 
+                '大1.5': round(probs['o15']), 
+                '大2.5': round(probs['o25']), 
+                '大3.5': round(probs['o35']),
+                '半大0.5': round(probs['ht_o05']), 
+                '半大1.5': round(probs['ht_o15']),
                 '亞盤': probs['ah_pick'],
+                '亞盤率': round(probs['ah_prob']), # 新增
                 'BTTS': round(probs['btts']),
                 '主賠': odds_h, '客賠': odds_a,
                 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
             })
             
-            print(f"         ✅ {h_name} vs {a_name}")
+            print(f"         ✅ {h_name} vs {a_name} | {probs['ah_pick']}")
             time.sleep(0.1)
 
     if cleaned_data:
