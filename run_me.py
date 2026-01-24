@@ -35,14 +35,14 @@ LEAGUE_ID_MAP = {
     2: '歐聯', 3: '歐霸'
 }
 
-# ================= 輔助函數：修復 Private Key =================
+# ================= 核心修復函數 =================
 def fix_private_key(key_str):
-    """修復 private_key 中的換行符問題"""
+    """
+    修復 private_key 中的換行符問題
+    將 literal 的 string '\\n' 替換為真正的換行符 '\n'
+    """
     if not key_str: return key_str
-    # 將 literal 的 \n 替換為真正的換行符
-    fixed_key = key_str.replace('\\n', '\n')
-    # 確保頭尾沒有多餘的引號或空白
-    return fixed_key.strip().strip('"').strip("'")
+    return key_str.replace('\\n', '\n').strip()
 
 # ================= API 連接 =================
 def call_api(endpoint, params=None):
@@ -61,7 +61,7 @@ def call_api(endpoint, params=None):
         else: return None
     except: return None
 
-# ================= Google Sheet 連接 (JWT Fix) =================
+# ================= Google Sheet 連接 (JWT 強制修復) =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
@@ -71,7 +71,8 @@ def get_google_spreadsheet():
     if json_text:
         try:
             creds_dict = json.loads(json_text)
-            # CRITICAL FIX: 強制修復 Private Key
+            
+            # ✅ 修復重點：強制處理 private_key
             if 'private_key' in creds_dict:
                 creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
             
@@ -85,8 +86,10 @@ def get_google_spreadsheet():
     if not creds:
         try:
             if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                # 必須轉為標準 dict
+                # 必須轉為標準 dict 才能修改
                 creds_dict = dict(st.secrets["gcp_service_account"])
+                
+                # ✅ 修復重點：強制處理 private_key
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                 
@@ -106,7 +109,7 @@ def get_google_spreadsheet():
             client = gspread.authorize(creds)
             return client.open(GOOGLE_SHEET_NAME)
         except Exception as e:
-            print(f"⚠️ Google Sheet 連接異常 (可能為權限或 Key 錯誤): {e}")
+            print(f"⚠️ Google Sheet 連接異常 (可能是 Key 格式錯誤): {e}")
             return None
     
     return None
@@ -264,7 +267,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.9 數據引擎啟動 (Key Fix)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V39.0 數據引擎啟動 (Key Fix)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
