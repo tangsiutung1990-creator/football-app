@@ -64,6 +64,10 @@ def get_google_spreadsheet():
     if json_text:
         try:
             creds_dict = json.loads(json_text)
+            # CRITICAL FIX: 處理 private_key 中的換行符轉義問題
+            if 'private_key' in creds_dict:
+                creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+            
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         except Exception as e:
             print(f"⚠️ GCP_SERVICE_ACCOUNT_JSON 解析失敗: {e}")
@@ -256,7 +260,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.6 數據引擎啟動 (GH Action Debug)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.7 數據引擎啟動 (Key Fix)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
