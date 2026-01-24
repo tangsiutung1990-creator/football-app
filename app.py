@@ -5,6 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os
 from datetime import datetime, timedelta
 import pytz
+import json
 
 # ================= 設定區 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -20,14 +21,14 @@ st.markdown("""
     /* 縮小頂部 */
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
     
-    /* 狀態按鈕優化 (st.pills) */
+    /* 狀態按鈕優化 */
     div[data-testid="stPills"] { gap: 4px; }
     
     .compact-card { 
         background-color: #1a1c24; 
         border: 1px solid #333; 
         border-radius: 6px; 
-        padding: 4px 8px; /* 極窄內距 */
+        padding: 2px 4px; /* 內距極窄 */
         margin-bottom: 6px; 
         font-family: 'Arial', sans-serif; 
     }
@@ -36,80 +37,80 @@ st.markdown("""
         display: flex; 
         justify-content: space-between; 
         color: #999; 
-        font-size: 0.9rem; 
+        font-size: 0.8rem; 
         margin-bottom: 2px; 
         border-bottom: 1px solid #333; 
+        padding-bottom: 2px;
     }
     
     .content-row { 
         display: grid; 
-        grid-template-columns: 6fr 4fr; 
+        grid-template-columns: 6.5fr 3.5fr; 
         align-items: center; 
-        margin-bottom: 4px; 
+        margin-bottom: 2px; 
     }
     
     .team-name { 
         font-weight: bold; 
-        font-size: 1.25rem; /* 大字體 */
+        font-size: 1.1rem; 
         color: #fff; 
-        line-height: 1.2;
+        line-height: 1.1;
     } 
     
     .team-sub { 
-        font-size: 0.85rem; 
+        font-size: 0.75rem; 
         color: #bbb; 
-        margin-top: 2px;
+        margin-top: 1px;
     }
     
-    .score-main { font-size: 2.2rem; font-weight: bold; color: #00ffea; line-height: 1; text-align: right; }
-    .score-sub { font-size: 0.85rem; color: #888; text-align: right; }
+    .score-main { font-size: 1.8rem; font-weight: bold; color: #00ffea; line-height: 1; text-align: right; }
+    .score-sub { font-size: 0.75rem; color: #888; text-align: right; }
 
     /* 矩陣優化 */
     .grid-matrix { 
         display: grid; 
-        grid-template-columns: repeat(4, 1fr); 
-        gap: 0px; /* 無間距 */
-        margin-top: 4px; 
+        grid-template-columns: 1.2fr 1fr 1fr 1.3fr; /* 調整欄寬比例 */
+        gap: 0px; 
+        margin-top: 2px; 
         background: #222;
         border-radius: 4px;
         overflow: hidden;
     }
     
     .matrix-col { 
-        padding: 2px; 
+        padding: 1px; 
         border-right: 1px solid #333; 
     }
     .matrix-col:last-child { border-right: none; }
     
     .matrix-header { 
         color: #ff9800; 
-        font-size: 0.85rem; 
+        font-size: 0.75rem; 
         font-weight: bold;
         text-align: center;
         border-bottom: 1px solid #444; 
-        margin-bottom: 2px;
+        margin-bottom: 1px;
     }
     
     .matrix-cell { 
         display: flex; 
         justify-content: space-between; 
-        padding: 0 4px; 
+        padding: 0 2px; 
         color: #ddd; 
-        font-size: 0.95rem; /* 數據字體加大 */
-        line-height: 1.4;
+        font-size: 0.8rem; /* 字體再縮小 */
+        line-height: 1.3;
     }
     
-    .matrix-label { color: #888; font-size: 0.8rem; margin-right: 2px; }
+    .matrix-label { color: #888; font-size: 0.75rem; margin-right: 2px; }
     
     .cell-high { color: #00ff00; font-weight: bold; }
     .cell-mid { color: #ffff00; }
-    .val-icon { font-size: 0.8rem; }
     
     .status-live { color: #ff4b4b; font-weight: bold; }
     .status-ft { color: #00ffea; }
     
     /* 修正 Sidebar */
-    section[data-testid="stSidebar"] { width: 250px !important; }
+    section[data-testid="stSidebar"] { width: 220px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -130,8 +131,16 @@ def load_data():
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = None
-        if "gcp_service_account" in st.secrets:
+        
+        # 嘗試從環境變量 (兼容 Cloud Run / GitHub Actions 等)
+        env_creds = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+        if env_creds:
+            creds_dict = json.loads(env_creds)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        # 嘗試從 Streamlit Secrets
+        elif "gcp_service_account" in st.secrets:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        # 嘗試從本地文件
         elif os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
             
@@ -140,7 +149,8 @@ def load_data():
             sheet = client.open(GOOGLE_SHEET_NAME).sheet1
             df = pd.DataFrame(sheet.get_all_records())
             source = "Cloud"
-    except: pass
+    except Exception as e:
+        pass
 
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
@@ -160,10 +170,13 @@ def render_match_card(row):
     status = row.get('狀態')
     status_cls = "status-live" if status == '進行中' else ("status-ft" if status == '完場' else "")
     
-    # 亞盤
-    ah_pick = row.get('亞盤', '-')
-    ah_prob = row.get('亞盤率', 0)
+    # 亞盤顯示
+    ah_h_pick = row.get('亞盤主', '-')
+    ah_h_prob = row.get('亞盤主率', 0)
+    ah_a_pick = row.get('亞盤客', '-')
+    ah_a_prob = row.get('亞盤客率', 0)
     
+    # 這裡的HTML結構被調整為更緊湊，且新增了要求的欄位
     card_html = f"""
     <div class='compact-card'>
         <div class='match-header'>
@@ -182,29 +195,39 @@ def render_match_card(row):
             </div>
         </div>
         <div class='grid-matrix'>
+            <!-- 勝平負 -->
             <div class='matrix-col'>
-                <div class='matrix-header'>勝平負 (1x2)</div>
+                <div class='matrix-header'>1x2</div>
                 <div class='matrix-cell'><span class='matrix-label'>主</span>{fmt_pct(prob_h)} {row.get('主Value','')}</div>
                 <div class='matrix-cell'><span class='matrix-label'>和</span>{fmt_pct(prob_d)} {row.get('和Value','')}</div>
                 <div class='matrix-cell'><span class='matrix-label'>客</span>{fmt_pct(prob_a)} {row.get('客Value','')}</div>
             </div>
+            <!-- 全場進球 (新增 >1.5) -->
             <div class='matrix-col'>
-                <div class='matrix-header'>全場進球</div>
-                <div class='matrix-cell'><span class='matrix-label'>>0.5</span>{fmt_pct(row.get('大0.5'), 90)}</div>
+                <div class='matrix-header'>全場</div>
+                <div class='matrix-cell'><span class='matrix-label'>>1.5</span>{fmt_pct(row.get('大1.5'), 75)}</div>
                 <div class='matrix-cell'><span class='matrix-label'>>2.5</span>{fmt_pct(row.get('大2.5'), 55)}</div>
                 <div class='matrix-cell'><span class='matrix-label'>>3.5</span>{fmt_pct(row.get('大3.5'), 40)}</div>
             </div>
+            <!-- 半場/BTTS (新增 半>0.5) -->
             <div class='matrix-col'>
-                <div class='matrix-header'>半場/BTTS</div>
+                <div class='matrix-header'>半/雙</div>
+                <div class='matrix-cell'><span class='matrix-label'>半>0.5</span>{fmt_pct(row.get('半大0.5'), 65)}</div>
                 <div class='matrix-cell'><span class='matrix-label'>半>1.5</span>{fmt_pct(row.get('半大1.5'), 35)}</div>
                 <div class='matrix-cell'><span class='matrix-label'>雙進</span>{fmt_pct(row.get('BTTS'), 55)}</div>
-                <div class='matrix-cell' style='color:#888; font-size:0.8rem'>-</div>
             </div>
+            <!-- 亞盤分析 (拆分主客) -->
             <div class='matrix-col'>
-                <div class='matrix-header'>亞盤分析</div>
-                <div class='matrix-cell' style='justify-content:center; color:#ffd700; font-weight:bold; font-size:0.9rem'>{ah_pick}</div>
-                <div class='matrix-cell'><span class='matrix-label'>機率</span>{fmt_pct(ah_prob, 55)}</div>
-                <div class='matrix-cell' style='justify-content:right; font-size:0.7rem; color:#666'>源: {row.get('數據源')}</div>
+                <div class='matrix-header'>亞盤 (機率)</div>
+                <div class='matrix-cell'>
+                    <span style='color:#ffd700; font-size:0.75rem'>{ah_h_pick}</span>
+                    {fmt_pct(ah_h_prob, 55)}
+                </div>
+                <div class='matrix-cell'>
+                    <span style='color:#ffd700; font-size:0.75rem'>{ah_a_pick}</span>
+                    {fmt_pct(ah_a_prob, 55)}
+                </div>
+                <div class='matrix-cell' style='justify-content:right; font-size:0.7rem; color:#555'>源:{row.get('數據源')}</div>
             </div>
         </div>
     </div>
@@ -213,7 +236,6 @@ def render_match_card(row):
 
 # ================= 主程式 =================
 def main():
-    # === 側邊欄篩選區 ===
     st.sidebar.title("🛠️ 賽事篩選")
     
     df, source = load_data()
@@ -222,32 +244,26 @@ def main():
         st.error("❌ 無數據，請運行後端。")
         return
 
-    # 狀態篩選 (使用 Pills 一按即選)
     st.sidebar.markdown("### 狀態")
     all_statuses = ['進行中', '未開賽', '完場', '延期']
-    # 預設選中 '進行中' 和 '未開賽'
     selected_statuses = st.sidebar.pills("選擇狀態", all_statuses, default=['進行中', '未開賽'], selection_mode="multi")
     
-    # 聯賽篩選
     if '聯賽' in df.columns:
         st.sidebar.markdown("### 聯賽")
         all_leagues = sorted(df['聯賽'].unique().tolist())
         selected_leagues = st.sidebar.multiselect("選擇聯賽", all_leagues, default=all_leagues)
     else: selected_leagues = []
 
-    # === 主頁面 ===
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     now = datetime.now(hk_tz)
     st.caption(f"數據源: {source} | 更新: {now.strftime('%H:%M')}")
 
-    # 過濾邏輯
     filtered_df = df.copy()
     if selected_statuses:
         filtered_df = filtered_df[filtered_df['狀態'].isin(selected_statuses)]
     if selected_leagues:
         filtered_df = filtered_df[filtered_df['聯賽'].isin(selected_leagues)]
 
-    # 排序：進行中 > 未開賽 > 完場
     status_order = {'進行中': 0, '未開賽': 1, '完場': 2, '延期': 3}
     filtered_df['status_rank'] = filtered_df['狀態'].map(status_order).fillna(4)
     filtered_df = filtered_df.sort_values(by=['status_rank', '時間'])
