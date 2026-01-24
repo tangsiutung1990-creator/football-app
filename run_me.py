@@ -8,22 +8,21 @@ import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import streamlit as st
+import json
 
 # ================= 設定區 =================
 API_KEY = None
 
+# 優先嘗試從 Streamlit secrets 讀取
 try:
     if "api" in st.secrets and "key" in st.secrets["api"]:
         API_KEY = st.secrets["api"]["key"]
 except FileNotFoundError:
     pass 
 
+# 其次嘗試環境變量
 if not API_KEY:
     API_KEY = os.getenv("FOOTBALL_API_KEY")
-
-if not API_KEY:
-    # 這裡只印出簡單提示，不影響運作
-    pass
 
 BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
@@ -55,21 +54,31 @@ def call_api(endpoint, params=None):
         else: return None
     except: return None
 
-# ================= Google Sheet =================
+# ================= Google Sheet (修正 GitHub Action 連接) =================
 def get_google_spreadsheet():
-    # 簡化錯誤處理，避免嚇到使用者
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
     try:
-        if "gcp_service_account" in st.secrets:
+        # 1. 嘗試從環境變量 (GitHub Actions 用)
+        # 在 GitHub Secrets 設定 GCP_SERVICE_ACCOUNT_JSON，內容為整個 JSON 字符串
+        env_creds = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+        if env_creds:
+            creds_dict = json.loads(env_creds)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        
+        # 2. 嘗試從 Streamlit Secrets
+        elif "gcp_service_account" in st.secrets:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+            
+        # 3. 嘗試從本地文件
         elif os.path.exists("key.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
             
         if creds:
             client = gspread.authorize(creds)
             return client.open(GOOGLE_SHEET_NAME)
-    except:
+    except Exception as e:
+        print(f"⚠️ Google Sheet 連接失敗: {e}")
         return None
     return None
 
@@ -160,26 +169,57 @@ def calculate_ah_probability(prob_exact, handicap_line, team='home'):
         if team == 'home':
             if (h + handicap_line) > a: win_prob += prob
         else:
-            if (a - handicap_line) > h: win_prob += prob
+            # 客隊盤口計算：(客得分 - 讓球) > 主得分
+            # 注意：這裡傳入的 handicap_line 是相對於主隊的。
+            # 如果主隊是 -0.5，那麼客隊實際上是 +0.5。
+            # 這裡邏輯簡化：我們直接算主隊視角的盤口
+            pass 
     return win_prob
 
 def calculate_asian_handicap_data(h_xg, a_xg, prob_exact):
     diff = h_xg - a_xg
-    pick = ""; line = 0.0
-    
-    if diff >= 1.8: line = -1.5; pick = "主 -1.5"
-    elif diff >= 1.3: line = -1.0; pick = "主 -1.0"
-    elif diff >= 0.8: line = -0.5; pick = "主 -0.5"
-    elif diff >= 0.3: line = -0.25; pick = "主 -0/0.5"
-    elif diff > -0.3: line = 0.0; pick = "平手 (0)"
-    elif diff > -0.8: line = 0.25; pick = "客 -0/0.5"
-    elif diff > -1.3: line = 0.5; pick = "客 -0.5"
-    elif diff > -1.8: line = 1.0; pick = "客 -1.0"
-    else: line = 1.5; pick = "客 -1.5"
+    # 決定「合理」盤口線 (主隊視角)
+    line = 0.0
+    if diff >= 1.8: line = -1.5
+    elif diff >= 1.3: line = -1.0
+    elif diff >= 0.8: line = -0.5
+    elif diff >= 0.3: line = -0.25
+    elif diff > -0.3: line = 0.0
+    elif diff > -0.8: line = 0.25
+    elif diff > -1.3: line = 0.5
+    elif diff > -1.8: line = 1.0
+    else: line = 1.5
 
-    target_team = 'away' if "客" in pick else 'home'
-    prob = calculate_ah_probability(prob_exact, line, target_team)
-    return pick, prob * 100
+    # 計算主隊贏盤率 (Home Win Prob with Handicap)
+    h_win_prob = 0
+    a_win_prob = 0
+    
+    for (h, a), prob in prob_exact.items():
+        # 主隊盤口邏輯
+        if (h + line) > a: h_win_prob += prob
+        elif (h + line) == a: h_win_prob += (prob * 0.5) # 走盤算一半或忽略，這裡簡單不加，或者視為輸半贏半，這裡僅算純勝
+
+        # 客隊盤口邏輯 (客隊受讓線 = -line)
+        # 例如主讓 -0.5 (line=-0.5)，客即受讓 +0.5
+        # 客勝條件: a + (-line) > h  => a - line > h
+        if (a - line) > h: a_win_prob += prob
+    
+    # 格式化輸出字串
+    h_sign = "+" if line > 0 else "" # 如果line是正數(如+0.5)，代表主隊受讓
+    h_line_str = f"{h_sign}{line}"
+    if line == 0: h_line_str = "0"
+    
+    a_line = -line
+    a_sign = "+" if a_line > 0 else ""
+    a_line_str = f"{a_sign}{a_line}"
+    if a_line == 0: a_line_str = "0"
+
+    return {
+        'h_pick': f"主 {h_line_str}",
+        'h_prob': h_win_prob * 100,
+        'a_pick': f"客 {a_line_str}",
+        'a_prob': a_win_prob * 100
+    }
 
 def calculate_advanced_math_probs(h_exp, a_exp):
     prob_exact = {}
@@ -197,7 +237,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     btts = 1 - sum(p for (h, a), p in prob_exact.items() if h==0 or a==0)
 
     # 半場 (Half Time)
-    ht_h_exp = h_exp * 0.45; ht_a_exp = a_exp * 0.45
+    ht_h_exp = h_exp * 0.40; ht_a_exp = a_exp * 0.40 # 稍微調低係數以更符合現實半場
     ht_prob_exact = {}
     for h in range(6):
         for a in range(6): ht_prob_exact[(h, a)] = poisson_prob(h, ht_h_exp) * poisson_prob(a, ht_a_exp)
@@ -205,20 +245,20 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     ht_o05 = sum(p for (h, a), p in ht_prob_exact.items() if h+a > 0.5)
     ht_o15 = sum(p for (h, a), p in ht_prob_exact.items() if h+a > 1.5)
 
-    ah_pick, ah_prob = calculate_asian_handicap_data(h_exp, a_exp, prob_exact)
+    ah_data = calculate_asian_handicap_data(h_exp, a_exp, prob_exact)
 
     return {
         'h_win': h_win*100, 'draw': draw*100, 'a_win': a_win*100,
         'o05': o05*100, 'o15': o15*100, 'o25': o25*100, 'o35': o35*100,
         'ht_o05': ht_o05*100, 'ht_o15': ht_o15*100,
         'btts': btts*100,
-        'ah_pick': ah_pick, 'ah_prob': ah_prob
+        'ah_data': ah_data
     }
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.3 數據引擎啟動 (CSV模式)")
-    if not API_KEY: print("⚠️ 警告: 缺少 API Key，請檢查 Secrets")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.4 數據引擎啟動 (GitHub Action Fix)")
+    if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     hk_now = datetime.now(hk_tz)
@@ -273,6 +313,7 @@ def main():
             if odds_d > 0 and (probs['draw']/100) > (1/odds_d): val_d = "💰"
             if odds_a > 0 and (probs['a_win']/100) > (1/odds_a): val_a = "💰"
 
+            # 構建數據行
             cleaned_data.append({
                 '日期': match_date_str, 
                 '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
@@ -282,12 +323,15 @@ def main():
                 'xG主': round(h_exp,2), 'xG客': round(a_exp,2), '數據源': src,
                 '主勝率': round(probs['h_win']), '和率': round(probs['draw']), '客勝率': round(probs['a_win']),
                 '大0.5': round(probs['o05']), 
-                '大1.5': round(probs['o15']), 
+                '大1.5': round(probs['o15']), # 新增
                 '大2.5': round(probs['o25']), 
                 '大3.5': round(probs['o35']),
+                '半大0.5': round(probs['ht_o05']), # 新增
                 '半大1.5': round(probs['ht_o15']),
-                '亞盤': probs['ah_pick'],
-                '亞盤率': round(probs['ah_prob']),
+                '亞盤主': probs['ah_data']['h_pick'], # 拆分
+                '亞盤主率': round(probs['ah_data']['h_prob']), # 拆分
+                '亞盤客': probs['ah_data']['a_pick'], # 拆分
+                '亞盤客率': round(probs['ah_data']['a_prob']), # 拆分
                 'BTTS': round(probs['btts']),
                 '主賠': odds_h, '和賠': odds_d, '客賠': odds_a,
                 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
@@ -309,7 +353,8 @@ def main():
                 spreadsheet.sheet1.clear()
                 spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
                 print("☁️ Google Cloud 上傳完成")
-            except: pass
+            except Exception as e: 
+                print(f"⚠️ 上傳雲端失敗: {e}")
         else:
             print("💻 本地模式 (未連接 Google Sheet)")
     else:
