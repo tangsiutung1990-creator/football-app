@@ -50,25 +50,12 @@ def fmt_pct(val, threshold=50):
     color_cls = 'cell-high' if v >= threshold else ('cell-mid' if v >= threshold - 10 else '')
     return f"<span class='{color_cls}'>{v}%</span>"
 
-# ================= 核彈級 Key 修復函數 =================
+# ================= 關鍵修復函數 (與後端一致) =================
 def fix_private_key(key_str):
-    """
-    究極修復 private_key
-    1. 去除前後引號
-    2. 處理雙重轉義 (\\\\n -> \\n)
-    3. 處理單重轉義 (\\n -> 真正的換行)
-    """
     if not key_str: return key_str
-    
-    # 1. 去除可能存在的首尾引號 (有些系統會自動加)
     key_str = key_str.strip().strip("'").strip('"')
-    
-    # 2. 暴力替換所有可能的換行符格式
-    # 先處理雙斜線
     key_str = key_str.replace('\\\\n', '\n')
-    # 再處理單斜線
     key_str = key_str.replace('\\n', '\n')
-    
     return key_str
 
 def load_data():
@@ -167,12 +154,10 @@ def main():
 
     if not filtered_df.empty:
         for _, row in filtered_df.iterrows():
-            # 渲染卡片邏輯 (保持不變，為節省篇幅引用)
             render_match_card(row)
     else:
         st.info("暫無符合條件的賽事")
 
-# 這裡為了完整性，將渲染函數放回
 def render_match_card(row):
     prob_h = clean_pct(row.get('主勝率', 0))
     prob_d = clean_pct(row.get('和率', 0))
