@@ -11,16 +11,14 @@ import streamlit as st
 import json
 
 # ================= 設定區 =================
+# 嘗試讀取 API KEY
 API_KEY = None
-
-# 優先嘗試從 Streamlit secrets 讀取
 try:
-    if "api" in st.secrets and "key" in st.secrets["api"]:
+    if hasattr(st, "secrets") and "api" in st.secrets and "key" in st.secrets["api"]:
         API_KEY = st.secrets["api"]["key"]
 except Exception:
     pass 
 
-# 其次嘗試環境變量
 if not API_KEY:
     API_KEY = os.getenv("FOOTBALL_API_KEY")
 
@@ -36,6 +34,15 @@ LEAGUE_ID_MAP = {
     262: '墨超', 71: '巴甲', 128: '阿甲', 265: '智甲',
     2: '歐聯', 3: '歐霸'
 }
+
+# ================= 輔助函數：修復 Private Key =================
+def fix_private_key(key_str):
+    """修復 private_key 中的換行符問題"""
+    if not key_str: return key_str
+    # 將 literal 的 \n 替換為真正的換行符
+    fixed_key = key_str.replace('\\n', '\n')
+    # 確保頭尾沒有多餘的引號或空白
+    return fixed_key.strip().strip('"').strip("'")
 
 # ================= API 連接 =================
 def call_api(endpoint, params=None):
@@ -54,7 +61,7 @@ def call_api(endpoint, params=None):
         else: return None
     except: return None
 
-# ================= Google Sheet 連接 (Robust Fix) =================
+# ================= Google Sheet 連接 (JWT Fix) =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
@@ -64,9 +71,9 @@ def get_google_spreadsheet():
     if json_text:
         try:
             creds_dict = json.loads(json_text)
-            # CRITICAL FIX: 處理 private_key 中的換行符轉義問題
+            # CRITICAL FIX: 強制修復 Private Key
             if 'private_key' in creds_dict:
-                creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+                creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
             
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         except Exception as e:
@@ -74,33 +81,32 @@ def get_google_spreadsheet():
     else:
         print("ℹ️ 未檢測到 GCP_SERVICE_ACCOUNT_JSON 環境變量")
 
-    # 2. 嘗試從本地文件 (Local Dev)
+    # 2. 嘗試從 Streamlit Secrets (Streamlit Cloud)
+    if not creds:
+        try:
+            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+                # 必須轉為標準 dict
+                creds_dict = dict(st.secrets["gcp_service_account"])
+                if 'private_key' in creds_dict:
+                    creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
+                
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        except Exception:
+            pass
+
+    # 3. 嘗試從本地文件 (Local Dev)
     if not creds and os.path.exists("key.json"):
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         except Exception as e:
             print(f"⚠️ key.json 讀取失敗: {e}")
 
-    # 3. 嘗試從 Streamlit Secrets (Streamlit Cloud)
-    if not creds:
-        try:
-            # 安全訪問 st.secrets
-            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                # 修正: 必須將 Secrets 物件轉為 dict，並手動修復 private_key
-                creds_dict = dict(st.secrets["gcp_service_account"])
-                if 'private_key' in creds_dict:
-                    creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
-                
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        except Exception:
-            pass
-
     if creds:
         try:
             client = gspread.authorize(creds)
             return client.open(GOOGLE_SHEET_NAME)
         except Exception as e:
-            print(f"⚠️ Google Sheet 連接異常: {e}")
+            print(f"⚠️ Google Sheet 連接異常 (可能為權限或 Key 錯誤): {e}")
             return None
     
     return None
@@ -188,7 +194,6 @@ def poisson_prob(k, lam):
 
 def calculate_asian_handicap_data(h_xg, a_xg, prob_exact):
     diff = h_xg - a_xg
-    # 決定「合理」盤口線 (主隊視角)
     line = 0.0
     if diff >= 1.8: line = -1.5
     elif diff >= 1.3: line = -1.0
@@ -200,19 +205,14 @@ def calculate_asian_handicap_data(h_xg, a_xg, prob_exact):
     elif diff > -1.8: line = 1.0
     else: line = 1.5
 
-    # 計算主隊贏盤率 (Home Win Prob with Handicap)
     h_win_prob = 0
     a_win_prob = 0
     
     for (h, a), prob in prob_exact.items():
-        # 主隊盤口邏輯
         if (h + line) > a: h_win_prob += prob
         elif (h + line) == a: h_win_prob += (prob * 0.5) 
-
-        # 客隊盤口邏輯 (客隊受讓線 = -line)
         if (a - line) > h: a_win_prob += prob
     
-    # 格式化輸出字串
     h_sign = "+" if line > 0 else "" 
     h_line_str = f"{h_sign}{line}"
     if line == 0: h_line_str = "0"
@@ -244,7 +244,6 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     o35 = sum(p for (h, a), p in prob_exact.items() if h+a > 3.5)
     btts = 1 - sum(p for (h, a), p in prob_exact.items() if h==0 or a==0)
 
-    # 半場 (Half Time)
     ht_h_exp = h_exp * 0.40; ht_a_exp = a_exp * 0.40 
     ht_prob_exact = {}
     for h in range(6):
@@ -265,13 +264,12 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.8 數據引擎啟動 (Key Fix)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.9 數據引擎啟動 (Key Fix)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     hk_now = datetime.now(hk_tz)
     
-    # 掃描範圍擴大：昨天 到 後天 (確保能抓到比賽)
     yesterday_str = (hk_now - timedelta(days=1)).strftime('%Y-%m-%d')
     today_str = (hk_now + timedelta(days=2)).strftime('%Y-%m-%d')
     season = 2025
@@ -289,85 +287,4 @@ def main():
         
         for item in fixtures:
             fix_id = item['fixture']['id']
-            match_date_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d')
-            t_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk_tz).strftime('%Y-%m-%d %H:%M')
-            status_short = item['fixture']['status']['short']
-            
-            if status_short in ['FT', 'AET', 'PEN']: status_txt = '完場'
-            elif status_short in ['1H', 'HT', '2H', 'LIVE']: status_txt = '進行中'
-            elif status_short in ['NS', 'TBD']: status_txt = '未開賽'
-            else: status_txt = '延期'
-
-            h_name = item['teams']['home']['name']; a_name = item['teams']['away']['name']
-            h_id = item['teams']['home']['id']; a_id = item['teams']['away']['id']
-            sc_h = item['goals']['home']; sc_a = item['goals']['away']
-
-            h_info = standings.get(h_id, {'rank': '?', 'form': '?'})
-            a_info = standings.get(a_id, {'rank': '?', 'form': '?'})
-            
-            pred_resp = call_api('predictions', {'fixture': fix_id})
-            pred_data = pred_resp['response'][0] if pred_resp and pred_resp.get('response') else None
-            
-            h_exp, a_exp, src = calculate_split_expected_goals(h_id, a_id, standings, pred_data)
-            probs = calculate_advanced_math_probs(h_exp, a_exp)
-            
-            odds_h, odds_d, odds_a = 0,0,0
-            if status_txt != '完場':
-                odds_h, odds_d, odds_a = get_best_odds(fix_id)
-            
-            h2h_h, h2h_d, h2h_a = get_h2h_stats(h_id, a_id)
-
-            val_h = ""; val_d = ""; val_a = ""
-            if odds_h > 0 and (probs['h_win']/100) > (1/odds_h): val_h = "💰"
-            if odds_d > 0 and (probs['draw']/100) > (1/odds_d): val_d = "💰"
-            if odds_a > 0 and (probs['a_win']/100) > (1/odds_a): val_a = "💰"
-
-            # 構建數據行
-            cleaned_data.append({
-                '日期': match_date_str, 
-                '時間': t_str, '聯賽': lg_name, '主隊': h_name, '客隊': a_name, '狀態': status_txt,
-                '主分': sc_h if sc_h is not None else "", '客分': sc_a if sc_a is not None else "",
-                '主排名': h_info['rank'], '客排名': a_info['rank'],
-                '主Value': val_h, '和Value': val_d, '客Value': val_a,
-                'xG主': round(h_exp,2), 'xG客': round(a_exp,2), '數據源': src,
-                '主勝率': round(probs['h_win']), '和率': round(probs['draw']), '客勝率': round(probs['a_win']),
-                '大0.5': round(probs['o05']), 
-                '大1.5': round(probs['o15']),
-                '大2.5': round(probs['o25']), 
-                '大3.5': round(probs['o35']),
-                '半大0.5': round(probs['ht_o05']),
-                '半大1.5': round(probs['ht_o15']),
-                '亞盤主': probs['ah_data']['h_pick'],
-                '亞盤主率': round(probs['ah_data']['h_prob']),
-                '亞盤客': probs['ah_data']['a_pick'],
-                '亞盤客率': round(probs['ah_data']['a_prob']),
-                'BTTS': round(probs['btts']),
-                '主賠': odds_h, '和賠': odds_d, '客賠': odds_a,
-                'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
-            })
-            
-            print(f"         ✅ {h_name} vs {a_name}")
-            time.sleep(0.1)
-
-    if cleaned_data:
-        df = pd.DataFrame(cleaned_data)
-        try:
-            df.to_csv(CSV_FILENAME, index=False, encoding='utf-8-sig')
-            print(f"\n💾 數據已儲存: {CSV_FILENAME}")
-        except Exception as e: print(f"❌ CSV 錯誤: {e}")
-
-        spreadsheet = get_google_spreadsheet()
-        if spreadsheet:
-            try:
-                spreadsheet.sheet1.clear()
-                spreadsheet.sheet1.update(range_name='A1', values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
-                print("☁️ Google Cloud 上傳完成")
-            except Exception as e: 
-                print(f"⚠️ 上傳雲端失敗: {e}")
-        else:
-            print("💻 本地模式 (未連接 Google Sheet 或 缺少憑證)")
-    else:
-        print("⚠️ 無數據")
-
-if __name__ == "__main__":
-    main()
+            match_date_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk
