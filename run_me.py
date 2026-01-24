@@ -11,7 +11,7 @@ import streamlit as st
 import json
 
 # ================= 設定區 =================
-# 嘗試讀取 API KEY
+# 優先嘗試 Streamlit Secrets，其次環境變量
 API_KEY = None
 try:
     if hasattr(st, "secrets") and "api" in st.secrets and "key" in st.secrets["api"]:
@@ -35,14 +35,26 @@ LEAGUE_ID_MAP = {
     2: '歐聯', 3: '歐霸'
 }
 
-# ================= 核心修復函數 (關鍵修改) =================
+# ================= 核彈級 Key 修復函數 =================
 def fix_private_key(key_str):
     """
-    修復 private_key 中的換行符問題
-    將 literal 的 string '\\n' 替換為真正的換行符 '\n'
+    究極修復 private_key
+    1. 去除前後引號
+    2. 處理雙重轉義 (\\\\n -> \\n)
+    3. 處理單重轉義 (\\n -> 真正的換行)
     """
     if not key_str: return key_str
-    return key_str.replace('\\n', '\n').strip()
+    
+    # 1. 去除可能存在的首尾引號 (有些系統會自動加)
+    key_str = key_str.strip().strip("'").strip('"')
+    
+    # 2. 暴力替換所有可能的換行符格式
+    # 先處理雙斜線 (常見於某些 JSON dump)
+    key_str = key_str.replace('\\\\n', '\n')
+    # 再處理單斜線
+    key_str = key_str.replace('\\n', '\n')
+    
+    return key_str
 
 # ================= API 連接 =================
 def call_api(endpoint, params=None):
@@ -61,55 +73,62 @@ def call_api(endpoint, params=None):
         else: return None
     except: return None
 
-# ================= Google Sheet 連接 (JWT 強制修復) =================
+# ================= Google Sheet 連接 (Debug Mode) =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
     
-    # 1. 嘗試從環境變量 (GitHub Actions / Cloud Run 優先)
+    # 1. 嘗試從環境變量 (GitHub Actions / Cloud Run)
     json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+    
     if json_text:
         try:
+            print(f"🔍 檢測到環境變量，長度: {len(json_text)}")
             creds_dict = json.loads(json_text)
             
-            # ✅ 修復重點：強制處理 private_key
             if 'private_key' in creds_dict:
+                original_len = len(creds_dict['private_key'])
+                # 使用加強版修復
                 creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-            
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        except Exception as e:
-            print(f"⚠️ GCP_SERVICE_ACCOUNT_JSON 解析失敗: {e}")
-    else:
-        print("ℹ️ 未檢測到 GCP_SERVICE_ACCOUNT_JSON 環境變量")
+                
+                # Debug 信息 (安全，只看頭尾)
+                pk = creds_dict['private_key']
+                print(f"🔑 Private Key 處理: 原長 {original_len} -> 新長 {len(pk)}")
+                print(f"🔑 Key 檢查: 開頭={pk[:10]}... 結尾=...{pk[-10:]}")
+                if "-----BEGIN" not in pk:
+                    print("⚠️ 警告: Key 似乎缺少 PEM Header (-----BEGIN...)")
 
-    # 2. 嘗試從 Streamlit Secrets (Streamlit Cloud)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            print("✅ 憑證物件建立成功")
+        except Exception as e:
+            print(f"❌ 環境變量解析失敗: {e}")
+    else:
+        print("ℹ️ 未檢測到 GCP_SERVICE_ACCOUNT_JSON")
+
+    # 2. 嘗試從 Streamlit Secrets
     if not creds:
         try:
             if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                # 必須轉為標準 dict 才能修改
                 creds_dict = dict(st.secrets["gcp_service_account"])
-                
-                # ✅ 修復重點：強制處理 private_key
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-                
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         except Exception:
             pass
 
-    # 3. 嘗試從本地文件 (Local Dev)
+    # 3. 本地文件
     if not creds and os.path.exists("key.json"):
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        except Exception as e:
-            print(f"⚠️ key.json 讀取失敗: {e}")
+        except Exception:
+            pass
 
     if creds:
         try:
             client = gspread.authorize(creds)
             return client.open(GOOGLE_SHEET_NAME)
         except Exception as e:
-            print(f"⚠️ Google Sheet 連接異常 (可能是 Key 格式錯誤): {e}")
+            print(f"❌ Google Sheet 連接最終失敗: {e}")
             return None
     
     return None
@@ -267,7 +286,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V39.0 數據引擎啟動 (Key Fix)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.0 究極數據引擎啟動")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
