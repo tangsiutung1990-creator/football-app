@@ -128,24 +128,27 @@ def load_data():
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = None
         
-        # 1. 嘗試從環境變量 (優先)
+        # 1. 嘗試從環境變量 (優先 - 通常用於 GitHub Actions / Docker)
         json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
         if json_text:
             try:
                 creds_dict = json.loads(json_text)
-                # CRITICAL FIX: 處理 private_key 中的換行符轉義問題
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
-                
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             except Exception as e:
                 error_msg += f"Env Var Error: {str(e)}; "
         
-        # 2. 嘗試從 Streamlit Secrets
+        # 2. 嘗試從 Streamlit Secrets (通常用於 Streamlit Cloud)
         if not creds:
             try:
                 if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                    creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+                    # 修正: 必須將 Secrets 物件轉為 dict，並手動修復 private_key
+                    creds_dict = dict(st.secrets["gcp_service_account"])
+                    if 'private_key' in creds_dict:
+                        creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+                    
+                    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             except Exception as e:
                 error_msg += f"Secrets Error: {str(e)}; "
             
