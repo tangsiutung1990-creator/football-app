@@ -133,6 +133,10 @@ def load_data():
         if json_text:
             try:
                 creds_dict = json.loads(json_text)
+                # CRITICAL FIX: 處理 private_key 中的換行符轉義問題
+                if 'private_key' in creds_dict:
+                    creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+                
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             except Exception as e:
                 error_msg += f"Env Var Error: {str(e)}; "
