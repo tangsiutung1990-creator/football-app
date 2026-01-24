@@ -123,6 +123,7 @@ def fmt_pct(val, threshold=50):
 def load_data():
     df = pd.DataFrame()
     source = "無"
+    error_msg = ""
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = None
@@ -133,20 +134,23 @@ def load_data():
             try:
                 creds_dict = json.loads(json_text)
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            except: pass
+            except Exception as e:
+                error_msg += f"Env Var Error: {str(e)}; "
         
         # 2. 嘗試從 Streamlit Secrets
         if not creds:
             try:
-                if "gcp_service_account" in st.secrets:
+                if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
                     creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
-            except: pass
+            except Exception as e:
+                error_msg += f"Secrets Error: {str(e)}; "
             
         # 3. 嘗試從本地文件
         if not creds and os.path.exists("key.json"):
             try:
                 creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-            except: pass
+            except Exception as e:
+                error_msg += f"Key File Error: {str(e)}; "
             
         if creds:
             client = gspread.authorize(creds)
@@ -154,14 +158,17 @@ def load_data():
             df = pd.DataFrame(sheet.get_all_records())
             source = "Cloud"
     except Exception as e:
+        error_msg += f"Global Error: {str(e)}"
         pass
 
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
             source = "Local"
-        except: pass
-    return df, source
+        except Exception as e:
+            error_msg += f"CSV Error: {str(e)}"
+    
+    return df, source, error_msg
 
 # ================= 卡片渲染 =================
 def render_match_card(row):
@@ -240,10 +247,13 @@ def render_match_card(row):
 def main():
     st.sidebar.title("🛠️ 賽事篩選")
     
-    df, source = load_data()
+    df, source, err_msg = load_data()
     
     if df.empty:
-        st.error("❌ 無數據，請運行後端。")
+        st.error(f"❌ 無數據，請運行後端。({source})")
+        if err_msg:
+            st.code(err_msg, language='text')
+            st.caption("提示: 請檢查 GitHub Secrets 的 GCP_SERVICE_ACCOUNT_JSON 是否設置正確。")
         return
 
     st.sidebar.markdown("### 狀態")
