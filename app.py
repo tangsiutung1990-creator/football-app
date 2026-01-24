@@ -120,7 +120,7 @@ def fmt_pct(val, threshold=50):
     color_cls = 'cell-high' if v >= threshold else ('cell-mid' if v >= threshold - 10 else '')
     return f"<span class='{color_cls}'>{v}%</span>"
 
-# ================= 核心修復函數 =================
+# ================= 核心修復函數 (關鍵修改) =================
 def fix_private_key(key_str):
     """
     修復 private_key 中的換行符問題
