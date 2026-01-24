@@ -120,13 +120,14 @@ def fmt_pct(val, threshold=50):
     color_cls = 'cell-high' if v >= threshold else ('cell-mid' if v >= threshold - 10 else '')
     return f"<span class='{color_cls}'>{v}%</span>"
 
+# ================= 核心修復函數 =================
 def fix_private_key(key_str):
-    """修復 private_key 中的換行符問題"""
+    """
+    修復 private_key 中的換行符問題
+    將 literal 的 string '\\n' 替換為真正的換行符 '\n'
+    """
     if not key_str: return key_str
-    # 將 literal 的 \n 替換為真正的換行符
-    fixed_key = key_str.replace('\\n', '\n')
-    # 確保頭尾沒有多餘的引號或空白
-    return fixed_key.strip().strip('"').strip("'")
+    return key_str.replace('\\n', '\n').strip()
 
 def load_data():
     df = pd.DataFrame()
@@ -142,6 +143,7 @@ def load_data():
         if json_text:
             try:
                 creds_dict = json.loads(json_text)
+                # ✅ 修復重點：強制處理 private_key
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -152,8 +154,10 @@ def load_data():
         if not creds:
             try:
                 if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                    # 必須將 Secrets 物件轉為 dict
+                    # ✅ 必須先轉換為標準 dict 才能修改 (Streamlit secrets 是唯讀的 AttrDict)
                     creds_dict = dict(st.secrets["gcp_service_account"])
+                    
+                    # ✅ 修復重點：強制處理 private_key
                     if 'private_key' in creds_dict:
                         creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                     
