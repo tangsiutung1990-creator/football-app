@@ -35,7 +35,7 @@ LEAGUE_ID_MAP = {
     2: '歐聯', 3: '歐霸'
 }
 
-# ================= 核彈級 Key 修復函數 =================
+# ================= 關鍵修復函數 (Hero Function) =================
 def fix_private_key(key_str):
     """
     究極修復 private_key
@@ -45,14 +45,12 @@ def fix_private_key(key_str):
     """
     if not key_str: return key_str
     
-    # 1. 去除可能存在的首尾引號 (有些系統會自動加)
+    # 1. 去除可能存在的首尾引號
     key_str = key_str.strip().strip("'").strip('"')
     
     # 2. 暴力替換所有可能的換行符格式
-    # 先處理雙斜線 (常見於某些 JSON dump)
-    key_str = key_str.replace('\\\\n', '\n')
-    # 再處理單斜線
-    key_str = key_str.replace('\\n', '\n')
+    key_str = key_str.replace('\\\\n', '\n') # 雙斜線變單斜線
+    key_str = key_str.replace('\\n', '\n')   # 文字 \n 變換行符
     
     return key_str
 
@@ -73,7 +71,7 @@ def call_api(endpoint, params=None):
         else: return None
     except: return None
 
-# ================= Google Sheet 連接 (Debug Mode) =================
+# ================= Google Sheet 連接 =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
@@ -88,15 +86,13 @@ def get_google_spreadsheet():
             
             if 'private_key' in creds_dict:
                 original_len = len(creds_dict['private_key'])
-                # 使用加強版修復
+                # ✅ 使用修復函數
                 creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                 
-                # Debug 信息 (安全，只看頭尾)
+                # Debug 信息
                 pk = creds_dict['private_key']
                 print(f"🔑 Private Key 處理: 原長 {original_len} -> 新長 {len(pk)}")
                 print(f"🔑 Key 檢查: 開頭={pk[:10]}... 結尾=...{pk[-10:]}")
-                if "-----BEGIN" not in pk:
-                    print("⚠️ 警告: Key 似乎缺少 PEM Header (-----BEGIN...)")
 
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             print("✅ 憑證物件建立成功")
@@ -286,7 +282,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.0 究極數據引擎啟動")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.1 最終穩定版 (Connected)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
