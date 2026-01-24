@@ -60,7 +60,6 @@ def get_google_spreadsheet():
     creds = None
     
     # 1. 嘗試從環境變量 (GitHub Actions / Cloud Run 優先)
-    # 這裡直接檢查環境變數，避免觸發 st.secrets 的錯誤
     json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
     if json_text:
         try:
@@ -68,22 +67,23 @@ def get_google_spreadsheet():
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         except Exception as e:
             print(f"⚠️ GCP_SERVICE_ACCOUNT_JSON 解析失敗: {e}")
-    
+    else:
+        print("ℹ️ 未檢測到 GCP_SERVICE_ACCOUNT_JSON 環境變量")
+
     # 2. 嘗試從本地文件 (Local Dev)
-    elif os.path.exists("key.json"):
+    if not creds and os.path.exists("key.json"):
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
         except Exception as e:
             print(f"⚠️ key.json 讀取失敗: {e}")
 
     # 3. 嘗試從 Streamlit Secrets (Streamlit Cloud)
-    # 必須包裹在 try-except 中，因為在 GitHub Actions 環境下 st.secrets 不存在會拋出錯誤
     if not creds:
         try:
-            if "gcp_service_account" in st.secrets:
+            # 安全訪問 st.secrets
+            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
         except Exception:
-            # 靜默忽略錯誤，這在非 Streamlit 環境是正常的
             pass
 
     if creds:
@@ -256,14 +256,15 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.5 數據引擎啟動 (GH Action Fix)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.6 數據引擎啟動 (GH Action Debug)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     hk_now = datetime.now(hk_tz)
     
+    # 掃描範圍擴大：昨天 到 後天 (確保能抓到比賽)
     yesterday_str = (hk_now - timedelta(days=1)).strftime('%Y-%m-%d')
-    today_str = hk_now.strftime('%Y-%m-%d')
+    today_str = (hk_now + timedelta(days=2)).strftime('%Y-%m-%d')
     season = 2025
     
     print(f"📅 掃描: {yesterday_str} 至 {today_str}")
