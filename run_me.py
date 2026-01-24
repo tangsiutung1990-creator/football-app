@@ -17,7 +17,7 @@ API_KEY = None
 try:
     if "api" in st.secrets and "key" in st.secrets["api"]:
         API_KEY = st.secrets["api"]["key"]
-except FileNotFoundError:
+except Exception:
     pass 
 
 # 其次嘗試環境變量
@@ -54,32 +54,46 @@ def call_api(endpoint, params=None):
         else: return None
     except: return None
 
-# ================= Google Sheet (修正 GitHub Action 連接) =================
+# ================= Google Sheet 連接 (Robust Fix) =================
 def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
-    try:
-        # 1. 嘗試從環境變量 (GitHub Actions 用)
-        # 在 GitHub Secrets 設定 GCP_SERVICE_ACCOUNT_JSON，內容為整個 JSON 字符串
-        env_creds = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
-        if env_creds:
-            creds_dict = json.loads(env_creds)
+    
+    # 1. 嘗試從環境變量 (GitHub Actions / Cloud Run 優先)
+    # 這裡直接檢查環境變數，避免觸發 st.secrets 的錯誤
+    json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+    if json_text:
+        try:
+            creds_dict = json.loads(json_text)
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        
-        # 2. 嘗試從 Streamlit Secrets
-        elif "gcp_service_account" in st.secrets:
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-            
-        # 3. 嘗試從本地文件
-        elif os.path.exists("key.json"):
+        except Exception as e:
+            print(f"⚠️ GCP_SERVICE_ACCOUNT_JSON 解析失敗: {e}")
+    
+    # 2. 嘗試從本地文件 (Local Dev)
+    elif os.path.exists("key.json"):
+        try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-            
-        if creds:
+        except Exception as e:
+            print(f"⚠️ key.json 讀取失敗: {e}")
+
+    # 3. 嘗試從 Streamlit Secrets (Streamlit Cloud)
+    # 必須包裹在 try-except 中，因為在 GitHub Actions 環境下 st.secrets 不存在會拋出錯誤
+    if not creds:
+        try:
+            if "gcp_service_account" in st.secrets:
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+        except Exception:
+            # 靜默忽略錯誤，這在非 Streamlit 環境是正常的
+            pass
+
+    if creds:
+        try:
             client = gspread.authorize(creds)
             return client.open(GOOGLE_SHEET_NAME)
-    except Exception as e:
-        print(f"⚠️ Google Sheet 連接失敗: {e}")
-        return None
+        except Exception as e:
+            print(f"⚠️ Google Sheet 連接異常: {e}")
+            return None
+    
     return None
 
 # ================= 數據與數學核心 =================
@@ -163,19 +177,6 @@ def poisson_prob(k, lam):
     if lam <= 0: return 0
     return (math.pow(lam, k) * math.exp(-lam)) / math.factorial(k)
 
-def calculate_ah_probability(prob_exact, handicap_line, team='home'):
-    win_prob = 0
-    for (h, a), prob in prob_exact.items():
-        if team == 'home':
-            if (h + handicap_line) > a: win_prob += prob
-        else:
-            # 客隊盤口計算：(客得分 - 讓球) > 主得分
-            # 注意：這裡傳入的 handicap_line 是相對於主隊的。
-            # 如果主隊是 -0.5，那麼客隊實際上是 +0.5。
-            # 這裡邏輯簡化：我們直接算主隊視角的盤口
-            pass 
-    return win_prob
-
 def calculate_asian_handicap_data(h_xg, a_xg, prob_exact):
     diff = h_xg - a_xg
     # 決定「合理」盤口線 (主隊視角)
@@ -197,15 +198,13 @@ def calculate_asian_handicap_data(h_xg, a_xg, prob_exact):
     for (h, a), prob in prob_exact.items():
         # 主隊盤口邏輯
         if (h + line) > a: h_win_prob += prob
-        elif (h + line) == a: h_win_prob += (prob * 0.5) # 走盤算一半或忽略，這裡簡單不加，或者視為輸半贏半，這裡僅算純勝
+        elif (h + line) == a: h_win_prob += (prob * 0.5) 
 
         # 客隊盤口邏輯 (客隊受讓線 = -line)
-        # 例如主讓 -0.5 (line=-0.5)，客即受讓 +0.5
-        # 客勝條件: a + (-line) > h  => a - line > h
         if (a - line) > h: a_win_prob += prob
     
     # 格式化輸出字串
-    h_sign = "+" if line > 0 else "" # 如果line是正數(如+0.5)，代表主隊受讓
+    h_sign = "+" if line > 0 else "" 
     h_line_str = f"{h_sign}{line}"
     if line == 0: h_line_str = "0"
     
@@ -237,7 +236,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
     btts = 1 - sum(p for (h, a), p in prob_exact.items() if h==0 or a==0)
 
     # 半場 (Half Time)
-    ht_h_exp = h_exp * 0.40; ht_a_exp = a_exp * 0.40 # 稍微調低係數以更符合現實半場
+    ht_h_exp = h_exp * 0.40; ht_a_exp = a_exp * 0.40 
     ht_prob_exact = {}
     for h in range(6):
         for a in range(6): ht_prob_exact[(h, a)] = poisson_prob(h, ht_h_exp) * poisson_prob(a, ht_a_exp)
@@ -257,7 +256,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.4 數據引擎啟動 (GitHub Action Fix)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.5 數據引擎啟動 (GH Action Fix)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
@@ -323,15 +322,15 @@ def main():
                 'xG主': round(h_exp,2), 'xG客': round(a_exp,2), '數據源': src,
                 '主勝率': round(probs['h_win']), '和率': round(probs['draw']), '客勝率': round(probs['a_win']),
                 '大0.5': round(probs['o05']), 
-                '大1.5': round(probs['o15']), # 新增
+                '大1.5': round(probs['o15']),
                 '大2.5': round(probs['o25']), 
                 '大3.5': round(probs['o35']),
-                '半大0.5': round(probs['ht_o05']), # 新增
+                '半大0.5': round(probs['ht_o05']),
                 '半大1.5': round(probs['ht_o15']),
-                '亞盤主': probs['ah_data']['h_pick'], # 拆分
-                '亞盤主率': round(probs['ah_data']['h_prob']), # 拆分
-                '亞盤客': probs['ah_data']['a_pick'], # 拆分
-                '亞盤客率': round(probs['ah_data']['a_prob']), # 拆分
+                '亞盤主': probs['ah_data']['h_pick'],
+                '亞盤主率': round(probs['ah_data']['h_prob']),
+                '亞盤客': probs['ah_data']['a_pick'],
+                '亞盤客率': round(probs['ah_data']['a_prob']),
                 'BTTS': round(probs['btts']),
                 '主賠': odds_h, '和賠': odds_d, '客賠': odds_a,
                 'H2H主': h2h_h, 'H2H和': h2h_d, 'H2H客': h2h_a
@@ -356,7 +355,7 @@ def main():
             except Exception as e: 
                 print(f"⚠️ 上傳雲端失敗: {e}")
         else:
-            print("💻 本地模式 (未連接 Google Sheet)")
+            print("💻 本地模式 (未連接 Google Sheet 或 缺少憑證)")
     else:
         print("⚠️ 無數據")
 
