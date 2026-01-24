@@ -1,41 +1,125 @@
-import requests
+import streamlit as st
 import pandas as pd
-import math
-import time
 import gspread
-from datetime import datetime, timedelta
-import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import os
-import streamlit as st
+from datetime import datetime, timedelta
+import pytz
 import json
 
 # ================= 設定區 =================
-# 嘗試讀取 API KEY
-API_KEY = None
-try:
-    if hasattr(st, "secrets") and "api" in st.secrets and "key" in st.secrets["api"]:
-        API_KEY = st.secrets["api"]["key"]
-except Exception:
-    pass 
-
-if not API_KEY:
-    API_KEY = os.getenv("FOOTBALL_API_KEY")
-
-BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 
-LEAGUE_ID_MAP = {
-    39: '英超', 40: '英冠', 41: '英甲', 140: '西甲', 141: '西乙',
-    135: '意甲', 78: '德甲', 61: '法甲', 88: '荷甲', 94: '葡超',
-    144: '比甲', 179: '蘇超', 203: '土超', 119: '丹超', 113: '瑞典超',
-    103: '挪超', 98: '日職', 292: '韓K1', 188: '澳職', 253: '美職',
-    262: '墨超', 71: '巴甲', 128: '阿甲', 265: '智甲',
-    2: '歐聯', 3: '歐霸'
-}
+st.set_page_config(page_title="足球AI Pro", page_icon="⚽", layout="wide")
 
-# ================= 輔助函數：修復 Private Key =================
+# ================= CSS 極致優化 =================
+st.markdown("""
+<style>
+    .stApp { background-color: #0e1117; }
+    
+    .block-container { padding-top: 1rem; padding-bottom: 2rem; }
+    div[data-testid="stPills"] { gap: 4px; }
+    
+    .compact-card { 
+        background-color: #1a1c24; 
+        border: 1px solid #333; 
+        border-radius: 6px; 
+        padding: 2px 4px; 
+        margin-bottom: 6px; 
+        font-family: 'Arial', sans-serif; 
+    }
+    
+    .match-header { 
+        display: flex; 
+        justify-content: space-between; 
+        color: #999; 
+        font-size: 0.8rem; 
+        margin-bottom: 2px; 
+        border-bottom: 1px solid #333; 
+        padding-bottom: 2px;
+    }
+    
+    .content-row { 
+        display: grid; 
+        grid-template-columns: 6.5fr 3.5fr; 
+        align-items: center; 
+        margin-bottom: 2px; 
+    }
+    
+    .team-name { 
+        font-weight: bold; 
+        font-size: 1.1rem; 
+        color: #fff; 
+        line-height: 1.1;
+    } 
+    
+    .team-sub { 
+        font-size: 0.75rem; 
+        color: #bbb; 
+        margin-top: 1px;
+    }
+    
+    .score-main { font-size: 1.8rem; font-weight: bold; color: #00ffea; line-height: 1; text-align: right; }
+    .score-sub { font-size: 0.75rem; color: #888; text-align: right; }
+
+    /* 矩陣優化: 使用百分比寬度以達到最窄效果 */
+    .grid-matrix { 
+        display: grid; 
+        grid-template-columns: 27% 23% 23% 27%; 
+        gap: 1px; 
+        margin-top: 2px; 
+        background: #333; /* 邊框顏色 */
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    
+    .matrix-col { 
+        padding: 1px 2px; 
+        background: #222; /* 單元格背景 */
+    }
+    
+    .matrix-header { 
+        color: #ff9800; 
+        font-size: 0.75rem; 
+        font-weight: bold;
+        text-align: center;
+        border-bottom: 1px solid #444; 
+        margin-bottom: 1px;
+    }
+    
+    .matrix-cell { 
+        display: flex; 
+        justify-content: space-between; 
+        padding: 0 1px; 
+        color: #ddd; 
+        font-size: 0.8rem; 
+        line-height: 1.3;
+    }
+    
+    .matrix-label { color: #888; font-size: 0.75rem; margin-right: 2px; }
+    
+    .cell-high { color: #00ff00; font-weight: bold; }
+    .cell-mid { color: #ffff00; }
+    
+    .status-live { color: #ff4b4b; font-weight: bold; }
+    .status-ft { color: #00ffea; }
+    
+    section[data-testid="stSidebar"] { width: 220px !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ================= 輔助函數 =================
+def clean_pct(val):
+    try: return int(float(str(val).replace('%', '')))
+    except: return 0
+
+def fmt_pct(val, threshold=50):
+    v = clean_pct(val)
+    if v == 0: return "-"
+    color_cls = 'cell-high' if v >= threshold else ('cell-mid' if v >= threshold - 10 else '')
+    return f"<span class='{color_cls}'>{v}%</span>"
+
 def fix_private_key(key_str):
     """修復 private_key 中的換行符問題"""
     if not key_str: return key_str
@@ -44,247 +128,176 @@ def fix_private_key(key_str):
     # 確保頭尾沒有多餘的引號或空白
     return fixed_key.strip().strip('"').strip("'")
 
-# ================= API 連接 =================
-def call_api(endpoint, params=None):
-    if not API_KEY: return None
-    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-apisports-key': API_KEY}
-    url = f"{BASE_URL}/{endpoint}"
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("errors") and isinstance(data['errors'], list) and len(data['errors']) > 0: return None
-            return data
-        elif response.status_code == 429:
-            time.sleep(5)
-            return None
-        else: return None
-    except: return None
-
-# ================= Google Sheet 連接 (JWT Fix) =================
-def get_google_spreadsheet():
+def load_data():
+    df = pd.DataFrame()
+    source = "無"
+    error_msg = ""
+    
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
-    
-    # 1. 嘗試從環境變量 (GitHub Actions / Cloud Run 優先)
-    json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
-    if json_text:
-        try:
-            creds_dict = json.loads(json_text)
-            # CRITICAL FIX: 強制修復 Private Key
-            if 'private_key' in creds_dict:
-                creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-            
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        except Exception as e:
-            print(f"⚠️ GCP_SERVICE_ACCOUNT_JSON 解析失敗: {e}")
-    else:
-        print("ℹ️ 未檢測到 GCP_SERVICE_ACCOUNT_JSON 環境變量")
 
-    # 2. 嘗試從 Streamlit Secrets (Streamlit Cloud)
-    if not creds:
-        try:
-            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                # 必須轉為標準 dict
-                creds_dict = dict(st.secrets["gcp_service_account"])
+    try:
+        # 1. 嘗試從環境變量 (優先 - 通常用於 GitHub Actions / Docker)
+        json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+        if json_text:
+            try:
+                creds_dict = json.loads(json_text)
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-                
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        except Exception:
-            pass
-
-    # 3. 嘗試從本地文件 (Local Dev)
-    if not creds and os.path.exists("key.json"):
-        try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-        except Exception as e:
-            print(f"⚠️ key.json 讀取失敗: {e}")
-
-    if creds:
-        try:
+            except Exception as e:
+                error_msg += f"Env Var Error: {str(e)}; "
+        
+        # 2. 嘗試從 Streamlit Secrets (通常用於 Streamlit Cloud)
+        if not creds:
+            try:
+                if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+                    # 必須將 Secrets 物件轉為 dict
+                    creds_dict = dict(st.secrets["gcp_service_account"])
+                    if 'private_key' in creds_dict:
+                        creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
+                    
+                    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            except Exception as e:
+                error_msg += f"Secrets Error: {str(e)}; "
+            
+        # 3. 嘗試從本地文件
+        if not creds and os.path.exists("key.json"):
+            try:
+                creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+            except Exception as e:
+                error_msg += f"Key File Error: {str(e)}; "
+            
+        if creds:
             client = gspread.authorize(creds)
-            return client.open(GOOGLE_SHEET_NAME)
-        except Exception as e:
-            print(f"⚠️ Google Sheet 連接異常 (可能為權限或 Key 錯誤): {e}")
-            return None
-    
-    return None
+            sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+            df = pd.DataFrame(sheet.get_all_records())
+            source = "Cloud"
+            
+    except Exception as e:
+        error_msg += f"Global Error: {str(e)}"
+        pass
 
-# ================= 數據與數學核心 =================
-def get_league_standings(league_id, season):
-    data = call_api('standings', {'league': league_id, 'season': season})
-    standings_map = {}
-    if not data or not data.get('response'): return standings_map
-    try:
-        for group in data['response'][0]['league']['standings']:
-            for team in group:
-                t_id = team['team']['id']
-                h_s = team['home']; a_s = team['away']
-                standings_map[t_id] = {
-                    'rank': team['rank'], 'form': team['form'],
-                    'home_stats': {'played': h_s['played'], 'avg_goals_for': h_s['goals']['for']/(h_s['played'] or 1), 'avg_goals_against': h_s['goals']['against']/(h_s['played'] or 1)},
-                    'away_stats': {'played': a_s['played'], 'avg_goals_for': a_s['goals']['for']/(a_s['played'] or 1), 'avg_goals_against': a_s['goals']['against']/(a_s['played'] or 1)}
-                }
-    except: pass
-    return standings_map
-
-def get_h2h_stats(h_id, a_id):
-    data = call_api('fixtures/headtohead', {'h2h': f"{h_id}-{a_id}"})
-    if not data or not data.get('response'): return 0, 0, 0
-    h=0; d=0; a=0
-    for m in data['response'][:10]:
-        sc_h = m['goals']['home']; sc_a = m['goals']['away']
-        if sc_h is None or sc_a is None: continue
-        if sc_h > sc_a: h+=1
-        elif sc_a > sc_h: a+=1
-        else: d+=1
-    return h, d, a
-
-def get_best_odds(fixture_id):
-    data = call_api('odds', {'fixture': fixture_id})
-    if not data or not data.get('response'): return 0, 0, 0
-    try:
-        bks = data['response'][0]['bookmakers']
-        target = next((b for b in bks if b['id'] in [1, 6, 8, 2]), bks[0] if bks else None)
-        if target:
-            bet = next((b for b in target['bets'] if b['name'] == 'Match Winner'), None)
-            if bet:
-                h=0; d=0; a=0
-                for o in bet['values']:
-                    if o['value'] == 'Home': h = float(o['odd'])
-                    if o['value'] == 'Draw': d = float(o['odd'])
-                    if o['value'] == 'Away': a = float(o['odd'])
-                return h, d, a
-    except: pass
-    return 0, 0, 0
-
-def safe_float(val):
-    try: return float(val) if val is not None else 0.0
-    except: return 0.0
-
-def calculate_split_expected_goals(h_id, a_id, standings_map, pred_data):
-    api_h = 1.3; api_a = 1.0
-    if pred_data:
-        t = pred_data.get('teams', {})
-        api_h = safe_float(t.get('home',{}).get('last_5',{}).get('goals',{}).get('for',{}).get('average'))
-        api_a = safe_float(t.get('away',{}).get('last_5',{}).get('goals',{}).get('for',{}).get('average'))
-    
-    split_h = 0; split_a = 0; has_split = False
-    h_stats = standings_map.get(h_id, {})
-    a_stats = standings_map.get(a_id, {})
-    
-    if h_stats and a_stats:
+    if df.empty and os.path.exists(CSV_FILENAME):
         try:
-            if h_stats['home_stats']['played'] > 2 and a_stats['away_stats']['played'] > 2:
-                split_h = (h_stats['home_stats']['avg_goals_for'] + a_stats['away_stats']['avg_goals_against']) / 2.0
-                split_a = (a_stats['away_stats']['avg_goals_for'] + h_stats['home_stats']['avg_goals_against']) / 2.0
-                has_split = True
-        except: pass
+            df = pd.read_csv(CSV_FILENAME)
+            source = "Local"
+        except Exception as e:
+            error_msg += f"CSV Error: {str(e)}"
     
-    if has_split:
-        fh = max(0.1, (split_h * 0.7) + (api_h * 0.3))
-        fa = max(0.1, (split_a * 0.7) + (api_a * 0.3))
-        return fh, fa, "特化數據"
-    return max(0.1, api_h), max(0.1, api_a), "API數據"
+    return df, source, error_msg
 
-def poisson_prob(k, lam):
-    if lam <= 0: return 0
-    return (math.pow(lam, k) * math.exp(-lam)) / math.factorial(k)
-
-def calculate_asian_handicap_data(h_xg, a_xg, prob_exact):
-    diff = h_xg - a_xg
-    line = 0.0
-    if diff >= 1.8: line = -1.5
-    elif diff >= 1.3: line = -1.0
-    elif diff >= 0.8: line = -0.5
-    elif diff >= 0.3: line = -0.25
-    elif diff > -0.3: line = 0.0
-    elif diff > -0.8: line = 0.25
-    elif diff > -1.3: line = 0.5
-    elif diff > -1.8: line = 1.0
-    else: line = 1.5
-
-    h_win_prob = 0
-    a_win_prob = 0
+# ================= 卡片渲染 =================
+def render_match_card(row):
+    prob_h = clean_pct(row.get('主勝率', 0))
+    prob_d = clean_pct(row.get('和率', 0))
+    prob_a = clean_pct(row.get('客勝率', 0))
     
-    for (h, a), prob in prob_exact.items():
-        if (h + line) > a: h_win_prob += prob
-        elif (h + line) == a: h_win_prob += (prob * 0.5) 
-        if (a - line) > h: a_win_prob += prob
+    score_txt = f"{row.get('主分')} - {row.get('客分')}" if str(row.get('主分')) not in ['','nan'] else "VS"
+    xg_txt = f"xG: {row.get('xG主',0)} - {row.get('xG客',0)}"
+    status = row.get('狀態')
+    status_cls = "status-live" if status == '進行中' else ("status-ft" if status == '完場' else "")
     
-    h_sign = "+" if line > 0 else "" 
-    h_line_str = f"{h_sign}{line}"
-    if line == 0: h_line_str = "0"
+    ah_h_pick = row.get('亞盤主', '-')
+    ah_h_prob = row.get('亞盤主率', 0)
+    ah_a_pick = row.get('亞盤客', '-')
+    ah_a_prob = row.get('亞盤客率', 0)
     
-    a_line = -line
-    a_sign = "+" if a_line > 0 else ""
-    a_line_str = f"{a_sign}{a_line}"
-    if a_line == 0: a_line_str = "0"
+    card_html = f"""
+    <div class='compact-card'>
+        <div class='match-header'>
+            <span>{row.get('時間')} | {row.get('聯賽')}</span>
+            <span class='{status_cls}'>{status}</span>
+        </div>
+        <div class='content-row'>
+            <div class='teams-area'>
+                <div class='team-name'>{row.get('主隊')} <small style='color:#666; font-size:0.8rem'>#{row.get('主排名')}</small></div>
+                <div class='team-name'>{row.get('客隊')} <small style='color:#666; font-size:0.8rem'>#{row.get('客排名')}</small></div>
+                <div class='team-sub'>H2H: {row.get('H2H主')}-{row.get('H2H和')}-{row.get('H2H客')}</div>
+            </div>
+            <div class='score-area'>
+                <div class='score-main'>{score_txt}</div>
+                <div class='score-sub'>{xg_txt}</div>
+            </div>
+        </div>
+        <div class='grid-matrix'>
+            <div class='matrix-col'>
+                <div class='matrix-header'>1x2</div>
+                <div class='matrix-cell'><span class='matrix-label'>主</span>{fmt_pct(prob_h)} {row.get('主Value','')}</div>
+                <div class='matrix-cell'><span class='matrix-label'>和</span>{fmt_pct(prob_d)} {row.get('和Value','')}</div>
+                <div class='matrix-cell'><span class='matrix-label'>客</span>{fmt_pct(prob_a)} {row.get('客Value','')}</div>
+            </div>
+            <div class='matrix-col'>
+                <div class='matrix-header'>全場</div>
+                <div class='matrix-cell'><span class='matrix-label'>>1.5</span>{fmt_pct(row.get('大1.5'), 75)}</div>
+                <div class='matrix-cell'><span class='matrix-label'>>2.5</span>{fmt_pct(row.get('大2.5'), 55)}</div>
+                <div class='matrix-cell'><span class='matrix-label'>>3.5</span>{fmt_pct(row.get('大3.5'), 40)}</div>
+            </div>
+            <div class='matrix-col'>
+                <div class='matrix-header'>半/雙</div>
+                <div class='matrix-cell'><span class='matrix-label'>半>0.5</span>{fmt_pct(row.get('半大0.5'), 65)}</div>
+                <div class='matrix-cell'><span class='matrix-label'>半>1.5</span>{fmt_pct(row.get('半大1.5'), 35)}</div>
+                <div class='matrix-cell'><span class='matrix-label'>雙進</span>{fmt_pct(row.get('BTTS'), 55)}</div>
+            </div>
+            <div class='matrix-col'>
+                <div class='matrix-header'>亞盤(%)</div>
+                <div class='matrix-cell'>
+                    <span style='color:#ffd700; font-size:0.75rem'>{ah_h_pick}</span>
+                    {fmt_pct(ah_h_prob, 55)}
+                </div>
+                <div class='matrix-cell'>
+                    <span style='color:#ffd700; font-size:0.75rem'>{ah_a_pick}</span>
+                    {fmt_pct(ah_a_prob, 55)}
+                </div>
+                <div class='matrix-cell' style='justify-content:right; font-size:0.7rem; color:#555'>源:{row.get('數據源')}</div>
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
 
-    return {
-        'h_pick': f"主 {h_line_str}",
-        'h_prob': h_win_prob * 100,
-        'a_pick': f"客 {a_line_str}",
-        'a_prob': a_win_prob * 100
-    }
-
-def calculate_advanced_math_probs(h_exp, a_exp):
-    prob_exact = {}
-    for h in range(10):
-        for a in range(10): prob_exact[(h, a)] = poisson_prob(h, h_exp) * poisson_prob(a, a_exp)
-    
-    h_win = sum(p for (h, a), p in prob_exact.items() if h > a)
-    a_win = sum(p for (h, a), p in prob_exact.items() if a > h)
-    draw = sum(p for (h, a), p in prob_exact.items() if h == a)
-    
-    o05 = sum(p for (h, a), p in prob_exact.items() if h+a > 0.5)
-    o15 = sum(p for (h, a), p in prob_exact.items() if h+a > 1.5)
-    o25 = sum(p for (h, a), p in prob_exact.items() if h+a > 2.5)
-    o35 = sum(p for (h, a), p in prob_exact.items() if h+a > 3.5)
-    btts = 1 - sum(p for (h, a), p in prob_exact.items() if h==0 or a==0)
-
-    ht_h_exp = h_exp * 0.40; ht_a_exp = a_exp * 0.40 
-    ht_prob_exact = {}
-    for h in range(6):
-        for a in range(6): ht_prob_exact[(h, a)] = poisson_prob(h, ht_h_exp) * poisson_prob(a, ht_a_exp)
-    
-    ht_o05 = sum(p for (h, a), p in ht_prob_exact.items() if h+a > 0.5)
-    ht_o15 = sum(p for (h, a), p in ht_prob_exact.items() if h+a > 1.5)
-
-    ah_data = calculate_asian_handicap_data(h_exp, a_exp, prob_exact)
-
-    return {
-        'h_win': h_win*100, 'draw': draw*100, 'a_win': a_win*100,
-        'o05': o05*100, 'o15': o15*100, 'o25': o25*100, 'o35': o35*100,
-        'ht_o05': ht_o05*100, 'ht_o15': ht_o15*100,
-        'btts': btts*100,
-        'ah_data': ah_data
-    }
-
-# ================= 主流程 =================
+# ================= 主程式 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.9 數據引擎啟動 (Key Fix)")
-    if not API_KEY: print("⚠️ 警告: 缺少 API Key")
+    st.sidebar.title("🛠️ 賽事篩選")
+    
+    df, source, err_msg = load_data()
+    
+    if df.empty:
+        st.error(f"❌ 無數據，請運行後端。({source})")
+        if err_msg:
+            st.code(err_msg, language='text')
+            st.caption("提示: 請檢查 GitHub Secrets 或 Streamlit Secrets 的 GCP Key 格式。")
+        return
+
+    st.sidebar.markdown("### 狀態")
+    all_statuses = ['進行中', '未開賽', '完場', '延期']
+    selected_statuses = st.sidebar.pills("選擇狀態", all_statuses, default=['進行中', '未開賽'], selection_mode="multi")
+    
+    if '聯賽' in df.columns:
+        st.sidebar.markdown("### 聯賽")
+        all_leagues = sorted(df['聯賽'].unique().tolist())
+        selected_leagues = st.sidebar.multiselect("選擇聯賽", all_leagues, default=all_leagues)
+    else: selected_leagues = []
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
-    hk_now = datetime.now(hk_tz)
-    
-    yesterday_str = (hk_now - timedelta(days=1)).strftime('%Y-%m-%d')
-    today_str = (hk_now + timedelta(days=2)).strftime('%Y-%m-%d')
-    season = 2025
-    
-    print(f"📅 掃描: {yesterday_str} 至 {today_str}")
-    cleaned_data = []
+    now = datetime.now(hk_tz)
+    st.caption(f"數據源: {source} | 更新: {now.strftime('%H:%M')}")
 
-    for lg_id, lg_name in LEAGUE_ID_MAP.items():
-        standings = get_league_standings(lg_id, season)
-        fixtures_data = call_api('fixtures', {'league': lg_id, 'season': season, 'from': yesterday_str, 'to': today_str})
-        
-        if not fixtures_data or not fixtures_data.get('response'): continue
-        fixtures = fixtures_data['response']
-        print(f"   ⚽ {lg_name}: {len(fixtures)} 場")
-        
-        for item in fixtures:
-            fix_id = item['fixture']['id']
-            match_date_str = datetime.fromtimestamp(item['fixture']['timestamp'], pytz.utc).astimezone(hk
+    filtered_df = df.copy()
+    if selected_statuses:
+        filtered_df = filtered_df[filtered_df['狀態'].isin(selected_statuses)]
+    if selected_leagues:
+        filtered_df = filtered_df[filtered_df['聯賽'].isin(selected_leagues)]
+
+    status_order = {'進行中': 0, '未開賽': 1, '完場': 2, '延期': 3}
+    filtered_df['status_rank'] = filtered_df['狀態'].map(status_order).fillna(4)
+    filtered_df = filtered_df.sort_values(by=['status_rank', '時間'])
+
+    if not filtered_df.empty:
+        for _, row in filtered_df.iterrows():
+            render_match_card(row)
+    else:
+        st.info("暫無符合條件的賽事")
+
+if __name__ == "__main__":
+    main()
