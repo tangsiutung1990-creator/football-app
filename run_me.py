@@ -86,7 +86,12 @@ def get_google_spreadsheet():
         try:
             # 安全訪問 st.secrets
             if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+                # 修正: 必須將 Secrets 物件轉為 dict，並手動修復 private_key
+                creds_dict = dict(st.secrets["gcp_service_account"])
+                if 'private_key' in creds_dict:
+                    creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+                
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         except Exception:
             pass
 
@@ -260,7 +265,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.7 數據引擎啟動 (Key Fix)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V38.8 數據引擎啟動 (Key Fix)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
