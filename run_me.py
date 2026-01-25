@@ -39,20 +39,17 @@ LEAGUE_ID_MAP = {
 def fix_private_key(key_str):
     """
     究極修復 private_key
-    1. 去除前後引號
-    2. 處理雙重轉義 (\\\\n -> \\n)
-    3. 處理單重轉義 (\\n -> 真正的換行)
     """
-    if not key_str: return key_str
+    if not key_str: return None
     
-    # 1. 去除可能存在的首尾引號
-    key_str = key_str.strip().strip("'").strip('"')
+    # 1. 去除前後空格和引號
+    fixed_key = key_str.strip().strip("'").strip('"')
     
-    # 2. 暴力替換所有可能的換行符格式
-    key_str = key_str.replace('\\\\n', '\n') # 雙斜線變單斜線
-    key_str = key_str.replace('\\n', '\n')   # 文字 \n 變換行符
+    # 2. 處理換行符：將字面上的 \n 替換為真正的換行符
+    # 先處理雙重轉義 (\\n)，再處理單重轉義 (\n)
+    fixed_key = fixed_key.replace('\\\\n', '\n').replace('\\n', '\n')
     
-    return key_str
+    return fixed_key
 
 # ================= API 連接 =================
 def call_api(endpoint, params=None):
@@ -85,17 +82,10 @@ def get_google_spreadsheet():
             creds_dict = json.loads(json_text)
             
             if 'private_key' in creds_dict:
-                original_len = len(creds_dict['private_key'])
-                # ✅ 使用修復函數
                 creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                 
-                # Debug 信息
-                pk = creds_dict['private_key']
-                print(f"🔑 Private Key 處理: 原長 {original_len} -> 新長 {len(pk)}")
-                print(f"🔑 Key 檢查: 開頭={pk[:10]}... 結尾=...{pk[-10:]}")
-
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            print("✅ 憑證物件建立成功")
+            print("✅ 環境變量憑證建立成功")
         except Exception as e:
             print(f"❌ 環境變量解析失敗: {e}")
     else:
@@ -109,13 +99,15 @@ def get_google_spreadsheet():
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        except Exception:
-            pass
+                print("✅ Streamlit Secrets 憑證建立成功")
+        except Exception as e:
+            print(f"❌ Streamlit Secrets 解析失敗: {e}")
 
     # 3. 本地文件
     if not creds and os.path.exists("key.json"):
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+            print("✅ 本地 key.json 憑證建立成功")
         except Exception:
             pass
 
@@ -282,7 +274,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.1 最終穩定版 (Connected)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.2 穩定修復版 (Connected)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
