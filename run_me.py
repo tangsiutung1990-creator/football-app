@@ -35,21 +35,33 @@ LEAGUE_ID_MAP = {
     2: '歐聯', 3: '歐霸'
 }
 
-# ================= 關鍵修復函數 (Hero Function) =================
+# ================= 關鍵修復函數 =================
 def fix_private_key(key_str):
-    """
-    究極修復 private_key
-    """
+    """修復 Private Key 的換行問題"""
     if not key_str: return None
-    
-    # 1. 去除前後空格和引號
-    fixed_key = key_str.strip().strip("'").strip('"')
-    
-    # 2. 處理換行符：將字面上的 \n 替換為真正的換行符
-    # 先處理雙重轉義 (\\n)，再處理單重轉義 (\n)
-    fixed_key = fixed_key.replace('\\\\n', '\n').replace('\\n', '\n')
-    
+    fixed_key = str(key_str).strip().strip("'").strip('"')
+    if "\\n" in fixed_key:
+        fixed_key = fixed_key.replace("\\n", "\n")
+    fixed_key = fixed_key.replace('\\\\n', '\n')
     return fixed_key
+
+def clean_json_string(json_str):
+    """
+    清洗 JSON 字串：去除前後多餘的引號 (常見於 Copy & Paste 錯誤)
+    """
+    if not json_str: return ""
+    clean_str = json_str.strip()
+    # 如果頭尾都有單引號，去掉它們
+    if clean_str.startswith("'") and clean_str.endswith("'"):
+        clean_str = clean_str[1:-1]
+    # 如果頭尾都有雙引號，且內容不像 JSON (例如不是以 { 開頭)，嘗試去掉
+    # 但要注意，標準 JSON 本身就是被雙引號包圍的字串不太可能出現在這裡，
+    # 這裡主要是處理被額外包了一層的情況
+    if clean_str.startswith('"') and clean_str.endswith('"'):
+         # 簡單判斷：如果去掉引號後是 { 開頭，那就是多餘的引號
+         if len(clean_str) > 2 and clean_str[1] == '{':
+             clean_str = clean_str[1:-1]
+    return clean_str
 
 # ================= API 連接 =================
 def call_api(endpoint, params=None):
@@ -79,6 +91,12 @@ def get_google_spreadsheet():
     if json_text:
         try:
             print(f"🔍 檢測到環境變量，長度: {len(json_text)}")
+            
+            # === 新增：清洗與 Debug ===
+            json_text = clean_json_string(json_text)
+            # 印出前 10 個字元 (用 repr 顯示隱形字符) 方便 Debug
+            # print(f"🔍 JSON 開頭預覽: {repr(json_text[:20])}...") 
+            
             creds_dict = json.loads(json_text)
             
             if 'private_key' in creds_dict:
@@ -86,8 +104,11 @@ def get_google_spreadsheet():
                 
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             print("✅ 環境變量憑證建立成功")
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON 解析失敗: {e}")
+            print(f"⚠️ 請檢查 Secrets 是否包含多餘引號。讀取到的開頭: {repr(json_text[:20])}")
         except Exception as e:
-            print(f"❌ 環境變量解析失敗: {e}")
+            print(f"❌ 環境變量處理失敗: {e}")
     else:
         print("ℹ️ 未檢測到 GCP_SERVICE_ACCOUNT_JSON")
 
@@ -274,7 +295,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.2 穩定修復版 (Connected)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.3 強力除錯版 (Connected)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
