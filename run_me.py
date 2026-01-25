@@ -11,7 +11,6 @@ import streamlit as st
 import json
 
 # ================= 設定區 =================
-# 優先嘗試 Streamlit Secrets，其次環境變量
 API_KEY = None
 try:
     if hasattr(st, "secrets") and "api" in st.secrets and "key" in st.secrets["api"]:
@@ -37,7 +36,6 @@ LEAGUE_ID_MAP = {
 
 # ================= 關鍵修復函數 =================
 def fix_private_key(key_str):
-    """修復 Private Key 的換行問題"""
     if not key_str: return None
     fixed_key = str(key_str).strip().strip("'").strip('"')
     if "\\n" in fixed_key:
@@ -46,9 +44,6 @@ def fix_private_key(key_str):
     return fixed_key
 
 def clean_json_string(json_str):
-    """
-    清洗 JSON 字串：去除前後多餘的引號
-    """
     if not json_str: return ""
     clean_str = json_str.strip()
     if clean_str.startswith("'") and clean_str.endswith("'"):
@@ -79,7 +74,6 @@ def get_google_spreadsheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
     
-    # 1. 嘗試從環境變量 (GitHub Actions / Cloud Run)
     json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
     
     if json_text:
@@ -87,10 +81,8 @@ def get_google_spreadsheet():
             print(f"🔍 檢測到環境變量，長度: {len(json_text)}")
             json_text = clean_json_string(json_text)
             
-            # === 防呆檢查 ===
             if json_text.startswith("-----BEGIN"):
                 print("❌ [嚴重錯誤] 你貼的是 Private Key，不是 JSON！")
-                print("💡 請將 GCP_SERVICE_ACCOUNT_JSON 變量改為整個 JSON 檔案的內容 (以 '{' 開頭)。")
                 return None
 
             creds_dict = json.loads(json_text)
@@ -100,15 +92,11 @@ def get_google_spreadsheet():
                 
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             print("✅ 環境變量憑證建立成功")
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON 解析失敗: {e}")
-            print(f"⚠️ 讀取到的開頭: {repr(json_text[:20])}...")
         except Exception as e:
             print(f"❌ 環境變量處理失敗: {e}")
     else:
         print("ℹ️ 未檢測到 GCP_SERVICE_ACCOUNT_JSON")
 
-    # 2. 嘗試從 Streamlit Secrets
     if not creds:
         try:
             if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
@@ -120,7 +108,6 @@ def get_google_spreadsheet():
         except Exception as e:
             print(f"❌ Streamlit Secrets 解析失敗: {e}")
 
-    # 3. 本地文件
     if not creds and os.path.exists("key.json"):
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
@@ -291,7 +278,7 @@ def calculate_advanced_math_probs(h_exp, a_exp):
 
 # ================= 主流程 =================
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.4 防呆修復版 (Connected)")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 V40.5 (Final) (Connected)")
     if not API_KEY: print("⚠️ 警告: 缺少 API Key")
 
     hk_tz = pytz.timezone('Asia/Hong_Kong')
