@@ -84,13 +84,22 @@ def load_data():
             try:
                 # 使用相同的清洗邏輯
                 json_text = clean_json_string(json_text)
+                
+                # === 防呆檢查 ===
+                if json_text.startswith("-----BEGIN"):
+                    msg = "❌ 設定錯誤：GCP_SERVICE_ACCOUNT_JSON 包含了 Private Key，但應該是完整的 JSON 檔案內容 (包含 type, client_email 等)。"
+                    error_details.append(msg)
+                    raise ValueError(msg)
+
                 creds_dict = json.loads(json_text)
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
                 debug_info['Env Var'] = "Found & Parsed"
+            except json.JSONDecodeError as e:
+                error_details.append(f"Env Var JSON Error: {str(e)} | Head: {json_text[:20] if json_text else 'None'}")
             except Exception as e:
-                error_details.append(f"Env Var Error: {str(e)} | Head: {json_text[:20] if json_text else 'None'}")
+                error_details.append(f"Env Var Error: {str(e)}")
         
         # 2. Streamlit Secrets
         if not creds:
@@ -139,11 +148,15 @@ def main():
     if not df.empty:
         if "Local" in source:
             st.warning(f"⚠️ 無法連接 Google Sheet，目前使用本地備份數據 ({source})")
-            with st.expander("查看錯誤詳情"):
-                st.write(err_msgs)
+            if err_msgs:
+                with st.expander("查看錯誤詳情"):
+                    for msg in err_msgs: st.write(msg)
     else:
         st.error("❌ 無法加載任何數據")
-        with st.expander("Debug Info"):
+        if err_msgs:
+            st.error("最近的錯誤原因：")
+            st.write(err_msgs[0]) # 顯示第一個主要錯誤
+        with st.expander("詳細 Debug Info"):
             st.code("\n".join(err_msgs))
         return
 
