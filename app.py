@@ -3,7 +3,7 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 import json
 
@@ -68,97 +68,90 @@ def clean_json_string(json_str):
         clean_str = clean_str[1:-1]
     return clean_str
 
+# ================= 數據載入 (加入快取機制) =================
+# 使用 @st.cache_resource 避免每次重整都重新連線
+@st.cache_resource(ttl=600) 
+def get_google_sheet_data():
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = None
+    debug_log = []
+    
+    # 1. 嘗試從環境變量
+    json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+    if json_text:
+        try:
+            json_text = clean_json_string(json_text)
+            creds_dict = json.loads(json_text)
+            if 'private_key' in creds_dict:
+                creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            debug_log.append("✅ Env Var Loaded")
+        except Exception as e:
+            debug_log.append(f"❌ Env Var Error: {e}")
+
+    # 2. 嘗試從 Secrets (如果環境變量失敗)
+    if not creds:
+        try:
+            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+                creds_dict = dict(st.secrets["gcp_service_account"])
+                # 再次確保 Private Key 修復
+                if 'private_key' in creds_dict:
+                    creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
+                
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+                debug_log.append("✅ Secrets Loaded")
+        except Exception as e:
+            debug_log.append(f"❌ Secrets Error: {e}")
+
+    # 3. 本地檔案 Fallback
+    if not creds and os.path.exists("key.json"):
+        try:
+            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+            debug_log.append("✅ Local Key Loaded")
+        except Exception as e:
+            debug_log.append(f"❌ Local Key Error: {e}")
+
+    if creds:
+        client = gspread.authorize(creds)
+        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+        return pd.DataFrame(sheet.get_all_records()), "Cloud", debug_log
+    
+    return pd.DataFrame(), "None", debug_log
+
 def load_data():
     df = pd.DataFrame()
     source = "無"
-    error_details = []
+    debug_log = []
     
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = None
-    debug_info = {}
-
     try:
-        # 1. 環境變量
-        json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
-        if json_text:
-            try:
-                # 使用相同的清洗邏輯
-                json_text = clean_json_string(json_text)
-                
-                # === 防呆檢查 ===
-                if json_text.startswith("-----BEGIN"):
-                    msg = "❌ 設定錯誤：GCP_SERVICE_ACCOUNT_JSON 包含了 Private Key，但應該是完整的 JSON 檔案內容 (包含 type, client_email 等)。"
-                    error_details.append(msg)
-                    raise ValueError(msg)
-
-                creds_dict = json.loads(json_text)
-                if 'private_key' in creds_dict:
-                    creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-                debug_info['Env Var'] = "Found & Parsed"
-            except json.JSONDecodeError as e:
-                error_details.append(f"Env Var JSON Error: {str(e)} | Head: {json_text[:20] if json_text else 'None'}")
-            except Exception as e:
-                error_details.append(f"Env Var Error: {str(e)}")
-        
-        # 2. Streamlit Secrets
-        if not creds:
-            try:
-                if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                    creds_dict = dict(st.secrets["gcp_service_account"])
-                    if 'private_key' in creds_dict:
-                        creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-                    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            except Exception as e:
-                error_details.append(f"Secrets Error: {str(e)}")
-            
-        # 3. 本地文件
-        if not creds and os.path.exists("key.json"):
-            try:
-                creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-            except Exception as e:
-                error_details.append(f"Key File Error: {str(e)}")
-            
-        if creds:
-            client = gspread.authorize(creds)
-            sheet = client.open(GOOGLE_SHEET_NAME).sheet1
-            df = pd.DataFrame(sheet.get_all_records())
-            source = "Cloud (Google Sheet)"
-            
+        df, source, debug_log = get_google_sheet_data()
     except Exception as e:
-        error_details.append(f"Global Connection Error: {str(e)}")
-        pass
-
-    # Fallback
+        debug_log.append(f"🔥 Global Connect Error: {e}")
+        
+    # Fallback to CSV if cloud fails
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
             source = "Local Backup (CSV)"
-        except Exception as e:
-            error_details.append(f"CSV Fallback Error: {str(e)}")
-    
-    return df, source, error_details, debug_info
+        except: pass
+        
+    return df, source, debug_log
 
 # ================= 主程式 =================
 def main():
     st.sidebar.title("🛠️ 賽事篩選")
     
-    df, source, err_msgs, debug_info = load_data()
+    df, source, debug_log = load_data()
     
-    if not df.empty:
-        if "Local" in source:
-            st.warning(f"⚠️ 無法連接 Google Sheet，目前使用本地備份數據 ({source})")
-            if err_msgs:
-                with st.expander("查看錯誤詳情"):
-                    for msg in err_msgs: st.write(msg)
-    else:
-        st.error("❌ 無法加載任何數據")
-        if err_msgs:
-            st.error("最近的錯誤原因：")
-            st.write(err_msgs[0]) # 顯示第一個主要錯誤
-        with st.expander("詳細 Debug Info"):
-            st.code("\n".join(err_msgs))
+    # 錯誤處理與顯示
+    if df.empty:
+        st.error("❌ 無法加載數據，請檢查後端是否運行成功。")
+        with st.expander("詳細錯誤日誌 (Debug)"):
+            for log in debug_log: st.write(log)
         return
+
+    if "Local" in source:
+        st.warning(f"⚠️ 使用本地備份數據 ({source})")
 
     st.sidebar.markdown("### 狀態")
     all_statuses = ['進行中', '未開賽', '完場', '延期']
