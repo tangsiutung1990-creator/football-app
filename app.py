@@ -52,19 +52,21 @@ def fmt_pct(val, threshold=50):
 
 # ================= 關鍵修復函數 (與後端一致) =================
 def fix_private_key(key_str):
-    if not key_str: return key_str
-    key_str = key_str.strip().strip("'").strip('"')
-    key_str = key_str.replace('\\\\n', '\n')
-    key_str = key_str.replace('\\n', '\n')
-    return key_str
+    if not key_str: return None
+    # 1. 去除前後空格和引號
+    fixed_key = key_str.strip().strip("'").strip('"')
+    # 2. 處理換行符
+    fixed_key = fixed_key.replace('\\\\n', '\n').replace('\\n', '\n')
+    return fixed_key
 
 def load_data():
     df = pd.DataFrame()
     source = "無"
-    error_msg = ""
+    error_details = []
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
+    debug_info = {} # 用於調試
 
     try:
         # 1. 環境變量
@@ -75,57 +77,78 @@ def load_data():
                 if 'private_key' in creds_dict:
                     creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+                debug_info['Env Var'] = "Found & Parsed"
             except Exception as e:
-                error_msg += f"Env Var Error: {str(e)}; "
+                error_details.append(f"Env Var Error: {str(e)}")
         
         # 2. Streamlit Secrets
         if not creds:
             try:
                 if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
                     creds_dict = dict(st.secrets["gcp_service_account"])
+                    
+                    # Debug 檢查
+                    debug_info['Secrets Email'] = creds_dict.get('client_email', 'Missing')
+                    pk = creds_dict.get('private_key', '')
+                    debug_info['Secrets Key Length (Original)'] = len(pk)
+                    
                     if 'private_key' in creds_dict:
                         creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
+                        debug_info['Secrets Key Length (Fixed)'] = len(creds_dict['private_key'])
+                        
                     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             except Exception as e:
-                error_msg += f"Secrets Error: {str(e)}; "
+                error_details.append(f"Secrets Error: {str(e)}")
             
         # 3. 本地文件
         if not creds and os.path.exists("key.json"):
             try:
                 creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
             except Exception as e:
-                error_msg += f"Key File Error: {str(e)}; "
+                error_details.append(f"Key File Error: {str(e)}")
             
         if creds:
             client = gspread.authorize(creds)
             sheet = client.open(GOOGLE_SHEET_NAME).sheet1
             df = pd.DataFrame(sheet.get_all_records())
-            source = "Cloud"
+            source = "Cloud (Google Sheet)"
             
     except Exception as e:
-        error_msg += f"Global Error: {str(e)}"
+        error_details.append(f"Global Connection Error: {str(e)}")
+        # 嘗試讀取本地備份作為最後手段
         pass
 
+    # Fallback: 如果雲端失敗，嘗試讀取本地 CSV
     if df.empty and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
-            source = "Local"
+            source = "Local Backup (CSV)"
         except Exception as e:
-            error_msg += f"CSV Error: {str(e)}"
+            error_details.append(f"CSV Fallback Error: {str(e)}")
     
-    return df, source, error_msg
+    return df, source, error_details, debug_info
 
 # ================= 主程式 =================
 def main():
     st.sidebar.title("🛠️ 賽事篩選")
     
-    df, source, err_msg = load_data()
+    df, source, err_msgs, debug_info = load_data()
     
-    if df.empty:
-        st.error(f"❌ 無數據，請運行後端。({source})")
-        if err_msg:
-            st.code(err_msg, language='text')
-            st.caption("提示: 請檢查 GitHub Secrets 或 Streamlit Secrets 的 GCP Key 格式。")
+    # 錯誤處理顯示區
+    if not df.empty:
+        # 雖然成功，但如果是 Local，可能需要顯示警告
+        if "Local" in source:
+            st.warning(f"⚠️ 無法連接 Google Sheet，目前使用本地備份數據 ({source})")
+            with st.expander("查看錯誤詳情 (Debug)"):
+                st.write(err_msgs)
+                st.write("Debug Info:", debug_info)
+    else:
+        # 完全失敗
+        st.error("❌ 無法加載任何數據 (雲端失敗 且 無本地備份)")
+        with st.expander("查看錯誤詳情 (Debug)"):
+            st.code("\n".join(err_msgs))
+            st.write("Debug Info:", debug_info)
+            st.info("提示: 'Invalid JWT Signature' 通常表示 private_key 格式錯誤。請檢查 Secrets 中的換行符。")
         return
 
     st.sidebar.markdown("### 狀態")
