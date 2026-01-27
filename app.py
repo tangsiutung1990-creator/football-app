@@ -5,15 +5,12 @@ import pandas as pd
 from datetime import datetime
 import pytz
 
-# ================= 1. 安全啟動檢查 =================
+# ================= 1. 安全啟動與函式庫檢查 =================
 try:
     import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
+    from google.oauth2.service_account import Credentials # 改用新版庫
 except ImportError as e:
-    st.error(f"""
-    ❌ 缺少必要函式庫。請確認 `requirements.txt` 包含: gspread, oauth2client
-    錯誤: {e}
-    """)
+    st.error("❌ 缺少必要函式庫。請確認 requirements.txt 包含: gspread, google-auth")
     st.stop()
 
 st.set_page_config(page_title="足球AI Pro", page_icon="⚽", layout="wide")
@@ -21,6 +18,10 @@ st.set_page_config(page_title="足球AI Pro", page_icon="⚽", layout="wide")
 # ================= 2. 設定與 CSS =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive'
+]
 
 st.markdown("""
 <style>
@@ -38,7 +39,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 3. 核心邏輯 =================
+# ================= 3. 核心工具 =================
 
 def clean_pct(val):
     try: return int(float(str(val).replace('%', '')))
@@ -51,98 +52,69 @@ def fmt_pct(val, threshold=50):
     return f"<span class='{color_cls}'>{v}%</span>"
 
 def fix_private_key(key_str):
-    """
-    終極修復邏輯：處理各種引號包裹、轉義換行
-    """
+    """修復 Key 的換行與格式問題"""
     if not key_str: return None
-    
-    # 1. 強制轉字串
     fixed_key = str(key_str).strip()
     
-    # 2. 如果 Key 被額外的引號包住 (例如 "'-----BEGIN...'")，去除它們
-    if fixed_key.startswith("'") and fixed_key.endswith("'"):
-        fixed_key = fixed_key[1:-1]
-    if fixed_key.startswith('"') and fixed_key.endswith('"'):
-        fixed_key = fixed_key[1:-1]
-
-    # 3. 處理換行：將 literal string "\n" 轉換為真正的換行字元
-    # 先處理雙重轉義 (有些環境會變成 \\n)
-    fixed_key = fixed_key.replace("\\\\n", "\n")
-    # 再處理標準轉義
-    fixed_key = fixed_key.replace("\\n", "\n")
+    # 移除前後多餘的引號
+    if fixed_key.startswith("'") and fixed_key.endswith("'"): fixed_key = fixed_key[1:-1]
+    if fixed_key.startswith('"') and fixed_key.endswith('"'): fixed_key = fixed_key[1:-1]
+    
+    # 處理轉義符號
+    fixed_key = fixed_key.replace("\\\\n", "\n").replace("\\n", "\n").replace("\r", "")
     
     return fixed_key
 
-def clean_json_string(json_str):
-    if not json_str: return ""
-    clean_str = json_str.strip()
-    if clean_str.startswith("'") and clean_str.endswith("'"): clean_str = clean_str[1:-1]
-    if clean_str.startswith('"') and clean_str.endswith('"') and len(clean_str) > 2 and clean_str[1] == '{': clean_str = clean_str[1:-1]
-    return clean_str
-
 @st.cache_resource(ttl=600) 
 def get_google_sheet_data():
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
     debug_log = []
     
-    # === 方法 A: 環境變量 (GCP_SERVICE_ACCOUNT_JSON) ===
+    # === 1. 嘗試環境變量 ===
     json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
     if json_text:
         try:
-            json_text = clean_json_string(json_text)
-            creds_dict = json.loads(json_text)
-            if 'private_key' in creds_dict:
-                creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            debug_log.append(f"✅ Env Var Loaded")
+            info = json.loads(json_text)
+            if 'private_key' in info: info['private_key'] = fix_private_key(info['private_key'])
+            creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+            debug_log.append("✅ Env Var Loaded")
         except Exception as e:
-            debug_log.append(f"❌ Env Var Error: {str(e)}")
+            debug_log.append(f"❌ Env Var Error: {e}")
 
-    # === 方法 B: Streamlit Secrets (gcp_service_account) ===
+    # === 2. 嘗試 Secrets (Google Auth 新版寫法) ===
     if not creds:
         try:
             if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                # 必須使用 dict() 拷貝，避免修改原始 secrets 導致快取問題
-                creds_dict = dict(st.secrets["gcp_service_account"])
+                # 轉成標準 Dict
+                info = dict(st.secrets["gcp_service_account"])
                 
-                # --- 診斷開始 ---
-                raw_key = str(creds_dict.get('private_key', 'MISSING'))
-                debug_log.append(f"🔍 [Diag] Raw Key Length: {len(raw_key)}")
-                debug_log.append(f"🔍 [Diag] Raw Key Start: {raw_key[:20]}...") 
-                # --- 診斷結束 ---
-
-                if 'private_key' in creds_dict:
-                    creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
+                # 修復 Key
+                if 'private_key' in info:
+                    info['private_key'] = fix_private_key(info['private_key'])
                 
-                # 檢查修復後的 Key 是否有效
-                final_key = creds_dict['private_key']
-                if "-----BEGIN PRIVATE KEY-----" not in final_key:
-                    debug_log.append("❌ [Fatal] Key 修復後仍缺少 PEM Header！請檢查 secrets.toml")
-                else:
-                    debug_log.append("✅ [Diag] Key Header Found")
-
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-                debug_log.append(f"✅ Secrets Loaded (Email: {creds_dict.get('client_email', 'Unknown')})")
+                # 使用新版庫加載
+                creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+                debug_log.append(f"✅ Secrets Loaded (Email: {info.get('client_email')})")
         except Exception as e:
-            debug_log.append(f"❌ Secrets Error: {str(e)}")
+            debug_log.append(f"❌ Secrets Error: {e}")
 
-    # === 方法 C: 本地 key.json ===
+    # === 3. 本地檔案 ===
     if not creds and os.path.exists("key.json"):
         try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+            creds = Credentials.from_service_account_file("key.json", scopes=SCOPES)
             debug_log.append("✅ Local Key Loaded")
         except Exception as e:
-            debug_log.append(f"❌ Local Key Error: {str(e)}")
+            debug_log.append(f"❌ Local Key Error: {e}")
 
-    # === 連接 ===
+    # === 連接 gspread ===
     if creds:
         try:
             client = gspread.authorize(creds)
             sheet = client.open(GOOGLE_SHEET_NAME).sheet1
             return pd.DataFrame(sheet.get_all_records()), "Cloud", debug_log
         except Exception as e:
-            debug_log.append(f"🔥 Connect Fail: {str(e)}")
+            # 這裡最常見的是: 試算表沒開權限給機器人 Email
+            debug_log.append(f"🔥 Auth OK but Sheet Fail: {e}")
             return pd.DataFrame(), "Auth Error", debug_log
     
     return pd.DataFrame(), "None", debug_log
@@ -154,7 +126,7 @@ def load_data():
     try:
         df, source, debug_log = get_google_sheet_data()
     except Exception as e:
-        debug_log.append(f"🔥 Global Connect Error: {str(e)}")
+        debug_log.append(f"🔥 Critical Error: {e}")
     
     # Fallback
     if (df.empty or "Error" in source) and os.path.exists(CSV_FILENAME):
@@ -165,6 +137,7 @@ def load_data():
     return df, source, debug_log
 
 def render_match_card(row):
+    # (保持原本的渲染邏輯)
     prob_h = clean_pct(row.get('主勝率', 0))
     prob_d = clean_pct(row.get('和率', 0))
     prob_a = clean_pct(row.get('客勝率', 0))
@@ -172,11 +145,8 @@ def render_match_card(row):
     xg_txt = f"xG: {row.get('xG主',0)} - {row.get('xG客',0)}"
     status = row.get('狀態')
     status_cls = "status-live" if status == '進行中' else ("status-ft" if status == '完場' else "")
-    
-    ah_h_pick = row.get('亞盤主', '-')
-    ah_h_prob = row.get('亞盤主率', 0)
-    ah_a_pick = row.get('亞盤客', '-')
-    ah_a_prob = row.get('亞盤客率', 0)
+    ah_h_pick = row.get('亞盤主', '-'); ah_h_prob = row.get('亞盤主率', 0)
+    ah_a_pick = row.get('亞盤客', '-'); ah_a_prob = row.get('亞盤客率', 0)
     
     card_html = f"""
     <div class='compact-card'>
@@ -202,11 +172,10 @@ def main():
     st.sidebar.title("🛠️ 賽事篩選")
     df, source, debug_log = load_data()
     
-    # 錯誤攔截顯示
     if df.empty and "Local" not in source:
-        st.error("❌ 無法加載數據，請查看下方診斷資訊。")
-        with st.expander("詳細錯誤日誌 (Debug) - 請截圖此處", expanded=True):
-            for log in debug_log: st.code(log, language='text')
+        st.error("❌ 無法加載數據")
+        with st.expander("詳細錯誤日誌 (Debug)", expanded=True):
+            for log in debug_log: st.write(log)
         return
 
     if "Local" in source or "Error" in source:
@@ -214,7 +183,6 @@ def main():
         with st.expander("☁️ 雲端連線診斷"):
             for log in debug_log: st.write(log)
 
-    # 正常渲染
     st.sidebar.markdown("### 狀態")
     all_statuses = ['進行中', '未開賽', '完場', '延期']
     selected_statuses = st.sidebar.pills("選擇狀態", all_statuses, default=['進行中', '未開賽'], selection_mode="multi")
