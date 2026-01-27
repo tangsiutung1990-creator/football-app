@@ -8,14 +8,14 @@ import pytz
 # ================= 1. 安全啟動與函式庫檢查 =================
 try:
     import gspread
-    from google.oauth2.service_account import Credentials # 改用新版庫
+    from google.oauth2.service_account import Credentials
 except ImportError as e:
     st.error("❌ 缺少必要函式庫。請確認 requirements.txt 包含: gspread, google-auth")
     st.stop()
 
 st.set_page_config(page_title="足球AI Pro", page_icon="⚽", layout="wide")
 
-# ================= 2. 設定與 CSS =================
+# ================= 2. 設定 =================
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 SCOPES = [
@@ -23,6 +23,7 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive'
 ]
 
+# ================= 3. CSS 優化 =================
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
@@ -39,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 3. 核心工具 =================
+# ================= 4. 核心工具 =================
 
 def clean_pct(val):
     try: return int(float(str(val).replace('%', '')))
@@ -51,70 +52,56 @@ def fmt_pct(val, threshold=50):
     color_cls = 'cell-high' if v >= threshold else ('cell-mid' if v >= threshold - 10 else '')
     return f"<span class='{color_cls}'>{v}%</span>"
 
-def fix_private_key(key_str):
-    """修復 Key 的換行與格式問題"""
-    if not key_str: return None
-    fixed_key = str(key_str).strip()
-    
-    # 移除前後多餘的引號
-    if fixed_key.startswith("'") and fixed_key.endswith("'"): fixed_key = fixed_key[1:-1]
-    if fixed_key.startswith('"') and fixed_key.endswith('"'): fixed_key = fixed_key[1:-1]
-    
-    # 處理轉義符號
-    fixed_key = fixed_key.replace("\\\\n", "\n").replace("\\n", "\n").replace("\r", "")
-    
-    return fixed_key
-
 @st.cache_resource(ttl=600) 
 def get_google_sheet_data():
     creds = None
     debug_log = []
     
-    # === 1. 嘗試環境變量 ===
-    json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
-    if json_text:
-        try:
-            info = json.loads(json_text)
-            if 'private_key' in info: info['private_key'] = fix_private_key(info['private_key'])
-            creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-            debug_log.append("✅ Env Var Loaded")
-        except Exception as e:
-            debug_log.append(f"❌ Env Var Error: {e}")
-
-    # === 2. 嘗試 Secrets (Google Auth 新版寫法) ===
+    # === 方法 1: 全 JSON Secrets (優先使用此方法) ===
+    # 這是最穩定的方法，直接從 secrets.toml 的 [gcp] 區塊讀取整段 JSON
     if not creds:
         try:
-            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                # 轉成標準 Dict
-                info = dict(st.secrets["gcp_service_account"])
+            # 檢查 secrets 中是否有 [gcp] 和 service_account_json
+            if hasattr(st, "secrets") and "gcp" in st.secrets and "service_account_json" in st.secrets["gcp"]:
+                json_content = st.secrets["gcp"]["service_account_json"]
+                # 解析 JSON 字串
+                info = json.loads(json_content, strict=False)
                 
-                # 修復 Key
-                if 'private_key' in info:
-                    info['private_key'] = fix_private_key(info['private_key'])
-                
-                # 使用新版庫加載
                 creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-                debug_log.append(f"✅ Secrets Loaded (Email: {info.get('client_email')})")
+                debug_log.append(f"✅ Full JSON Secret Loaded (Email: {info.get('client_email')})")
         except Exception as e:
-            debug_log.append(f"❌ Secrets Error: {e}")
+            debug_log.append(f"❌ Full JSON Error: {e}")
 
-    # === 3. 本地檔案 ===
-    if not creds and os.path.exists("key.json"):
-        try:
-            creds = Credentials.from_service_account_file("key.json", scopes=SCOPES)
-            debug_log.append("✅ Local Key Loaded")
-        except Exception as e:
-            debug_log.append(f"❌ Local Key Error: {e}")
+    # === 方法 2: 環境變量 (本地開發或備用) ===
+    if not creds:
+        json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+        if json_text:
+            try:
+                # 簡單清理前後引號
+                clean_text = json_text.strip().strip("'").strip('"')
+                info = json.loads(clean_text)
+                creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+                debug_log.append("✅ Env Var Loaded")
+            except Exception as e:
+                debug_log.append(f"❌ Env Var Error: {e}")
 
     # === 連接 gspread ===
     if creds:
         try:
             client = gspread.authorize(creds)
+            # 嘗試開啟試算表以驗證權限
             sheet = client.open(GOOGLE_SHEET_NAME).sheet1
-            return pd.DataFrame(sheet.get_all_records()), "Cloud", debug_log
+            data = sheet.get_all_records()
+            return pd.DataFrame(data), "Cloud", debug_log
         except Exception as e:
-            # 這裡最常見的是: 試算表沒開權限給機器人 Email
-            debug_log.append(f"🔥 Auth OK but Sheet Fail: {e}")
+            error_msg = str(e)
+            if "Invalid JWT" in error_msg:
+                debug_log.append("🔥 JWT Error: Key 格式仍有錯，請確保使用上述提供的完整 TOML 格式")
+            elif "PERMISSION_DENIED" in error_msg:
+                 debug_log.append("🔥 Permission Error: 請確認機器人 Email 已加入 Google Sheet 共用名單")
+            else:
+                debug_log.append(f"🔥 Connect Fail: {error_msg}")
+            
             return pd.DataFrame(), "Auth Error", debug_log
     
     return pd.DataFrame(), "None", debug_log
@@ -128,7 +115,7 @@ def load_data():
     except Exception as e:
         debug_log.append(f"🔥 Critical Error: {e}")
     
-    # Fallback
+    # 讀取本地備份作為 Fallback
     if (df.empty or "Error" in source) and os.path.exists(CSV_FILENAME):
         try:
             df = pd.read_csv(CSV_FILENAME)
@@ -137,7 +124,6 @@ def load_data():
     return df, source, debug_log
 
 def render_match_card(row):
-    # (保持原本的渲染邏輯)
     prob_h = clean_pct(row.get('主勝率', 0))
     prob_d = clean_pct(row.get('和率', 0))
     prob_a = clean_pct(row.get('客勝率', 0))
