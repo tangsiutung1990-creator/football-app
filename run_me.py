@@ -1,32 +1,32 @@
 import requests
 import pandas as pd
-import math
 import time
 import gspread
 from datetime import datetime, timedelta
 import pytz
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials # 改用新版庫
 import os
 import streamlit as st
 import json
+import math
 
 # ================= 設定區 =================
 API_KEY = None
 try:
-    if hasattr(st, "secrets") and "api" in st.secrets and "key" in st.secrets["api"]:
-        API_KEY = st.secrets["api"]["key"]
-except Exception: pass 
+    if hasattr(st, "secrets") and "api" in st.secrets: API_KEY = st.secrets["api"]["key"]
+except: pass 
 if not API_KEY: API_KEY = os.getenv("FOOTBALL_API_KEY")
 
 BASE_URL = 'https://v3.football.api-sports.io'
 GOOGLE_SHEET_NAME = "數據上傳" 
 CSV_FILENAME = "football_data_backup.csv" 
 LEAGUE_ID_MAP = {39:'英超',40:'英冠',140:'西甲',135:'意甲',78:'德甲',61:'法甲',88:'荷甲',94:'葡超',2:'歐聯',3:'歐霸'}
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 def fix_private_key(key_str):
     if not key_str: return None
     fixed_key = str(key_str).strip().strip("'").strip('"')
-    fixed_key = fixed_key.replace("\\\\n", "\n").replace("\\n", "\n")
+    fixed_key = fixed_key.replace("\\\\n", "\n").replace("\\n", "\n").replace("\r", "")
     return fixed_key
 
 def clean_json_string(json_str):
@@ -45,16 +45,15 @@ def call_api(endpoint, params=None):
     return None
 
 def get_google_spreadsheet():
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
     
     # 1. Env Var
     json_text = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
     if json_text:
         try:
-            creds_dict = json.loads(clean_json_string(json_text))
-            if 'private_key' in creds_dict: creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            info = json.loads(clean_json_string(json_text))
+            if 'private_key' in info: info['private_key'] = fix_private_key(info['private_key'])
+            creds = Credentials.from_service_account_info(info, scopes=SCOPES)
             print("✅ 環境變量憑證建立成功")
         except Exception as e: print(f"❌ Env Error: {e}")
 
@@ -62,25 +61,28 @@ def get_google_spreadsheet():
     if not creds:
         try:
             if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-                creds_dict = dict(st.secrets["gcp_service_account"])
-                if 'private_key' in creds_dict: creds_dict['private_key'] = fix_private_key(creds_dict['private_key'])
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+                info = dict(st.secrets["gcp_service_account"])
+                if 'private_key' in info: info['private_key'] = fix_private_key(info['private_key'])
+                creds = Credentials.from_service_account_info(info, scopes=SCOPES)
                 print("✅ Secrets 憑證建立成功")
         except Exception as e: print(f"❌ Secrets Error: {e}")
+
+    # 3. Local
+    if not creds and os.path.exists("key.json"):
+        try:
+            creds = Credentials.from_service_account_file("key.json", scopes=SCOPES)
+            print("✅ 本地 key.json 憑證建立成功")
+        except: pass
 
     if creds:
         try:
             client = gspread.authorize(creds)
             return client.open(GOOGLE_SHEET_NAME)
-        except: return None
+        except Exception as e: print(f"Auth OK but connect failed: {e}")
     return None
 
-def calculate_stats(h_id, a_id):
-    # 這裡保留基本的邏輯佔位符，實際邏輯與之前相同
-    return 1.5, 1.2, "API"
-
 def main():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Backend Running")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Backend Running (Google-Auth)")
     hk_tz = pytz.timezone('Asia/Hong_Kong')
     hk_now = datetime.now(hk_tz)
     yesterday = (hk_now - timedelta(days=1)).strftime('%Y-%m-%d')
