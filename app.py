@@ -3,12 +3,13 @@ from flask_cors import CORS
 from football import get_todays_matches
 
 app = Flask(__name__)
-# Enable CORS so the React frontend (port 3000/5173) can talk to this backend (port 5000)
+# Enable CORS so the React frontend (port 3000) can talk to this backend (port 5000)
 CORS(app)
 
 @app.route('/api/matches', methods=['GET'])
 def matches():
     try:
+        # Get matches from football.py logic
         data = get_todays_matches()
         return jsonify(data)
     except Exception as e:
@@ -17,8 +18,9 @@ def matches():
 
 @app.route('/')
 def home():
-    return "AI Football Predictor API is running!"
+    return "AI Football Predictor API is running! Go to /api/matches to see data."
 
 if __name__ == '__main__':
     # Run the server on port 5000
+    print("Starting Flask Server on http://localhost:5000")
     app.run(debug=True, port=5000)
