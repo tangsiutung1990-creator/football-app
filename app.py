@@ -53,7 +53,7 @@ st.markdown("""
 
 # --- 初始化 ---
 # 請在下方引號內填入你的 API KEY
-API_KEY = "你的_API_KEY_填在這裡" 
+API_KEY = "6bf59594223b07234f75a8e2e2de5178" 
 app_logic = FootballApp(API_KEY)
 
 st.title("⚽ 英超賽事 AI 預測中心")
@@ -167,3 +167,4 @@ for match in filtered_fixtures:
                 st.write("點擊上方按鈕以獲取詳細 AI 分析報告...")
 
         st.markdown('</div>', unsafe_allow_html=True)
+
